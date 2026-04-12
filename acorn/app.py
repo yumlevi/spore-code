@@ -56,7 +56,6 @@ class AcornApp(App):
         dock: top;
         height: 3;
         padding: 0 2;
-        color: auto;
     }
     #transcript {
         height: 1fr;
@@ -66,11 +65,13 @@ class AcornApp(App):
     #mode-bar {
         dock: bottom;
         height: 1;
+        width: 100%;
     }
-    Input {
-        border: none;
+    #user-input {
         dock: bottom;
+        border: none;
         margin: 0 1;
+        height: 3;
     }
     """
 
@@ -104,8 +105,8 @@ class AcornApp(App):
 
         yield Static(header, id='header-bar')
         yield RichLog(id='transcript', wrap=True, highlight=True, markup=True)
-        yield Static('', id='mode-bar')
         yield Input(placeholder='Send a message...', id='user-input')
+        yield Static('', id='mode-bar')
 
     def on_mount(self):
         self._update_mode_bar()
