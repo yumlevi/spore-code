@@ -26,6 +26,7 @@ from acorn.session import compute_session_id, project_name, get_git_branch
 from acorn.tools.executor import ToolExecutor
 from acorn.themes import get_theme
 from acorn.questions import parse_questions, QuestionScreen, format_answers
+import acorn.commands.test  # noqa: F401 — registers /test command
 
 PLAN_PREFIX = (
     '[MODE: Plan only. You are in planning mode.\n'
@@ -392,7 +393,14 @@ class AcornApp(App):
             help_table.add_row('Ctrl+C ×2', 'Quit')
             self._log(Panel(help_table, title='Commands', border_style=t['accent'], style=f'on {t["bg_panel"]}'))
         else:
-            self._log(Text(f'  Unknown: {cmd}', style='red'))
+            # Check command registry (for /test and other registered commands)
+            from acorn.commands.registry import get_command
+            handler = get_command(cmd)
+            if handler:
+                await handler(args, app=self, conn=self.conn, session_id=self.session_id,
+                              user=self.user, renderer=None, executor=self.executor, state={})
+            else:
+                self._log(Text(f'  Unknown: {cmd}', style='red'))
         self._scroll_bottom()
 
     # ── WebSocket handlers ─────────────────────────────────────────
