@@ -3,6 +3,7 @@
 import hashlib
 import os
 import subprocess
+import time
 
 
 def find_git_root(cwd: str) -> "str | None":
@@ -32,10 +33,12 @@ def get_git_branch(cwd: str) -> str:
 
 
 def compute_session_id(user: str, cwd: str) -> str:
+    """New unique session each invocation — includes timestamp so each run is fresh."""
     project_root = find_git_root(cwd) or cwd
     name = os.path.basename(project_root)
     path_hash = hashlib.sha256(project_root.encode()).hexdigest()[:8]
-    return f'cli:{user}@{name}-{path_hash}'
+    ts = hex(int(time.time()))[2:]
+    return f'cli:{user}@{name}-{path_hash}-{ts}'
 
 
 def project_name(cwd: str) -> str:
