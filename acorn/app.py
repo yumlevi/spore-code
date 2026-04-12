@@ -57,10 +57,16 @@ class AcornApp(App):
         height: 3;
         padding: 0 2;
     }
-    #transcript {
+    #main-scroll {
         height: 1fr;
+    }
+    #transcript {
+        height: auto;
         padding: 0 1;
-        scrollbar-size: 1 1;
+    }
+    #stream-area {
+        height: auto;
+        padding: 0 1;
     }
     #mode-bar {
         dock: bottom;
@@ -88,6 +94,7 @@ class AcornApp(App):
         self._stream_buffer = ''
         self._last_ctrl_c = 0
         self._response_text = []
+        self._stream_widget = None
 
     def compose(self) -> ComposeResult:
         t = self.theme_data
@@ -104,7 +111,11 @@ class AcornApp(App):
             header.append(f' ({branch})', style=t['prompt_branch'])
 
         yield Static(header, id='header-bar')
-        yield RichLog(id='transcript', wrap=True, highlight=True, markup=True)
+        yield VerticalScroll(
+            RichLog(id='transcript', wrap=True, highlight=True, markup=True),
+            Static('', id='stream-area'),
+            id='main-scroll',
+        )
         yield Input(placeholder='Send a message...', id='user-input')
         yield Static('', id='mode-bar')
 
@@ -172,8 +183,8 @@ class AcornApp(App):
 
     def _scroll_bottom(self):
         try:
-            transcript = self.query_one('#transcript', RichLog)
-            transcript.scroll_end(animate=False)
+            scroll = self.query_one('#main-scroll', VerticalScroll)
+            scroll.scroll_end(animate=False)
         except NoMatches:
             pass
 
@@ -327,16 +338,28 @@ class AcornApp(App):
         self._scroll_bottom()
 
     async def _on_start(self, msg):
-        pass
+        self._stream_buffer = ''
+        self._response_text = []
+        # Clear the stream area
+        try:
+            self.query_one('#stream-area', Static).update('')
+        except NoMatches:
+            pass
 
     async def _on_delta(self, msg):
         text = msg.get('text', '')
         self._stream_buffer += text
         self._response_text.append(text)
-        # Write each chunk directly to transcript
+        # Update stream area with full accumulated text as markdown
         try:
-            transcript = self.query_one('#transcript', RichLog)
-            transcript.write(Text(text), scroll_end=True)
+            stream = self.query_one('#stream-area', Static)
+            try:
+                stream.update(Markdown(self._stream_buffer))
+            except Exception:
+                stream.update(self._stream_buffer)
+            # Scroll to bottom
+            scroll = self.query_one('#main-scroll', VerticalScroll)
+            scroll.scroll_end(animate=False)
         except NoMatches:
             pass
 
@@ -384,7 +407,17 @@ class AcornApp(App):
         response = ''.join(self._response_text)
         t = self.theme_data
 
-        # Response already streamed via _on_delta — just add spacing
+        # Clear stream area and write final to transcript log
+        try:
+            self.query_one('#stream-area', Static).update('')
+        except NoMatches:
+            pass
+
+        if response.strip():
+            try:
+                self._log(Markdown(response))
+            except Exception:
+                self._log(Text(response))
         self._log(Text(''))
 
         # Usage stats
