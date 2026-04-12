@@ -224,6 +224,9 @@ async def run_repl(conn, session_id, user, renderer, executor, initial_plan_mode
     # Ensure local .acorn/ dir exists
     ensure_local_dir(cwd)
 
+    import time
+    last_ctrl_c = [0]
+
     while True:
         try:
             branch = get_git_branch(cwd) or ''
@@ -236,6 +239,7 @@ async def run_repl(conn, session_id, user, renderer, executor, initial_plan_mode
             text = text.strip()
             if not text:
                 continue
+            last_ctrl_c[0] = 0  # reset on valid input
 
             # Slash commands
             if text.startswith('/'):
@@ -286,6 +290,12 @@ async def run_repl(conn, session_id, user, renderer, executor, initial_plan_mode
                     renderer.console.print('[dim]Plan discarded.[/dim]')
 
         except KeyboardInterrupt:
+            now = time.time()
+            if now - last_ctrl_c[0] < 1.0:
+                renderer.show_info('Bye!')
+                break
+            last_ctrl_c[0] = now
+            renderer.console.print(f'\n  [{renderer.theme["muted"]}]Press Ctrl+C again to quit[/{renderer.theme["muted"]}]')
             continue
         except EOFError:
             break
