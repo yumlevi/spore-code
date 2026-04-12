@@ -50,6 +50,17 @@ PLAN_EXECUTE_MSG = (
 )
 
 
+def _to_hex(color_str):
+    """Extract a hex color from a Rich style string. Falls back to a default."""
+    import re
+    if not color_str:
+        return None
+    m = re.search(r'#[0-9a-fA-F]{6}', color_str)
+    if m:
+        return m.group(0)
+    return None
+
+
 def _register_acorn_themes(app):
     """Register our themes as native Textual themes so backgrounds actually work."""
     from textual.theme import Theme as TextualTheme
@@ -57,18 +68,19 @@ def _register_acorn_themes(app):
 
     for name, t in THEMES.items():
         is_dark = name != 'light'
+        primary = _to_hex(t['accent']) or '#89b4fa'
         app.register_theme(TextualTheme(
             name=f'acorn-{name}',
-            primary=t['accent'].lstrip('#') if t['accent'].startswith('#') else t['accent'],
-            secondary=t.get('accent2', t['accent']),
+            primary=primary,
+            secondary=_to_hex(t.get('accent2')),
             background=t['bg'],
             surface=t['bg_header'],
             panel=t['bg_panel'],
             foreground=t['fg'],
-            warning=t.get('warning', '#d29922').replace('bold ', ''),
-            error=t.get('error', '#f85149').replace('bold ', ''),
-            success=t.get('success', '#3fb950'),
-            accent=t['accent'],
+            warning=_to_hex(t.get('warning')),
+            error=_to_hex(t.get('error')),
+            success=_to_hex(t.get('success')),
+            accent=_to_hex(t.get('accent')),
             dark=is_dark,
         ))
 
