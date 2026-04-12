@@ -139,16 +139,20 @@ class AcornApp(App):
         self.query_one('#user-input', Input).focus()
 
     def on_click(self, event):
-        """Click anywhere refocuses the input field."""
+        """Click on non-input areas refocuses the input field.
+        Don't steal focus from the input itself or prevent text selection."""
+        # Only refocus if the click target isn't the input
         try:
-            self.query_one('#user-input', Input).focus()
+            inp = self.query_one('#user-input', Input)
+            if not inp.has_focus:
+                inp.focus()
         except NoMatches:
             pass
 
     # ── UI updates ─────────────────────────────────────────────────
 
     def _apply_theme(self):
-        """Apply theme background/foreground to all widgets."""
+        """Apply theme colors to all widgets — backgrounds, borders, text."""
         t = self.theme_data
         bg = t['bg']
         fg = t['fg']
@@ -156,47 +160,36 @@ class AcornApp(App):
         bg_input = t['bg_input']
         border_color = t['border']
 
-        # App background
-        self.styles.background = bg
+        # Set Textual dark mode based on theme brightness
+        light_themes = {'light'}
+        self.dark = t['name'] not in light_themes
 
-        # Header
-        try:
-            h = self.query_one('#header-bar', Static)
-            h.styles.background = bg_header
-            h.styles.color = fg
-            h.styles.border_bottom = ('solid', border_color)
-        except NoMatches:
-            pass
+        # Every widget gets explicit bg + fg
+        for widget_id, widget_bg, widget_fg in [
+            (None, bg, fg),  # Screen/App level
+        ]:
+            self.styles.background = bg
+            self.styles.color = fg
 
-        # Main scroll area
-        try:
-            ms = self.query_one('#main-scroll', VerticalScroll)
-            ms.styles.background = bg
-        except NoMatches:
-            pass
-
-        # Transcript
-        try:
-            tr = self.query_one('#transcript', RichLog)
-            tr.styles.background = bg
-        except NoMatches:
-            pass
-
-        # Stream area
-        try:
-            sa = self.query_one('#stream-area', Static)
-            sa.styles.background = bg
-        except NoMatches:
-            pass
-
-        # Input
-        try:
-            inp = self.query_one('#user-input', Input)
-            inp.styles.background = bg_input
-            inp.styles.color = fg
-            inp.styles.border_top = ('solid', border_color)
-        except NoMatches:
-            pass
+        widget_styles = [
+            ('#header-bar', bg_header, fg, ('solid', border_color), None),
+            ('#main-scroll', bg, fg, None, None),
+            ('#transcript', bg, fg, None, None),
+            ('#stream-area', bg, fg, None, None),
+            ('#user-input', bg_input, fg, None, ('solid', border_color)),
+            ('#mode-bar', bg, fg, None, None),
+        ]
+        for sel, wbg, wfg, border_bottom, border_top in widget_styles:
+            try:
+                w = self.query_one(sel)
+                w.styles.background = wbg
+                w.styles.color = wfg
+                if border_bottom:
+                    w.styles.border_bottom = border_bottom
+                if border_top:
+                    w.styles.border_top = border_top
+            except NoMatches:
+                pass
 
     def _update_header(self):
         t = self.theme_data
@@ -244,6 +237,26 @@ class AcornApp(App):
             self.query_one('#transcript', RichLog).write(renderable)
         except NoMatches:
             pass
+
+    def _themed_panel(self, content, title='', border_style=None, **kwargs):
+        """Create a Panel styled with theme colors."""
+        t = self.theme_data
+        if isinstance(content, str):
+            content = Text(content, style=t['fg'])
+        return Panel(
+            content,
+            title=title,
+            title_align='left',
+            border_style=border_style or t['border'],
+            style=f'on {t["bg_panel"]}',
+            padding=(0, 1),
+            **kwargs,
+        )
+
+    def _themed_text(self, text, style=None):
+        """Create a Text with theme foreground as base."""
+        t = self.theme_data
+        return Text(text, style=style or t['fg'])
 
     def _scroll_bottom(self):
         try:
@@ -293,14 +306,7 @@ class AcornApp(App):
 
         # Show user message in a bordered panel
         t = self.theme_data
-        user_panel = Panel(
-            text,
-            title=f'[bold]{self.user}[/bold]',
-            title_align='left',
-            border_style=t['prompt_user'],
-            padding=(0, 1),
-        )
-        self._log(user_panel)
+        self._log(self._themed_panel(text, title=f'[bold]{self.user}[/bold]', border_style=t['prompt_user']))
 
         content = text
         if not self.context_sent:
@@ -343,7 +349,7 @@ class AcornApp(App):
             info.add_row(Text('Server', style='dim'), Text(f'{self.conn.host}:{self.conn.port}'))
             info.add_row(Text('Dir', style='dim'), Text(self.cwd))
             info.add_row(Text('Theme', style='dim'), Text(self.theme_data['name']))
-            self._log(Panel(info, title='Status', border_style='dim'))
+            self._log(Panel(info, title='Status', border_style=t['border'], style=f'on {t["bg_panel"]}'))
         elif cmd == '/theme':
             from acorn.themes import list_themes
             available = list_themes()
@@ -384,7 +390,7 @@ class AcornApp(App):
             help_table.add_row('Ctrl+P', 'Toggle plan/execute')
             help_table.add_row('Esc', 'Stop generation')
             help_table.add_row('Ctrl+C ×2', 'Quit')
-            self._log(Panel(help_table, title='Commands', border_style=t['accent']))
+            self._log(Panel(help_table, title='Commands', border_style=t['accent'], style=f'on {t["bg_panel"]}'))
         else:
             self._log(Text(f'  Unknown: {cmd}', style='red'))
         self._scroll_bottom()
@@ -396,7 +402,7 @@ class AcornApp(App):
         if not messages:
             return
         t = self.theme_data
-        self._log(Rule('Session History', style='dim'))
+        self._log(Rule('Session History', style=t['separator']))
         for m in messages:
             role = m.get('role', 'user')
             text = m.get('text', '')
@@ -404,16 +410,15 @@ class AcornApp(App):
                 continue
             if role == 'user':
                 display = text[:300] + '...' if len(text) > 300 else text
-                self._log(Panel(display, title=f'[bold]{self.user}[/bold]', title_align='left',
-                                border_style=t['prompt_user'], padding=(0, 1)))
+                self._log(self._themed_panel(display, title=f'[bold]{self.user}[/bold]', border_style=t['prompt_user']))
             elif role == 'assistant':
                 try:
-                    self._log(Panel(Markdown(text), title='[bold]acorn[/bold]', title_align='left',
-                                    border_style=t['accent'], padding=(0, 1)))
+                    content = Markdown(text)
                 except Exception:
-                    self._log(Panel(text, title='[bold]acorn[/bold]', title_align='left',
-                                    border_style=t['accent'], padding=(0, 1)))
-        self._log(Rule(style='dim'))
+                    content = Text(text, style=t['fg'])
+                self._log(Panel(content, title='[bold]acorn[/bold]', title_align='left',
+                                border_style=t['accent'], style=f'on {t["bg_panel"]}', padding=(0, 1)))
+        self._log(Rule(style=t['separator']))
         self._scroll_bottom()
 
     async def _on_start(self, msg):
@@ -433,21 +438,17 @@ class AcornApp(App):
             stream = self.query_one('#stream-area', Static)
             t = self.theme_data
             try:
-                stream.update(Panel(
-                    Markdown(self._stream_buffer),
-                    title='[bold]acorn[/bold]',
-                    title_align='left',
-                    border_style=t['accent'],
-                    padding=(0, 1),
-                ))
+                content = Markdown(self._stream_buffer)
             except Exception:
-                stream.update(Panel(
-                    self._stream_buffer,
-                    title='[bold]acorn[/bold]',
-                    title_align='left',
-                    border_style=t['accent'],
-                    padding=(0, 1),
-                ))
+                content = Text(self._stream_buffer, style=t['fg'])
+            stream.update(Panel(
+                content,
+                title='[bold]acorn[/bold]',
+                title_align='left',
+                border_style=t['accent'],
+                style=f'on {t["bg_panel"]}',
+                padding=(0, 1),
+            ))
             self.query_one('#main-scroll', VerticalScroll).scroll_end(animate=False)
         except NoMatches:
             pass
@@ -523,12 +524,13 @@ class AcornApp(App):
             try:
                 content = Markdown(response)
             except Exception:
-                content = Text(response)
+                content = Text(response, style=t['fg'])
             self._log(Panel(
                 content,
                 title='[bold]acorn[/bold]',
                 title_align='left',
                 border_style=t['accent'],
+                style=f'on {t["bg_panel"]}',
                 padding=(0, 1),
             ))
 
@@ -563,8 +565,9 @@ class AcornApp(App):
             )
         elif self.plan_mode and response and ('PLAN_READY' in response or len(response) > 500):
             self._log(Panel(
-                'Type [bold]execute[/bold] to run the plan, or provide feedback',
+                Text('Type "execute" to run the plan, or provide feedback', style=t['fg']),
                 border_style=t['accent2'],
+                style=f'on {t["bg_panel"]}',
                 padding=(0, 1),
             ))
             self._scroll_bottom()
@@ -583,13 +586,7 @@ class AcornApp(App):
         questions = getattr(self, 'app_questions', [])
         formatted = format_answers(questions, answers)
         t = self.theme_data
-        self._log(Panel(
-            formatted,
-            title=f'[bold]{self.user}[/bold]',
-            title_align='left',
-            border_style=t['prompt_user'],
-            padding=(0, 1),
-        ))
+        self._log(self._themed_panel(formatted, title=f'[bold]{self.user}[/bold]', border_style=t['prompt_user']))
         self._scroll_bottom()
         # Send to agent
         self._stream_buffer = ''
@@ -602,11 +599,13 @@ class AcornApp(App):
 
     async def _on_error(self, msg):
         self.generating = False
+        t = self.theme_data
         error = msg.get('error', 'Unknown error')
         self._log(Panel(
-            Text(error, style='bold red'),
-            title='[bold red]Error[/bold red]',
+            Text(error, style=t['error']),
+            title='[bold]Error[/bold]',
             border_style='red',
+            style=f'on {t["bg_panel"]}',
             padding=(0, 1),
         ))
         self._scroll_bottom()
