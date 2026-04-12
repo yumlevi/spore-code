@@ -160,18 +160,18 @@ class AcornApp(App):
             return
         width = self.size.width or 80
         if self.plan_mode:
+            bg = 'on dark_blue'
+            pad = ' ' * max(0, width - 42)
             line = Text()
             line.append(' PLAN ', style='bold white on blue')
-            line.append(' research & plan only ', style='white on dark_blue')
-            line.append(' ctrl+p toggle ', style='dim white on dark_blue')
-            line.pad_right(width, style='on dark_blue')
+            line.append(f' research & plan only  ctrl+p toggle {pad}', style=f'white {bg}')
             bar.update(line)
         else:
+            bg = 'on dark_green'
+            pad = ' ' * max(0, width - 42)
             line = Text()
             line.append(' EXECUTE ', style='bold black on green')
-            line.append(' full agent mode ', style='black on dark_green')
-            line.append(' ctrl+p toggle ', style='dim black on dark_green')
-            line.pad_right(width, style='on dark_green')
+            line.append(f' full agent mode  ctrl+p toggle {pad}', style=f'black {bg}')
             bar.update(line)
 
     def _log(self, renderable):
