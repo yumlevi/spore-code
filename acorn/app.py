@@ -6,15 +6,16 @@ import time
 
 from textual.app import App, ComposeResult
 from textual.containers import Vertical, VerticalScroll
-from textual.widgets import Static, Input, Footer, Header, RichLog
+from textual.widgets import Static, Input, RichLog
 from textual.binding import Binding
-from textual import work
 from textual.css.query import NoMatches
 
 from rich.text import Text
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.rule import Rule
+from rich.table import Table
+from rich.console import Group
 
 from acorn.config import save_last_session, ensure_local_dir
 from acorn.connection import Connection, AuthError
@@ -55,7 +56,8 @@ class AcornApp(App):
     #header-bar {
         dock: top;
         height: 3;
-        padding: 0 2;
+        padding: 0 1;
+        border-bottom: solid dimgrey;
     }
     #main-scroll {
         height: 1fr;
@@ -66,7 +68,8 @@ class AcornApp(App):
     }
     #stream-area {
         height: auto;
-        padding: 0 1;
+        padding: 0 2;
+        margin: 0 1;
     }
     #mode-bar {
         dock: bottom;
@@ -75,9 +78,9 @@ class AcornApp(App):
     }
     #user-input {
         dock: bottom;
-        border: none;
-        margin: 0 1;
+        border-top: solid dimgrey;
         height: 3;
+        padding: 0 1;
     }
     """
 
@@ -94,41 +97,27 @@ class AcornApp(App):
         self._stream_buffer = ''
         self._last_ctrl_c = 0
         self._response_text = []
-        self._stream_widget = None
+        self._tool_lines = []
 
     def compose(self) -> ComposeResult:
-        t = self.theme_data
-        proj = project_name(self.cwd)
-        branch = get_git_branch(self.cwd)
-
-        icon = t.get('icon', '🌰')
-        header = Text()
-        header.append(f' {icon} Acorn  ', style='bold')
-        header.append(self.user, style=t['prompt_user'])
-        header.append(' → ', style='dim')
-        header.append(proj, style=t['prompt_project'])
-        if branch:
-            header.append(f' ({branch})', style=t['prompt_branch'])
-
-        yield Static(header, id='header-bar')
+        yield Static('', id='header-bar')
         yield VerticalScroll(
             RichLog(id='transcript', wrap=True, highlight=True, markup=True),
             Static('', id='stream-area'),
             id='main-scroll',
         )
-        yield Input(placeholder='Send a message...', id='user-input')
+        yield Input(placeholder='Message acorn...', id='user-input')
         yield Static('', id='mode-bar')
 
     def on_mount(self):
+        self._update_header()
         self._update_mode_bar()
         ensure_local_dir(self.cwd)
 
-        # Set up tool executor with TUI-aware permissions
         self.permissions = TuiPermissions(self)
         self.executor = ToolExecutor(self.permissions, None, self.cwd)
         self.conn.tool_executor = self.executor
 
-        # Set up message handlers
         self.conn.on('chat:history', self._on_history)
         self.conn.on('chat:delta', self._on_delta)
         self.conn.on('chat:status', self._on_status)
@@ -139,40 +128,50 @@ class AcornApp(App):
         self.conn.on('code:diff', self._on_code_diff)
         self.conn.on('chat:start', self._on_start)
 
-        # Focus input
         self.query_one('#user-input', Input).focus()
+
+    # ── UI updates ─────────────────────────────────────────────────
 
     def _update_header(self):
         t = self.theme_data
         proj = project_name(self.cwd)
         branch = get_git_branch(self.cwd)
         icon = t.get('icon', '🌰')
+
         header = Text()
-        header.append(f' {icon} Acorn  ', style='bold')
-        header.append(self.user, style=t['prompt_user'])
-        header.append(' → ', style='dim')
-        header.append(proj, style=t['prompt_project'])
+        header.append(f' {icon} ', style='bold')
+        header.append('acorn', style=f'bold {t["accent"]}')
+        header.append('  ', style='')
+        header.append(self.user, style=f'bold {t["prompt_user"]}')
+        header.append('  ', style='dim')
+        header.append(proj, style=f'{t["prompt_project"]}')
         if branch:
-            header.append(f' ({branch})', style=t['prompt_branch'])
+            header.append(f'  {branch}', style=f'{t["prompt_branch"]}')
+
         try:
             self.query_one('#header-bar', Static).update(header)
         except NoMatches:
             pass
 
     def _update_mode_bar(self):
-        bar = self.query_one('#mode-bar', Static)
+        try:
+            bar = self.query_one('#mode-bar', Static)
+        except NoMatches:
+            return
         width = self.size.width or 80
         if self.plan_mode:
             line = Text()
             line.append(' PLAN ', style='bold white on blue')
-            line.append(' research only — ctrl+p to toggle ', style='white on dark_blue')
-            line.pad_right(width)
+            line.append(' research & plan only ', style='white on dark_blue')
+            line.append(' ctrl+p toggle ', style='dim white on dark_blue')
+            line.pad_right(width, style='on dark_blue')
             bar.update(line)
         else:
             line = Text()
             line.append(' EXECUTE ', style='bold black on green')
-            line.append(' full agent mode — ctrl+p to toggle ', style='black on dark_green')
-            line.pad_right(width)
+            line.append(' full agent mode ', style='black on dark_green')
+            line.append(' ctrl+p toggle ', style='dim black on dark_green')
+            line.pad_right(width, style='on dark_green')
             bar.update(line)
 
     def _log(self, renderable):
@@ -183,8 +182,7 @@ class AcornApp(App):
 
     def _scroll_bottom(self):
         try:
-            scroll = self.query_one('#main-scroll', VerticalScroll)
-            scroll.scroll_end(animate=False)
+            self.query_one('#main-scroll', VerticalScroll).scroll_end(animate=False)
         except NoMatches:
             pass
 
@@ -193,6 +191,10 @@ class AcornApp(App):
     def action_toggle_plan(self):
         self.plan_mode = not self.plan_mode
         self._update_mode_bar()
+        mode = 'plan' if self.plan_mode else 'execute'
+        t = self.theme_data
+        self._log(Text(f'  Switched to {mode} mode', style=t['muted']))
+        self._scroll_bottom()
 
     def action_quit_check(self):
         now = time.time()
@@ -207,7 +209,7 @@ class AcornApp(App):
         if self.generating:
             from acorn.protocol import stop_message
             asyncio.create_task(self.conn.send(stop_message(self.session_id)))
-            self._log(Text('  ⏹ Stop requested', style='dim'))
+            self._log(Text('  ⏹ Stopped', style='dim'))
             self._scroll_bottom()
 
     # ── Input handling ─────────────────────────────────────────────
@@ -220,18 +222,21 @@ class AcornApp(App):
         inp = self.query_one('#user-input', Input)
         inp.value = ''
 
-        # Slash commands
         if text.startswith('/'):
             await self._handle_command(text)
             return
 
-        # Show user message
+        # Show user message in a bordered panel
         t = self.theme_data
-        self._log(Text(f'\n  {self.user}', style=f'bold {t["prompt_user"]}'))
-        self._log(Text(f'  {text}', style=''))
-        self._log(Text(''))
+        user_panel = Panel(
+            text,
+            title=f'[bold]{self.user}[/bold]',
+            title_align='left',
+            border_style=t['prompt_user'],
+            padding=(0, 1),
+        )
+        self._log(user_panel)
 
-        # Build content
         content = text
         if not self.context_sent:
             ctx = gather_context(self.cwd)
@@ -241,9 +246,9 @@ class AcornApp(App):
         if self.plan_mode:
             content = PLAN_PREFIX + content
 
-        # Send
         self._stream_buffer = ''
         self._response_text = []
+        self._tool_lines = []
         self.generating = True
         await self.conn.send(chat_message(self.session_id, content, self.user))
 
@@ -251,6 +256,7 @@ class AcornApp(App):
         parts = text.split(None, 1)
         cmd = parts[0].lower()
         args = parts[1] if len(parts) > 1 else ''
+        t = self.theme_data
 
         if cmd in ('/quit', '/exit'):
             self.exit()
@@ -258,89 +264,87 @@ class AcornApp(App):
             from acorn.protocol import clear_message
             await self.conn.send(clear_message(self.session_id))
             self.context_sent = False
-            transcript = self.query_one('#transcript', RichLog)
-            transcript.clear()
+            try:
+                self.query_one('#transcript', RichLog).clear()
+            except NoMatches:
+                pass
             self._log(Text('  Session cleared', style='dim'))
         elif cmd == '/plan':
             self.action_toggle_plan()
         elif cmd == '/status':
-            self._log(Text(
-                f'  User: {self.user}\n'
-                f'  Session: {self.session_id}\n'
-                f'  Server: {self.conn.host}:{self.conn.port}\n'
-                f'  CWD: {self.cwd}',
-            ))
+            info = Table.grid(padding=(0, 2))
+            info.add_row(Text('User', style='dim'), Text(self.user, style=t['prompt_user']))
+            info.add_row(Text('Session', style='dim'), Text(self.session_id, style='dim'))
+            info.add_row(Text('Server', style='dim'), Text(f'{self.conn.host}:{self.conn.port}'))
+            info.add_row(Text('Dir', style='dim'), Text(self.cwd))
+            info.add_row(Text('Theme', style='dim'), Text(self.theme_data['name']))
+            self._log(Panel(info, title='Status', border_style='dim'))
         elif cmd == '/theme':
             from acorn.themes import list_themes
-            if args:
-                available = list_themes()
-                if args in available:
-                    self.theme_data = get_theme(args)
-                    self._update_mode_bar()
-                    self._update_header()
-                    self._log(Text(f'  Theme changed to {args}', style='dim'))
-                else:
-                    self._log(Text(f'  Unknown theme. Available: {", ".join(available)}', style='dim'))
+            available = list_themes()
+            if args and args in available:
+                self.theme_data = get_theme(args)
+                self._update_mode_bar()
+                self._update_header()
+                self._log(Text(f'  Theme → {args}', style=t['accent']))
+            elif args:
+                self._log(Text(f'  Unknown theme. Available: {", ".join(available)}', style='red'))
             else:
-                self._log(Text(f'  Current: {self.theme_data["name"]}. Available: {", ".join(list_themes())}', style='dim'))
+                self._log(Text(f'  Current: {self.theme_data["name"]}  Available: {", ".join(available)}', style='dim'))
         elif cmd == '/approve-all':
             self.permissions.approve_all = True
-            self._log(Text('  All tool executions will be auto-approved', style='yellow'))
+            self._log(Text('  ⚡ All tools auto-approved', style='yellow'))
         elif cmd == '/help':
-            self._log(Panel(
-                '/help            Show this help\n'
-                '/quit            Exit Acorn\n'
-                '/clear           Clear session\n'
-                '/stop or Esc     Stop generation\n'
-                '/plan            Toggle plan mode\n'
-                '/status          Connection info\n'
-                '/theme [name]    Switch theme\n'
-                '/approve-all     Auto-approve tools\n'
-                '\n'
-                'Ctrl+P           Toggle plan/execute\n'
-                'Ctrl+C Ctrl+C    Quit\n'
-                'Esc              Stop generation',
-                title='Acorn Commands',
-                border_style='dim',
-            ))
+            help_table = Table.grid(padding=(0, 2))
+            help_table.add_column(style='bold cyan', min_width=18)
+            help_table.add_column(style='dim')
+            help_table.add_row('/help', 'Show this help')
+            help_table.add_row('/quit', 'Exit Acorn')
+            help_table.add_row('/clear', 'Clear session')
+            help_table.add_row('/plan', 'Toggle plan mode')
+            help_table.add_row('/status', 'Connection info')
+            help_table.add_row('/theme [name]', 'Switch theme')
+            help_table.add_row('/approve-all', 'Auto-approve tools')
+            help_table.add_row('', '')
+            help_table.add_row('Ctrl+P', 'Toggle plan/execute')
+            help_table.add_row('Esc', 'Stop generation')
+            help_table.add_row('Ctrl+C ×2', 'Quit')
+            self._log(Panel(help_table, title='Commands', border_style=t['accent']))
         else:
-            self._log(Text(f'  Unknown command: {cmd}', style='red'))
+            self._log(Text(f'  Unknown: {cmd}', style='red'))
         self._scroll_bottom()
 
-    # ── WebSocket event handlers ───────────────────────────────────
+    # ── WebSocket handlers ─────────────────────────────────────────
 
     async def _on_history(self, msg):
-        """Render chat history on reconnect (--continue)."""
         messages = msg.get('messages', [])
         if not messages:
             return
         t = self.theme_data
-        self._log(Text(f'  ── Session history ({len(messages)} messages) ──', style='dim'))
-        self._log(Text(''))
+        self._log(Rule('Session History', style='dim'))
         for m in messages:
             role = m.get('role', 'user')
             text = m.get('text', '')
             if not text.strip():
                 continue
             if role == 'user':
-                self._log(Text(f'  {self.user}', style=f'bold {t["prompt_user"]}'))
-                # Truncate long user messages (context preambles)
                 display = text[:300] + '...' if len(text) > 300 else text
-                self._log(Text(f'  {display}', style='dim'))
+                self._log(Panel(display, title=f'[bold]{self.user}[/bold]', title_align='left',
+                                border_style=t['prompt_user'], padding=(0, 1)))
             elif role == 'assistant':
                 try:
-                    self._log(Markdown(text))
+                    self._log(Panel(Markdown(text), title='[bold]acorn[/bold]', title_align='left',
+                                    border_style=t['accent'], padding=(0, 1)))
                 except Exception:
-                    self._log(Text(text))
-            self._log(Text(''))
-        self._log(Text(f'  ── End of history ──', style='dim'))
-        self._log(Text(''))
+                    self._log(Panel(text, title='[bold]acorn[/bold]', title_align='left',
+                                    border_style=t['accent'], padding=(0, 1)))
+        self._log(Rule(style='dim'))
         self._scroll_bottom()
 
     async def _on_start(self, msg):
         self._stream_buffer = ''
         self._response_text = []
-        # Clear the stream area
+        self._tool_lines = []
         try:
             self.query_one('#stream-area', Static).update('')
         except NoMatches:
@@ -350,16 +354,26 @@ class AcornApp(App):
         text = msg.get('text', '')
         self._stream_buffer += text
         self._response_text.append(text)
-        # Update stream area with full accumulated text as markdown
         try:
             stream = self.query_one('#stream-area', Static)
+            t = self.theme_data
             try:
-                stream.update(Markdown(self._stream_buffer))
+                stream.update(Panel(
+                    Markdown(self._stream_buffer),
+                    title='[bold]acorn[/bold]',
+                    title_align='left',
+                    border_style=t['accent'],
+                    padding=(0, 1),
+                ))
             except Exception:
-                stream.update(self._stream_buffer)
-            # Scroll to bottom
-            scroll = self.query_one('#main-scroll', VerticalScroll)
-            scroll.scroll_end(animate=False)
+                stream.update(Panel(
+                    self._stream_buffer,
+                    title='[bold]acorn[/bold]',
+                    title_align='left',
+                    border_style=t['accent'],
+                    padding=(0, 1),
+                ))
+            self.query_one('#main-scroll', VerticalScroll).scroll_end(animate=False)
         except NoMatches:
             pass
 
@@ -367,25 +381,41 @@ class AcornApp(App):
         t = self.theme_data
         status = msg.get('status', '')
         if status == 'thinking_start':
-            self._log(Text('  ● Thinking...', style=t['thinking']))
-            self._scroll_bottom()
-        elif status == 'thinking':
-            pass  # don't spam
+            self._tool_lines.append(('thinking', '● Thinking...'))
+            self._update_tool_display()
         elif status == 'thinking_done':
-            pass
+            self._tool_lines = [(k, v) for k, v in self._tool_lines if k != 'thinking']
+            self._update_tool_display()
         elif status == 'tool_exec_start':
             tool = msg.get('tool', '')
-            detail = msg.get('detail', '')
-            self._log(Text(f'  ┌ ⚙ {tool} {detail[:80]}', style=t['tool_icon']))
-            self._scroll_bottom()
+            detail = msg.get('detail', '')[:80]
+            self._tool_lines.append(('tool_start', f'⚙ {tool} {detail}'))
+            self._update_tool_display()
         elif status == 'tool_exec_done':
             parts = []
             if msg.get('durationMs'):
                 parts.append(f'{msg["durationMs"]}ms')
             if msg.get('resultChars'):
                 parts.append(f'{msg["resultChars"]:,} chars')
-            self._log(Text(f'  └ ✓ {" · ".join(parts)}', style=t['tool_done']))
-            self._scroll_bottom()
+            self._tool_lines.append(('tool_done', f'✓ {" · ".join(parts)}'))
+            self._update_tool_display()
+
+    def _update_tool_display(self):
+        """Render tool activity lines into the transcript."""
+        if not self._tool_lines:
+            return
+        t = self.theme_data
+        last_type, last_text = self._tool_lines[-1]
+        style_map = {
+            'thinking': t['thinking'],
+            'tool_start': t['tool_icon'],
+            'tool_done': t['tool_done'],
+            'read': t['read_icon'],
+            'edit': t['edit_icon'],
+        }
+        style = style_map.get(last_type, 'dim')
+        self._log(Text(f'  {last_text}', style=style))
+        self._scroll_bottom()
 
     async def _on_code_view(self, msg):
         t = self.theme_data
@@ -393,32 +423,39 @@ class AcornApp(App):
         lines = msg.get('content', '').count('\n') + 1
         is_new = msg.get('isNew', False)
         label = 'new' if is_new else 'read'
-        self._log(Text(f'  │ {label} {path} ({lines} lines)', style=t['read_icon']))
-        self._scroll_bottom()
+        self._tool_lines.append(('read', f'📄 {label} {path} ({lines} lines)'))
+        self._update_tool_display()
 
     async def _on_code_diff(self, msg):
         t = self.theme_data
         path = msg.get('path', '')
-        self._log(Text(f'  │ edit {path}', style=t['edit_icon']))
-        self._scroll_bottom()
+        self._tool_lines.append(('edit', f'✏️  edit {path}'))
+        self._update_tool_display()
 
     async def _on_done(self, msg):
         self.generating = False
         response = ''.join(self._response_text)
         t = self.theme_data
 
-        # Clear stream area and write final to transcript log
+        # Clear stream area
         try:
             self.query_one('#stream-area', Static).update('')
         except NoMatches:
             pass
 
+        # Write final response as a bordered panel
         if response.strip():
             try:
-                self._log(Markdown(response))
+                content = Markdown(response)
             except Exception:
-                self._log(Text(response))
-        self._log(Text(''))
+                content = Text(response)
+            self._log(Panel(
+                content,
+                title='[bold]acorn[/bold]',
+                title_align='left',
+                border_style=t['accent'],
+                padding=(0, 1),
+            ))
 
         # Usage stats
         usage = msg.get('usage', {})
@@ -436,21 +473,29 @@ class AcornApp(App):
                     parts.append(f'{total} tools')
             self._log(Text(f'  {"  ".join(parts)}', style=t['usage']))
 
-        self._log(Text(''))  # spacing
         self._scroll_bottom()
 
-        # Plan mode: check if plan is ready
         if self.plan_mode and response and ('PLAN_READY' in response or len(response) > 500):
-            self._log(Text('  Plan ready — type "execute" to run it, or provide feedback', style=t['accent']))
+            self._log(Panel(
+                'Type [bold]execute[/bold] to run the plan, or provide feedback',
+                border_style=t['accent2'],
+                padding=(0, 1),
+            ))
             self._scroll_bottom()
 
         self._stream_buffer = ''
         self._response_text = []
+        self._tool_lines = []
 
     async def _on_error(self, msg):
         self.generating = False
         error = msg.get('error', 'Unknown error')
-        self._log(Panel(f'[bold red]{error}[/bold red]', title='Error', border_style='red'))
+        self._log(Panel(
+            Text(error, style='bold red'),
+            title='[bold red]Error[/bold red]',
+            border_style='red',
+            padding=(0, 1),
+        ))
         self._scroll_bottom()
 
     async def _on_tool(self, msg):
@@ -458,7 +503,7 @@ class AcornApp(App):
 
 
 class TuiPermissions:
-    """Permissions that work with the TUI — auto-approve for now."""
+    """Permissions that work with the TUI."""
     def __init__(self, app):
         self.app = app
         self.approve_all = False
@@ -471,12 +516,12 @@ class TuiPermissions:
     async def prompt(self, tool_name, input):
         if self.approve_all:
             return True
-        # In TUI mode, log the request and auto-approve with notification
         summary = tool_name
         if tool_name == 'exec':
             summary = f'exec: {input.get("command", "")[:80]}'
         elif tool_name in ('write_file', 'edit_file'):
             summary = f'{tool_name}: {input.get("path", "")}'
-        self.app._log(Text(f'  ⚡ Auto-approved: {summary}', style='yellow'))
+        t = self.app.theme_data
+        self.app._log(Text(f'  ⚡ Auto-approved: {summary}', style=t['warning']))
         self.app._scroll_bottom()
         return True
