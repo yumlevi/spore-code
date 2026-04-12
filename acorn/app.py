@@ -95,22 +95,33 @@ class AcornApp(App):
     ]
 
     CSS = """
+    Screen {
+        background: $background;
+        color: $foreground;
+    }
     #header-bar {
         dock: top;
         height: 3;
         padding: 0 1;
+        background: $surface;
+        color: $foreground;
+        border-bottom: solid $accent;
     }
     #main-scroll {
         height: 1fr;
+        background: $background;
     }
     #transcript {
         height: auto;
         padding: 0 1;
+        background: $background;
+        color: $foreground;
     }
     #stream-area {
         height: auto;
         padding: 0 2;
         margin: 0 1;
+        background: $background;
     }
     #mode-bar {
         dock: bottom;
@@ -121,6 +132,20 @@ class AcornApp(App):
         dock: bottom;
         height: 3;
         padding: 0 1;
+        background: $surface;
+        color: $foreground;
+        border-top: solid $accent;
+    }
+    Input {
+        background: $surface;
+        color: $foreground;
+    }
+    Input:focus {
+        border: tall $accent;
+    }
+    RichLog {
+        background: $background;
+        color: $foreground;
     }
     """
 
@@ -189,23 +214,10 @@ class AcornApp(App):
         """Apply theme by switching to the registered Textual theme."""
         t = self.theme_data
         theme_name = f'acorn-{t["name"]}'
-
-        # Switch Textual theme — this handles background, surface, panel, etc.
         try:
             self.theme = theme_name
-        except Exception:
-            pass
-
-        # Extra styling Textual doesn't handle — borders from our theme
-        border_color = t['border']
-        try:
-            self.query_one('#header-bar', Static).styles.border_bottom = ('solid', border_color)
-        except NoMatches:
-            pass
-        try:
-            self.query_one('#user-input', Input).styles.border_top = ('solid', border_color)
-        except NoMatches:
-            pass
+        except Exception as e:
+            pass  # Theme might not be registered yet on first call
 
     def _update_header(self):
         t = self.theme_data
