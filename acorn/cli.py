@@ -19,19 +19,111 @@ from acorn.tools.executor import ToolExecutor
 from acorn.commands.registry import get_command
 import acorn.commands.builtin  # noqa: F401 — registers commands
 
-PLAN_PREFIX = '[MODE: Plan only. Analyze and describe what you would do step by step, but do NOT make any changes (no write_file, edit_file, or exec). You MAY use read_file, glob, grep, web_search, and web_fetch to research and understand the codebase. Present a detailed plan and wait for approval before executing anything.]\n\n'
+PLAN_PREFIX = (
+    '[MODE: Plan only. You are in planning mode.\n'
+    'Phase 1 — UNDERSTAND: Read files, search the codebase, and use web_search/web_fetch as needed to fully understand the task. '
+    'Ask the user clarifying questions if anything is ambiguous — do NOT assume.\n'
+    'Phase 2 — PLAN: Once you have enough context, present a clear step-by-step plan of what you would change and why. '
+    'Include file paths and describe each change.\n'
+    'RULES: Do NOT make any changes (no write_file, edit_file, or exec). '
+    'You MAY use read_file, glob, grep, web_search, and web_fetch.\n'
+    'End your plan with the exact line: "PLAN_READY" on its own line so the client knows to prompt for approval.]\n\n'
+)
+
+PLAN_EXECUTE_MSG = (
+    '[The user has approved the plan above. Switch to execute mode and implement it now. '
+    'Proceed step by step, executing all the changes you outlined.]'
+)
+
+
+def _save_plan(cwd: str, plan_text: str) -> str:
+    """Save an approved plan to .acorn/plans/ in the working directory."""
+    import time
+    plans_dir = os.path.join(cwd, '.acorn', 'plans')
+    try:
+        os.makedirs(plans_dir, exist_ok=True)
+        ts = time.strftime('%Y%m%d-%H%M%S')
+        filename = f'plan-{ts}.md'
+        filepath = os.path.join(plans_dir, filename)
+        # Strip the PLAN_READY marker
+        clean = plan_text.replace('PLAN_READY', '').strip()
+        with open(filepath, 'w') as f:
+            f.write(f'# Plan — {ts}\n\n{clean}\n')
+        return filepath
+    except Exception:
+        return None
+
+
+async def prompt_plan_action(renderer) -> str:
+    """Show arrow-key menu after a plan is presented. Returns 'execute', 'feedback', or 'cancel'."""
+    from prompt_toolkit import Application
+    from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.layout import Layout
+    from prompt_toolkit.layout.containers import HSplit, Window
+    from prompt_toolkit.layout.controls import FormattedTextControl
+
+    choices = [
+        ('execute', 'Execute plan'),
+        ('feedback', 'Provide feedback'),
+        ('cancel', 'Cancel'),
+    ]
+    selected = [0]
+    result = [None]
+
+    def get_text():
+        lines = []
+        lines.append(('bold', '\n  What would you like to do?\n\n'))
+        for i, (key, label) in enumerate(choices):
+            if i == selected[0]:
+                lines.append(('bg:ansiblue fg:white bold', f'  ▸ {label}  '))
+            else:
+                lines.append(('', f'    {label}  '))
+            lines.append(('', '\n'))
+        lines.append(('dim', '\n  ↑↓ to select, Enter to confirm\n'))
+        return lines
+
+    kb = KeyBindings()
+
+    @kb.add('up')
+    def _up(event):
+        selected[0] = (selected[0] - 1) % len(choices)
+
+    @kb.add('down')
+    def _down(event):
+        selected[0] = (selected[0] + 1) % len(choices)
+
+    @kb.add('enter')
+    def _enter(event):
+        result[0] = choices[selected[0]][0]
+        event.app.exit()
+
+    @kb.add('c-c')
+    def _cancel(event):
+        result[0] = 'cancel'
+        event.app.exit()
+
+    app = Application(
+        layout=Layout(HSplit([Window(FormattedTextControl(get_text))])),
+        key_bindings=kb,
+        full_screen=False,
+    )
+    await app.run_async()
+    return result[0] or 'cancel'
 
 
 async def send_and_stream(conn, session_id, user, content, renderer):
-    """Send a message and stream the response."""
+    """Send a message and stream the response. Returns the final response text."""
     done_event = asyncio.Event()
     final_data = {}
+    full_text = []
 
     async def on_start(msg):
         pass
 
     async def on_delta(msg):
-        renderer.stream_delta(msg.get('text', ''))
+        text = msg.get('text', '')
+        full_text.append(text)
+        renderer.stream_delta(text)
 
     async def on_status(msg):
         status = msg.get('status', '')
@@ -86,12 +178,14 @@ async def send_and_stream(conn, session_id, user, content, renderer):
         final_data.get('toolUsage'),
     )
 
+    return ''.join(full_text)
+
 
 async def run_repl(conn, session_id, user, renderer, executor, initial_plan_mode=False):
     from prompt_toolkit import PromptSession
     from prompt_toolkit.history import FileHistory
     from prompt_toolkit.key_binding import KeyBindings
-    from prompt_toolkit.formatted_text import HTML
+    from prompt_toolkit.formatted_text import FormattedText
     from pathlib import Path
 
     history_path = Path.home() / '.acorn' / 'history'
@@ -110,9 +204,9 @@ async def run_repl(conn, session_id, user, renderer, executor, initial_plan_mode
         event.app.invalidate()
 
     def _bottom_toolbar():
-        mode = '[plan] research only — no changes' if state['plan_mode'] else '[execute] full agent mode'
-        mode_color = 'bg:ansiblue' if state['plan_mode'] else 'bg:ansigreen'
-        return HTML(f'<{mode_color}> {mode} </> <style bg="ansiblack"> shift+tab to toggle </style>')
+        if state['plan_mode']:
+            return [('bg:ansiblue fg:white', ' [plan] research only — no changes '), ('', ' shift+tab to toggle ')]
+        return [('bg:ansigreen fg:black', ' [execute] full agent mode '), ('', ' shift+tab to toggle ')]
 
     session = PromptSession(
         history=FileHistory(str(history_path)),
@@ -170,7 +264,24 @@ async def run_repl(conn, session_id, user, renderer, executor, initial_plan_mode
             if state['plan_mode']:
                 content = PLAN_PREFIX + content
 
-            await send_and_stream(conn, session_id, user, content, renderer)
+            response_text = await send_and_stream(conn, session_id, user, content, renderer)
+
+            # If in plan mode and plan looks complete, show action menu
+            if state['plan_mode'] and response_text and ('PLAN_READY' in response_text or len(response_text) > 500):
+                action = await prompt_plan_action(renderer)
+                if action == 'execute':
+                    # Save plan to .acorn/plans/ before executing
+                    plan_path = _save_plan(cwd, response_text)
+                    if plan_path:
+                        renderer.show_info(f'Plan saved to {plan_path}')
+                    state['plan_mode'] = False
+                    renderer.console.print('[green]Executing plan...[/green]\n')
+                    await send_and_stream(conn, session_id, user, PLAN_EXECUTE_MSG, renderer)
+                elif action == 'feedback':
+                    renderer.console.print('[dim]Type your feedback below — the agent will revise the plan.[/dim]')
+                    # Stay in plan mode, next prompt will be feedback
+                elif action == 'cancel':
+                    renderer.console.print('[dim]Plan discarded.[/dim]')
 
         except KeyboardInterrupt:
             continue

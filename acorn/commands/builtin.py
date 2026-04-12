@@ -71,7 +71,8 @@ async def cmd_tree(args, **ctx):
 
 @command('/init')
 async def cmd_init(args, **ctx):
-    path = os.path.join(os.getcwd(), 'ACORN.md')
+    cwd = os.getcwd()
+    path = os.path.join(cwd, 'ACORN.md')
     if os.path.exists(path):
         ctx['renderer'].console.print('[yellow]ACORN.md already exists[/yellow]')
         return
@@ -82,6 +83,14 @@ async def cmd_init(args, **ctx):
             '## Overview\n\n## Conventions\n\n## Important files\n'
         )
     ctx['renderer'].console.print('[green]Created ACORN.md[/green]')
+    # Add .acorn/ to .gitignore if it exists
+    gitignore = os.path.join(cwd, '.gitignore')
+    if os.path.exists(gitignore):
+        content = open(gitignore).read()
+        if '.acorn/' not in content:
+            with open(gitignore, 'a') as f:
+                f.write('\n# Acorn local data\n.acorn/\n')
+            ctx['renderer'].show_info('Added .acorn/ to .gitignore')
 
 
 @command('/approve-all')

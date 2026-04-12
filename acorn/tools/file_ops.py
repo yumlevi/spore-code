@@ -5,12 +5,20 @@ import os
 
 def _resolve(filepath: str, cwd: str) -> str:
     if os.path.isabs(filepath):
-        return filepath
-    return os.path.normpath(os.path.join(cwd, filepath))
+        resolved = os.path.normpath(filepath)
+    else:
+        resolved = os.path.normpath(os.path.join(cwd, filepath))
+    # Enforce: must be within cwd
+    if not resolved.startswith(os.path.normpath(cwd) + os.sep) and resolved != os.path.normpath(cwd):
+        raise PermissionError(f'Path {resolved} is outside the working directory {cwd}')
+    return resolved
 
 
 def read_file(input: dict, cwd: str) -> dict:
-    filepath = _resolve(input.get('path', ''), cwd)
+    try:
+        filepath = _resolve(input.get('path', ''), cwd)
+    except PermissionError as e:
+        return {'error': str(e)}
     if not os.path.exists(filepath):
         return {'error': f'File not found: {filepath}'}
     try:
@@ -26,7 +34,10 @@ def read_file(input: dict, cwd: str) -> dict:
 
 
 def write_file(input: dict, cwd: str) -> dict:
-    filepath = _resolve(input.get('path', ''), cwd)
+    try:
+        filepath = _resolve(input.get('path', ''), cwd)
+    except PermissionError as e:
+        return {'error': str(e)}
     content = input.get('content', '')
     try:
         os.makedirs(os.path.dirname(filepath) or '.', exist_ok=True)
@@ -38,7 +49,10 @@ def write_file(input: dict, cwd: str) -> dict:
 
 
 def edit_file(input: dict, cwd: str) -> dict:
-    filepath = _resolve(input.get('path', ''), cwd)
+    try:
+        filepath = _resolve(input.get('path', ''), cwd)
+    except PermissionError as e:
+        return {'error': str(e)}
     if not os.path.exists(filepath):
         return {'error': f'File not found: {filepath}'}
     try:
