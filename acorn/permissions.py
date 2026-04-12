@@ -7,8 +7,9 @@ AUTO_APPROVE = {'read_file', 'glob', 'grep'}
 
 
 class Permissions:
-    def __init__(self):
+    def __init__(self, renderer=None):
         self.approve_all = False
+        self.renderer = renderer
 
     def is_auto_approved(self, tool_name: str, input: dict) -> bool:
         if self.approve_all:
@@ -19,11 +20,17 @@ class Permissions:
         if self.approve_all:
             return True
         summary = self._summarize(tool_name, input)
-        # Run sync prompt in executor to not block the event loop
+        # Stop Live display so the prompt is visible
+        if self.renderer:
+            self.renderer._stop_live()
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
+        result = await loop.run_in_executor(
             None, lambda: Confirm.ask(f'  Allow [bold]{tool_name}[/bold]: {summary}?', default=True)
         )
+        # Restart Live display
+        if self.renderer:
+            self.renderer._ensure_live()
+        return result
 
     def _summarize(self, name: str, input: dict) -> str:
         if name == 'exec':

@@ -320,7 +320,7 @@ async def async_main(host, port, user, key, message=None, continue_session=False
         session_id = compute_session_id(user, cwd)
 
     # Tools
-    permissions = Permissions()
+    permissions = Permissions(renderer=renderer)
     executor = ToolExecutor(permissions, renderer, cwd)
 
     # Connect WebSocket
