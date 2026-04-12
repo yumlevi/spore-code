@@ -138,6 +138,13 @@ class AcornApp(App):
 
         self.query_one('#user-input', Input).focus()
 
+    def on_click(self, event):
+        """Click anywhere refocuses the input field."""
+        try:
+            self.query_one('#user-input', Input).focus()
+        except NoMatches:
+            pass
+
     # ── UI updates ─────────────────────────────────────────────────
 
     def _apply_theme(self):
