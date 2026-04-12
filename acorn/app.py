@@ -17,7 +17,7 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.console import Group
 
-from acorn.config import save_last_session, ensure_local_dir
+from acorn.config import save_last_session, ensure_local_dir, load_config, save_config
 from acorn.connection import Connection, AuthError
 from acorn.context import gather_context
 from acorn.permissions import Permissions
@@ -59,11 +59,13 @@ class AcornApp(App):
     ]
 
     CSS = """
+    Screen {
+        background: $background;
+    }
     #header-bar {
         dock: top;
         height: 3;
         padding: 0 1;
-        border-bottom: solid dimgrey;
     }
     #main-scroll {
         height: 1fr;
@@ -84,7 +86,6 @@ class AcornApp(App):
     }
     #user-input {
         dock: bottom;
-        border-top: solid dimgrey;
         height: 3;
         padding: 0 1;
     }
@@ -116,6 +117,7 @@ class AcornApp(App):
         yield Static('', id='mode-bar')
 
     def on_mount(self):
+        self._apply_theme()
         self._update_header()
         self._update_mode_bar()
         ensure_local_dir(self.cwd)
@@ -137,6 +139,57 @@ class AcornApp(App):
         self.query_one('#user-input', Input).focus()
 
     # ── UI updates ─────────────────────────────────────────────────
+
+    def _apply_theme(self):
+        """Apply theme background/foreground to all widgets."""
+        t = self.theme_data
+        bg = t['bg']
+        fg = t['fg']
+        bg_header = t['bg_header']
+        bg_input = t['bg_input']
+        border_color = t['border']
+
+        # App background
+        self.styles.background = bg
+
+        # Header
+        try:
+            h = self.query_one('#header-bar', Static)
+            h.styles.background = bg_header
+            h.styles.color = fg
+            h.styles.border_bottom = ('solid', border_color)
+        except NoMatches:
+            pass
+
+        # Main scroll area
+        try:
+            ms = self.query_one('#main-scroll', VerticalScroll)
+            ms.styles.background = bg
+        except NoMatches:
+            pass
+
+        # Transcript
+        try:
+            tr = self.query_one('#transcript', RichLog)
+            tr.styles.background = bg
+        except NoMatches:
+            pass
+
+        # Stream area
+        try:
+            sa = self.query_one('#stream-area', Static)
+            sa.styles.background = bg
+        except NoMatches:
+            pass
+
+        # Input
+        try:
+            inp = self.query_one('#user-input', Input)
+            inp.styles.background = bg_input
+            inp.styles.color = fg
+            inp.styles.border_top = ('solid', border_color)
+        except NoMatches:
+            pass
 
     def _update_header(self):
         t = self.theme_data
@@ -165,19 +218,18 @@ class AcornApp(App):
         except NoMatches:
             return
         width = self.size.width or 80
+        t = self.theme_data
         if self.plan_mode:
-            bg = 'on dark_blue'
             pad = ' ' * max(0, width - 42)
             line = Text()
-            line.append(' PLAN ', style='bold white on blue')
-            line.append(f' research & plan only  ctrl+p toggle {pad}', style=f'white {bg}')
+            line.append(' PLAN ', style=t['plan_label'])
+            line.append(f' research & plan only  ctrl+p toggle {pad}', style=t['plan_bar_bg'])
             bar.update(line)
         else:
-            bg = 'on dark_green'
             pad = ' ' * max(0, width - 42)
             line = Text()
-            line.append(' EXECUTE ', style='bold black on green')
-            line.append(f' full agent mode  ctrl+p toggle {pad}', style=f'black {bg}')
+            line.append(' EXECUTE ', style=t['exec_label'])
+            line.append(f' full agent mode  ctrl+p toggle {pad}', style=t['exec_bar_bg'])
             bar.update(line)
 
     def _log(self, renderable):
@@ -290,9 +342,19 @@ class AcornApp(App):
             available = list_themes()
             if args and args in available:
                 self.theme_data = get_theme(args)
+                self._apply_theme()
                 self._update_mode_bar()
                 self._update_header()
-                self._log(Text(f'  Theme → {args}', style=t['accent']))
+                # Save to global config
+                try:
+                    cfg = load_config() or {}
+                    if 'display' not in cfg:
+                        cfg['display'] = {}
+                    cfg['display']['theme'] = args
+                    save_config(cfg)
+                except Exception:
+                    pass
+                self._log(Text(f'  Theme → {args} (saved)', style=self.theme_data['accent']))
             elif args:
                 self._log(Text(f'  Unknown theme. Available: {", ".join(available)}', style='red'))
             else:
