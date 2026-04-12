@@ -4,6 +4,10 @@ import asyncio
 import os
 import time
 
+# Ensure truecolor so custom theme backgrounds aren't mapped to black.
+if not os.environ.get("COLORTERM"):
+    os.environ["COLORTERM"] = "truecolor"
+
 from textual.app import App, ComposeResult
 from textual.containers import Vertical, VerticalScroll
 from textual.widgets import Static, Input, RichLog

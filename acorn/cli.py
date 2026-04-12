@@ -6,6 +6,12 @@ import json
 import os
 import sys
 
+# Ensure truecolor support so custom theme backgrounds render correctly.
+# Without this, terminals reporting TERM=linux (common on Unraid/SSH) only
+# advertise 8 colours, causing Rich/Textual to map dark hex backgrounds to black.
+if not os.environ.get("COLORTERM"):
+    os.environ["COLORTERM"] = "truecolor"
+
 from rich.console import Console
 
 from acorn.config import load_config, merged_config, run_setup_wizard, save_last_session, load_last_session, ensure_local_dir
