@@ -47,7 +47,7 @@ class AcornApp(App):
 
     BINDINGS = [
         Binding('ctrl+c', 'quit_check', 'Quit', show=False),
-        Binding('shift+tab', 'toggle_plan', 'Toggle Plan Mode', show=True),
+        Binding('ctrl+p', 'toggle_plan', 'Plan Mode', show=True, priority=True),
         Binding('escape', 'stop_generation', 'Stop', show=False),
     ]
 
@@ -55,19 +55,13 @@ class AcornApp(App):
     #header-bar {
         dock: top;
         height: 3;
-        background: $surface;
         padding: 0 2;
+        color: auto;
     }
     #transcript {
         height: 1fr;
         padding: 0 1;
         scrollbar-size: 1 1;
-    }
-    #input-area {
-        dock: bottom;
-        height: auto;
-        max-height: 8;
-        padding: 0 1;
     }
     #mode-bar {
         dock: bottom;
@@ -75,6 +69,8 @@ class AcornApp(App):
     }
     Input {
         border: none;
+        dock: bottom;
+        margin: 0 1;
     }
     """
 
@@ -98,11 +94,15 @@ class AcornApp(App):
         branch = get_git_branch(self.cwd)
 
         icon = t.get('icon', '🌰')
-        header_text = f" {icon} Acorn  {self.user} → {proj}"
+        header = Text()
+        header.append(f' {icon} Acorn  ', style='bold')
+        header.append(self.user, style=t['prompt_user'])
+        header.append(' → ', style='dim')
+        header.append(proj, style=t['prompt_project'])
         if branch:
-            header_text += f" ({branch})"
+            header.append(f' ({branch})', style=t['prompt_branch'])
 
-        yield Static(header_text, id='header-bar')
+        yield Static(header, id='header-bar')
         yield RichLog(id='transcript', wrap=True, highlight=True, markup=True)
         yield Static('', id='mode-bar')
         yield Input(placeholder='Send a message...', id='user-input')
@@ -129,12 +129,29 @@ class AcornApp(App):
         # Focus input
         self.query_one('#user-input', Input).focus()
 
+    def _update_header(self):
+        t = self.theme_data
+        proj = project_name(self.cwd)
+        branch = get_git_branch(self.cwd)
+        icon = t.get('icon', '🌰')
+        header = Text()
+        header.append(f' {icon} Acorn  ', style='bold')
+        header.append(self.user, style=t['prompt_user'])
+        header.append(' → ', style='dim')
+        header.append(proj, style=t['prompt_project'])
+        if branch:
+            header.append(f' ({branch})', style=t['prompt_branch'])
+        try:
+            self.query_one('#header-bar', Static).update(header)
+        except NoMatches:
+            pass
+
     def _update_mode_bar(self):
         bar = self.query_one('#mode-bar', Static)
         if self.plan_mode:
-            bar.update('[white on blue] PLAN [/] research only — shift+tab to toggle')
+            bar.update('[white on blue] PLAN [/] research only — ctrl+p to toggle')
         else:
-            bar.update('[black on green] EXECUTE [/] full agent mode — shift+tab to toggle')
+            bar.update('[black on green] EXECUTE [/] full agent mode — ctrl+p to toggle')
 
     def _log(self, renderable):
         try:
@@ -238,6 +255,7 @@ class AcornApp(App):
                 if args in available:
                     self.theme_data = get_theme(args)
                     self._update_mode_bar()
+                    self._update_header()
                     self._log(Text(f'  Theme changed to {args}', style='dim'))
                 else:
                     self._log(Text(f'  Unknown theme. Available: {", ".join(available)}', style='dim'))
@@ -257,7 +275,7 @@ class AcornApp(App):
                 '/theme [name]    Switch theme\n'
                 '/approve-all     Auto-approve tools\n'
                 '\n'
-                'Shift+Tab        Toggle plan/execute\n'
+                'Ctrl+P           Toggle plan/execute\n'
                 'Ctrl+C Ctrl+C    Quit\n'
                 'Esc              Stop generation',
                 title='Acorn Commands',
