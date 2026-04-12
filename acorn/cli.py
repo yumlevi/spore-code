@@ -343,6 +343,7 @@ async def async_main(host, port, user, key, theme_name='dark', message=None, con
         return 1
 
     conn.tool_executor = executor
+    save_last_session(session_id, cwd)
 
     try:
         if message:
@@ -350,10 +351,13 @@ async def async_main(host, port, user, key, theme_name='dark', message=None, con
             content = ctx + '\n\n' + ' '.join(message)
             if plan_mode:
                 content = PLAN_PREFIX + content
-            save_last_session(session_id, cwd)
             await send_and_stream(conn, session_id, user, content, renderer)
         else:
-            await run_repl(conn, session_id, user, renderer, executor, initial_plan_mode=plan_mode)
+            # Full-screen TUI mode
+            from acorn.app import AcornApp
+            app = AcornApp(conn, session_id, user, theme_name, cwd)
+            app.plan_mode = plan_mode
+            await app.run_async()
     finally:
         await conn.close()
 
