@@ -8,7 +8,7 @@ import sys
 
 from rich.console import Console
 
-from acorn.config import load_config, run_setup_wizard, save_last_session, load_last_session
+from acorn.config import load_config, merged_config, run_setup_wizard, save_last_session, load_last_session, ensure_local_dir
 from acorn.connection import Connection, AuthError
 from acorn.context import gather_context
 from acorn.permissions import Permissions
@@ -39,17 +39,16 @@ PLAN_EXECUTE_MSG = (
 def _save_plan(cwd: str, plan_text: str) -> str:
     """Save an approved plan to .acorn/plans/ in the working directory."""
     import time
-    plans_dir = os.path.join(cwd, '.acorn', 'plans')
     try:
-        os.makedirs(plans_dir, exist_ok=True)
+        local = ensure_local_dir(cwd)
+        plans_dir = local / 'plans'
+        plans_dir.mkdir(parents=True, exist_ok=True)
         ts = time.strftime('%Y%m%d-%H%M%S')
         filename = f'plan-{ts}.md'
-        filepath = os.path.join(plans_dir, filename)
-        # Strip the PLAN_READY marker
+        filepath = plans_dir / filename
         clean = plan_text.replace('PLAN_READY', '').strip()
-        with open(filepath, 'w') as f:
-            f.write(f'# Plan — {ts}\n\n{clean}\n')
-        return filepath
+        filepath.write_text(f'# Plan — {ts}\n\n{clean}\n')
+        return str(filepath)
     except Exception:
         return None
 
@@ -204,9 +203,10 @@ async def run_repl(conn, session_id, user, renderer, executor, initial_plan_mode
         event.app.invalidate()
 
     def _bottom_toolbar():
+        t = renderer.theme
         if state['plan_mode']:
-            return [('bg:ansiblue fg:white', ' [plan] research only — no changes '), ('', ' shift+tab to toggle ')]
-        return [('bg:ansigreen fg:black', ' [execute] full agent mode '), ('', ' shift+tab to toggle ')]
+            return [(t['plan_bar_bg'], ' [plan] research only — no changes '), (t['toolbar_hint'], ' shift+tab to toggle ')]
+        return [(t['exec_bar_bg'], ' [execute] full agent mode '), (t['toolbar_hint'], ' shift+tab to toggle ')]
 
     session = PromptSession(
         history=FileHistory(str(history_path)),
@@ -219,8 +219,10 @@ async def run_repl(conn, session_id, user, renderer, executor, initial_plan_mode
 
     save_last_session(session_id, cwd)
 
-    renderer.console.print(f'[bold]Acorn[/bold] connected as [cyan]{user}[/cyan] to [green]{proj}[/green]')
-    renderer.console.print('[dim]Type /help for commands, Shift+Tab to toggle plan mode, /quit to exit[/dim]\n')
+    renderer.show_banner(user, proj)
+
+    # Ensure local .acorn/ dir exists
+    ensure_local_dir(cwd)
 
     while True:
         try:
@@ -289,9 +291,9 @@ async def run_repl(conn, session_id, user, renderer, executor, initial_plan_mode
             break
 
 
-async def async_main(host, port, user, key, message=None, continue_session=False, plan_mode=False):
+async def async_main(host, port, user, key, theme_name='dark', message=None, continue_session=False, plan_mode=False):
     console = Console()
-    renderer = Renderer(console)
+    renderer = Renderer(console, theme_name=theme_name)
 
     # Authenticate
     conn = Connection(host, port)
@@ -360,17 +362,24 @@ def main():
                         help='Plan mode — agent plans but does not execute')
     args = parser.parse_args()
 
-    cfg = load_config()
-    if not cfg:
-        cfg = run_setup_wizard()
+    global_cfg = load_config()
+    if not global_cfg:
+        global_cfg = run_setup_wizard()
 
-    host = args.host or cfg['connection']['host']
-    port = args.port or cfg['connection']['port']
-    user = args.user or cfg['connection']['user']
-    key = cfg['connection']['key']
+    # Merge global + local project config
+    cfg = merged_config(os.getcwd()) if global_cfg else global_cfg
+
+    conn = cfg.get('connection', {})
+    disp = cfg.get('display', {})
+    host = args.host or conn.get('host', 'localhost')
+    port = args.port or conn.get('port', 18810)
+    user = args.user or conn.get('user', '')
+    key = conn.get('key', '')
+    theme_name = disp.get('theme', 'dark')
 
     exit_code = asyncio.run(async_main(
         host, port, user, key,
+        theme_name=theme_name,
         message=args.message or None,
         continue_session=args.continue_session,
         plan_mode=args.plan,

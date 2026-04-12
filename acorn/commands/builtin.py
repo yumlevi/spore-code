@@ -4,6 +4,7 @@ import os
 from acorn.commands.registry import command
 from acorn.context import gather_context, _tree
 from acorn.protocol import clear_message, stop_message
+from acorn.themes import get_theme, list_themes
 from rich.panel import Panel
 
 
@@ -18,6 +19,7 @@ async def cmd_help(args, **ctx):
         '/status          Connection info\n'
         '/context         Show project context\n'
         '/tree [depth]    Show project tree\n'
+        '/theme [name]    Switch theme (dark, light, oak, forest)\n'
         '/init            Create ACORN.md template\n'
         '/approve-all     Auto-approve all tools',
         title='Acorn Commands',
@@ -106,3 +108,20 @@ async def cmd_plan(args, **ctx):
         ctx['renderer'].console.print('[cyan]Plan mode ON[/cyan] — agent will research and plan but not execute changes')
     else:
         ctx['renderer'].console.print('[cyan]Plan mode OFF[/cyan] — agent will execute normally')
+
+
+@command('/theme')
+async def cmd_theme(args, **ctx):
+    name = args.strip()
+    available = list_themes()
+    if not name:
+        current = ctx['renderer'].theme.get('name', 'dark')
+        ctx['renderer'].console.print(f'Current theme: [bold]{current}[/bold]')
+        ctx['renderer'].console.print(f'Available: {", ".join(available)}')
+        ctx['renderer'].console.print('Usage: /theme <name>')
+        return
+    if name not in available:
+        ctx['renderer'].show_error(f'Unknown theme: {name}. Available: {", ".join(available)}')
+        return
+    ctx['renderer'].theme = get_theme(name)
+    ctx['renderer'].console.print(f'Theme changed to [bold]{name}[/bold]')
