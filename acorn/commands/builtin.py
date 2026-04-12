@@ -14,6 +14,7 @@ async def cmd_help(args, **ctx):
         '/quit            Exit Acorn\n'
         '/clear           Clear session history\n'
         '/stop            Abort current generation\n'
+        '/plan            Toggle plan mode (research only, no changes)\n'
         '/status          Connection info\n'
         '/context         Show project context\n'
         '/tree [depth]    Show project tree\n'
@@ -87,3 +88,12 @@ async def cmd_init(args, **ctx):
 async def cmd_approve_all(args, **ctx):
     ctx['executor'].permissions.approve_all = True
     ctx['renderer'].console.print('[yellow]All tool executions will be auto-approved[/yellow]')
+
+
+@command('/plan')
+async def cmd_plan(args, **ctx):
+    ctx['state']['plan_mode'] = not ctx['state'].get('plan_mode', False)
+    if ctx['state']['plan_mode']:
+        ctx['renderer'].console.print('[cyan]Plan mode ON[/cyan] — agent will research and plan but not execute changes')
+    else:
+        ctx['renderer'].console.print('[cyan]Plan mode OFF[/cyan] — agent will execute normally')

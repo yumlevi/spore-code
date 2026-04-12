@@ -8,7 +8,7 @@ import sys
 
 from rich.console import Console
 
-from acorn.config import load_config, run_setup_wizard
+from acorn.config import load_config, run_setup_wizard, save_last_session, load_last_session
 from acorn.connection import Connection, AuthError
 from acorn.context import gather_context
 from acorn.permissions import Permissions
@@ -18,6 +18,8 @@ from acorn.session import compute_session_id, project_name, get_git_branch
 from acorn.tools.executor import ToolExecutor
 from acorn.commands.registry import get_command
 import acorn.commands.builtin  # noqa: F401 — registers commands
+
+PLAN_PREFIX = '[MODE: Plan only. Analyze and describe what you would do step by step, but do NOT make any changes (no write_file, edit_file, or exec). You MAY use read_file, glob, grep, web_search, and web_fetch to research and understand the codebase. Present a detailed plan and wait for approval before executing anything.]\n\n'
 
 
 async def send_and_stream(conn, session_id, user, content, renderer):
@@ -85,22 +87,46 @@ async def send_and_stream(conn, session_id, user, content, renderer):
     )
 
 
-async def run_repl(conn, session_id, user, renderer, executor):
+async def run_repl(conn, session_id, user, renderer, executor, initial_plan_mode=False):
     from prompt_toolkit import PromptSession
     from prompt_toolkit.history import FileHistory
+    from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.formatted_text import HTML
     from pathlib import Path
 
     history_path = Path.home() / '.acorn' / 'history'
     history_path.parent.mkdir(parents=True, exist_ok=True)
-    session = PromptSession(history=FileHistory(str(history_path)))
 
-    state = {'context_sent': False}
+    state = {'context_sent': False, 'plan_mode': initial_plan_mode}
+
+    # Key bindings — Shift+Tab toggles plan/execute mode
+    kb = KeyBindings()
+
+    @kb.add('s-tab')
+    def _toggle_plan(event):
+        state['plan_mode'] = not state['plan_mode']
+        mode = 'plan' if state['plan_mode'] else 'execute'
+        # Force prompt refresh by invalidating the app
+        event.app.invalidate()
+
+    def _bottom_toolbar():
+        mode = '[plan] research only — no changes' if state['plan_mode'] else '[execute] full agent mode'
+        mode_color = 'bg:ansiblue' if state['plan_mode'] else 'bg:ansigreen'
+        return HTML(f'<{mode_color}> {mode} </> <style bg="ansiblack"> shift+tab to toggle </style>')
+
+    session = PromptSession(
+        history=FileHistory(str(history_path)),
+        key_bindings=kb,
+        bottom_toolbar=_bottom_toolbar,
+    )
+
     cwd = os.getcwd()
     proj = project_name(cwd)
-    branch = get_git_branch(cwd)
+
+    save_last_session(session_id, cwd)
 
     renderer.console.print(f'[bold]Acorn[/bold] connected as [cyan]{user}[/cyan] to [green]{proj}[/green]')
-    renderer.console.print('[dim]Type /help for commands, /quit to exit[/dim]\n')
+    renderer.console.print('[dim]Type /help for commands, Shift+Tab to toggle plan mode, /quit to exit[/dim]\n')
 
     while True:
         try:
@@ -140,6 +166,10 @@ async def run_repl(conn, session_id, user, renderer, executor):
                 content = ctx + '\n\n' + text
                 state['context_sent'] = True
 
+            # Plan mode prefix
+            if state['plan_mode']:
+                content = PLAN_PREFIX + content
+
             await send_and_stream(conn, session_id, user, content, renderer)
 
         except KeyboardInterrupt:
@@ -148,7 +178,7 @@ async def run_repl(conn, session_id, user, renderer, executor):
             break
 
 
-async def async_main(host, port, user, key, message=None):
+async def async_main(host, port, user, key, message=None, continue_session=False, plan_mode=False):
     console = Console()
     renderer = Renderer(console)
 
@@ -163,9 +193,20 @@ async def async_main(host, port, user, key, message=None):
         renderer.show_error(f'Cannot reach server: {e}')
         return 1
 
-    # Session
+    # Session — continue last or compute new
     cwd = os.getcwd()
-    session_id = compute_session_id(user, cwd)
+    if continue_session:
+        last_sid, last_cwd = load_last_session()
+        if last_sid:
+            session_id = last_sid
+            renderer.show_info(f'Resuming session: {last_sid}')
+            if last_cwd and last_cwd != cwd:
+                renderer.show_info(f'Note: original dir was {last_cwd}')
+        else:
+            renderer.show_error('No previous session found')
+            session_id = compute_session_id(user, cwd)
+    else:
+        session_id = compute_session_id(user, cwd)
 
     # Tools
     permissions = Permissions()
@@ -184,9 +225,12 @@ async def async_main(host, port, user, key, message=None):
         if message:
             ctx = gather_context(cwd)
             content = ctx + '\n\n' + ' '.join(message)
+            if plan_mode:
+                content = PLAN_PREFIX + content
+            save_last_session(session_id, cwd)
             await send_and_stream(conn, session_id, user, content, renderer)
         else:
-            await run_repl(conn, session_id, user, renderer, executor)
+            await run_repl(conn, session_id, user, renderer, executor, initial_plan_mode=plan_mode)
     finally:
         await conn.close()
 
@@ -199,6 +243,10 @@ def main():
     parser.add_argument('--host', help='Anima server host')
     parser.add_argument('--port', type=int, help='Anima web port')
     parser.add_argument('--user', help='Your username')
+    parser.add_argument('-c', '--continue', dest='continue_session', action='store_true',
+                        help='Resume the last session')
+    parser.add_argument('--plan', action='store_true',
+                        help='Plan mode — agent plans but does not execute')
     args = parser.parse_args()
 
     cfg = load_config()
@@ -210,7 +258,12 @@ def main():
     user = args.user or cfg['connection']['user']
     key = cfg['connection']['key']
 
-    exit_code = asyncio.run(async_main(host, port, user, key, args.message or None))
+    exit_code = asyncio.run(async_main(
+        host, port, user, key,
+        message=args.message or None,
+        continue_session=args.continue_session,
+        plan_mode=args.plan,
+    ))
     sys.exit(exit_code or 0)
 
 

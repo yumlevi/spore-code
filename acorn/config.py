@@ -6,6 +6,21 @@ from pathlib import Path
 
 CONFIG_DIR = Path.home() / '.acorn'
 CONFIG_FILE = CONFIG_DIR / 'config.toml'
+LAST_SESSION_FILE = CONFIG_DIR / 'last_session'
+
+
+def save_last_session(session_id: str, cwd: str):
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    LAST_SESSION_FILE.write_text(f'{session_id}\n{cwd}\n')
+
+
+def load_last_session():
+    if not LAST_SESSION_FILE.exists():
+        return None, None
+    parts = LAST_SESSION_FILE.read_text().strip().split('\n')
+    if len(parts) >= 2:
+        return parts[0], parts[1]
+    return None, None
 
 
 def load_config() -> "dict | None":

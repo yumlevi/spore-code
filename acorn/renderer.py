@@ -69,22 +69,27 @@ class Renderer:
         self.console.print(f'  [green]✓[/green] [dim]{" · ".join(parts)}[/dim]')
 
     def show_diff(self, path: str, old_text: str, new_text: str):
-        self.console.print(Panel(
-            Text.assemble(
-                ('- ', 'red'), (old_text[:500], 'red'), '\n',
-                ('+ ', 'green'), (new_text[:500], 'green'),
-            ),
-            title=f'[bold]edit: {path}[/bold]',
-            border_style='yellow',
-        ))
+        # Compact diff — show path and a few lines
+        old_lines = old_text.strip().split('\n')
+        new_lines = new_text.strip().split('\n')
+        preview_lines = []
+        for line in old_lines[:3]:
+            preview_lines.append(f'[red]- {line[:120]}[/red]')
+        if len(old_lines) > 3:
+            preview_lines.append(f'[dim]  ... ({len(old_lines) - 3} more lines)[/dim]')
+        for line in new_lines[:3]:
+            preview_lines.append(f'[green]+ {line[:120]}[/green]')
+        if len(new_lines) > 3:
+            preview_lines.append(f'[dim]  ... ({len(new_lines) - 3} more lines)[/dim]')
+        self.console.print(f'  [yellow]edit[/yellow] {path}')
+        for line in preview_lines:
+            self.console.print(f'    {line}')
 
     def show_code_view(self, path: str, content: str, language: str = 'text', is_new: bool = False):
+        # Compact — just show path and line count, not the full file
+        lines = content.count('\n') + 1
         label = 'new' if is_new else 'read'
-        try:
-            syntax = Syntax(content[:5000], language, line_numbers=True, theme='monokai')
-            self.console.print(Panel(syntax, title=f'{label}: {path}', border_style='blue'))
-        except Exception:
-            self.console.print(Panel(content[:2000], title=f'{label}: {path}', border_style='blue'))
+        self.console.print(f'  [blue]{label}[/blue] {path} [dim]({lines} lines)[/dim]')
 
     def show_error(self, msg: str):
         self.console.print(f'[bold red]Error:[/bold red] {msg}')
