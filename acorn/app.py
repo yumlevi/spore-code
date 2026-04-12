@@ -50,6 +50,29 @@ PLAN_EXECUTE_MSG = (
 )
 
 
+def _register_acorn_themes(app):
+    """Register our themes as native Textual themes so backgrounds actually work."""
+    from textual.theme import Theme as TextualTheme
+    from acorn.themes import THEMES
+
+    for name, t in THEMES.items():
+        is_dark = name != 'light'
+        app.register_theme(TextualTheme(
+            name=f'acorn-{name}',
+            primary=t['accent'].lstrip('#') if t['accent'].startswith('#') else t['accent'],
+            secondary=t.get('accent2', t['accent']),
+            background=t['bg'],
+            surface=t['bg_header'],
+            panel=t['bg_panel'],
+            foreground=t['fg'],
+            warning=t.get('warning', '#d29922').replace('bold ', ''),
+            error=t.get('error', '#f85149').replace('bold ', ''),
+            success=t.get('success', '#3fb950'),
+            accent=t['accent'],
+            dark=is_dark,
+        ))
+
+
 class AcornApp(App):
     """Full-screen Acorn TUI."""
 
@@ -115,6 +138,7 @@ class AcornApp(App):
         yield Static('', id='mode-bar')
 
     def on_mount(self):
+        _register_acorn_themes(self)
         self._apply_theme()
         self._update_header()
         self._update_mode_bar()
@@ -150,41 +174,26 @@ class AcornApp(App):
     # ── UI updates ─────────────────────────────────────────────────
 
     def _apply_theme(self):
-        """Apply theme colors to all widgets — backgrounds, borders, text."""
+        """Apply theme by switching to the registered Textual theme."""
         t = self.theme_data
-        bg = t['bg']
-        fg = t['fg']
-        bg_header = t['bg_header']
-        bg_input = t['bg_input']
+        theme_name = f'acorn-{t["name"]}'
+
+        # Switch Textual theme — this handles background, surface, panel, etc.
+        try:
+            self.theme = theme_name
+        except Exception:
+            pass
+
+        # Extra styling Textual doesn't handle — borders from our theme
         border_color = t['border']
-
-        # Disable Textual's built-in dark/light mode — we control all colors
-        self.dark = False
-
-        # Screen-level background
-        self.screen.styles.background = bg
-        self.screen.styles.color = fg
-
-        # Every widget gets explicit bg + fg + borders
-        widget_styles = [
-            ('#header-bar', bg_header, fg, ('solid', border_color), None),
-            ('#main-scroll', bg, fg, None, None),
-            ('#transcript', bg, fg, None, None),
-            ('#stream-area', bg, fg, None, None),
-            ('#user-input', bg_input, fg, None, ('solid', border_color)),
-            ('#mode-bar', bg, fg, None, None),
-        ]
-        for sel, wbg, wfg, border_bottom, border_top in widget_styles:
-            try:
-                w = self.query_one(sel)
-                w.styles.background = wbg
-                w.styles.color = wfg
-                if border_bottom:
-                    w.styles.border_bottom = border_bottom
-                if border_top:
-                    w.styles.border_top = border_top
-            except NoMatches:
-                pass
+        try:
+            self.query_one('#header-bar', Static).styles.border_bottom = ('solid', border_color)
+        except NoMatches:
+            pass
+        try:
+            self.query_one('#user-input', Input).styles.border_top = ('solid', border_color)
+        except NoMatches:
+            pass
 
     def _update_header(self):
         t = self.theme_data
