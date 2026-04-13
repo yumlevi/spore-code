@@ -831,22 +831,42 @@ class AcornApp(App):
         self._tool_lines = []
         self._streaming_started = False
 
+    def _flush_stream_buffer(self):
+        """Flush accumulated text as a panel — called before tool events and on done."""
+        if self._stream_buffer.strip():
+            t = self.theme_data
+            try:
+                content = Markdown(self._stream_buffer)
+            except Exception:
+                content = Text(self._stream_buffer, style=t['fg'])
+            self._log(Panel(
+                content,
+                title='[bold]acorn[/bold]',
+                title_align='left',
+                border_style=t['accent'],
+                style=f'on {t["bg_panel"]}',
+                padding=(0, 1),
+            ))
+            self._scroll_bottom()
+        self._stream_buffer = ''
+        self._streaming_started = False
+
     async def _on_delta(self, msg):
         text = msg.get('text', '')
         self._stream_buffer += text
         self._response_text.append(text)
 
-        # Show a "typing" indicator on first delta, then let it accumulate
-        # Full markdown render happens on chat:done
         if not getattr(self, '_streaming_started', False):
             self._streaming_started = True
-            t = self.theme_data
-            self._log(Text(f'  acorn ▸ ', style=f'bold {t["accent"]}'))
-            self._scroll_bottom()
 
     async def _on_status(self, msg):
         t = self.theme_data
         status = msg.get('status', '')
+
+        # Flush any accumulated text before tool events
+        if status in ('tool_exec_start', 'thinking_start'):
+            self._flush_stream_buffer()
+
         if status == 'thinking_start':
             self._current_activity = 'thinking...'
             self._update_header()
@@ -916,20 +936,8 @@ class AcornApp(App):
             self._last_response = response
         t = self.theme_data
 
-        # Write final response as a bordered panel
-        if response.strip():
-            try:
-                content = Markdown(response)
-            except Exception:
-                content = Text(response, style=t['fg'])
-            self._log(Panel(
-                content,
-                title='[bold]acorn[/bold]',
-                title_align='left',
-                border_style=t['accent'],
-                style=f'on {t["bg_panel"]}',
-                padding=(0, 1),
-            ))
+        # Flush any remaining streamed text
+        self._flush_stream_buffer()
 
         # Usage stats
         usage = msg.get('usage', {})
