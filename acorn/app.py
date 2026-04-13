@@ -201,6 +201,8 @@ class AcornApp(App):
         max-height: 12;
         padding: 0 1;
         background: $surface;
+    }
+    #question-selector.hidden {
         display: none;
     }
     #note-input {
@@ -208,6 +210,11 @@ class AcornApp(App):
         padding: 0 1;
         background: $surface;
         color: $foreground;
+    }
+    #note-input.hidden {
+        display: none;
+    }
+    #user-input.hidden {
         display: none;
     }
     """
@@ -256,8 +263,8 @@ class AcornApp(App):
         yield SelectableLog(id='transcript', wrap=True, highlight=True, markup=True)
         with Vertical(id='bottom-area'):
             yield Input(placeholder='Message acorn...', id='user-input')
-            yield Static('', id='question-selector')
-            yield Input(placeholder='Add context/notes (Tab to go back)...', id='note-input')
+            yield Static('', id='question-selector', classes='hidden')
+            yield Input(placeholder='Add context/notes (Tab to go back)...', id='note-input', classes='hidden')
             yield Static('', id='footer-bar')
 
     def on_mount(self):
@@ -329,9 +336,8 @@ class AcornApp(App):
                 note_val = self.query_one('#note-input', Input).value.strip()
                 if note_val:
                     self._pending_notes[self._current_question_idx] = note_val
-                self.query_one('#note-input', Input).display = False
-                sel = self.query_one('#question-selector', Static)
-                sel.display = True
+                self._hide_widget('#note-input')
+                self._show_widget('#question-selector')
                 self._render_question_selector()
             except NoMatches:
                 pass
@@ -907,14 +913,9 @@ class AcornApp(App):
         if q['options']:
             # Show selector in bottom area, hide regular input
             self._answering_questions = True
-            try:
-                self.query_one('#user-input', Input).display = False
-                sel = self.query_one('#question-selector', Static)
-                sel.display = True
-                self._render_question_selector()
-                sel.focus()
-            except NoMatches:
-                pass
+            self._hide_widget('#user-input')
+            self._show_widget('#question-selector')
+            self._render_question_selector()
         else:
             # Open-ended: use the regular input
             self._answering_questions = True
@@ -964,16 +965,28 @@ class AcornApp(App):
         except NoMatches:
             pass
 
+    def _show_widget(self, selector):
+        try:
+            self.query_one(selector).remove_class('hidden')
+        except NoMatches:
+            pass
+
+    def _hide_widget(self, selector):
+        try:
+            self.query_one(selector).add_class('hidden')
+        except NoMatches:
+            pass
+
     def _exit_question_mode(self):
         """Restore the normal input area."""
         self._answering_questions = False
         self._q_open_ended = False
         self._q_noting = False
+        self._hide_widget('#question-selector')
+        self._hide_widget('#note-input')
+        self._show_widget('#user-input')
         try:
-            self.query_one('#question-selector', Static).display = False
-            self.query_one('#note-input', Input).display = False
             inp = self.query_one('#user-input', Input)
-            inp.display = True
             inp.placeholder = 'Message acorn...'
             inp.value = ''
             inp.focus()
@@ -1002,10 +1015,10 @@ class AcornApp(App):
         elif key == 'tab':
             # Show note input
             self._q_noting = True
+            self._hide_widget('#question-selector')
+            self._show_widget('#note-input')
             try:
-                self.query_one('#question-selector', Static).display = False
                 note_inp = self.query_one('#note-input', Input)
-                note_inp.display = True
                 note_inp.value = self._pending_notes.get(idx, '')
                 note_inp.focus()
             except NoMatches:
@@ -1054,15 +1067,9 @@ class AcornApp(App):
             idx = self._current_question_idx
             if text.strip():
                 self._pending_notes[idx] = text.strip()
-            try:
-                self.query_one('#note-input', Input).display = False
-                sel = self.query_one('#question-selector', Static)
-                sel.display = True
-                self._render_question_selector()
-                sel.focus()
-            except NoMatches:
-                # Open-ended with note — just continue
-                pass
+            self._hide_widget('#note-input')
+            self._show_widget('#question-selector')
+            self._render_question_selector()
             return
 
         # Open-ended answer
