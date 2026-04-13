@@ -455,7 +455,10 @@ async def test_path_sandbox(app):
 async def test_connection(app):
     t = app.theme_data
 
-    ws_ok = app.conn.ws is not None and app.conn.ws.open
+    try:
+        ws_ok = app.conn.ws is not None and not app.conn.ws.closed
+    except AttributeError:
+        ws_ok = app.conn.ws is not None
     app._log(Text(f'  WebSocket connected: {ws_ok}', style=t['success'] if ws_ok else t['error']))
     app._log(Text(f'  Host: {app.conn.host}:{app.conn.port}', style=t['fg']))
     app._log(Text(f'  Session: {app.session_id}', style=t['fg']))

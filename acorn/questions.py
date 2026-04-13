@@ -28,8 +28,8 @@ def parse_questions(text: str) -> list:
     q_text = re.split(r'\n\s*\n', q_text)[0]
 
     questions = []
-    pattern = r'(?:^|\n)\s*(\d+)\.\s+(.+?)(?:\n|$)'
-    for m in re.finditer(pattern, q_text):
+    pattern = r'^\s*(\d+)\.\s+(.+?)$'
+    for m in re.finditer(pattern, q_text, re.MULTILINE):
         idx = int(m.group(1))
         raw = m.group(2).strip()
 
