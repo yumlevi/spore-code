@@ -44,8 +44,8 @@ class WSEventsHandler:
                 b.scroll_bottom()
                 from acorn.session_writer import load_session
                 local = load_session(b.session_id)
-                if local and hasattr(b._app, '_render_local_history'):
-                    b._app._render_local_history(local)
+                if local:
+                    b.render_local_history(local)
             return
 
         t = b.theme
@@ -189,22 +189,20 @@ class WSEventsHandler:
         if questions and len(questions) >= 1:
             b.log(Text(f'  Agent has {len(questions)} question(s) for you', style=t['accent2']))
             b.scroll_bottom()
-            # Delegate to questions handler
-            app = b._app
-            app.questions_handler.start_questions(questions)
+            b.get_questions_handler().start_questions(questions)
         elif b.plan_mode and response and ('PLAN_READY' in response or len(response) > 500):
-            app = b._app
-            app.plan_handler.state.last_plan_text = response
-            app.plan_handler.show_choices()
+            plan_handler = b.get_plan_handler()
+            plan_handler.state.last_plan_text = response
+            plan_handler.show_choices()
 
         self.reset_stream()
 
         # Send queued message
-        app = b._app
-        if hasattr(app, 'chat_handler') and app.chat_handler.state.queued_message:
-            queued = app.chat_handler.state.queued_message
-            app.chat_handler.state.queued_message = None
-            asyncio.create_task(app.chat_handler.send_message(queued))
+        chat = b.get_chat_handler()
+        if chat and chat.state.queued_message:
+            queued = chat.state.queued_message
+            chat.state.queued_message = None
+            asyncio.create_task(chat.send_message(queued))
 
     async def on_error(self, msg):
         b = self.bridge

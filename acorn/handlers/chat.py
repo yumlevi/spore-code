@@ -24,29 +24,29 @@ class ChatHandler:
     async def handle_submit(self, text):
         """Handle submission from the message input."""
         b = self.bridge
-        app = b._app
 
-        b._app._autocomplete_matches = []
-        b.hide_widget('#autocomplete')
+        b.clear_autocomplete()
         b.hide_widget('#paste-indicator')
 
         if text.startswith('/'):
-            await app._handle_command(text)
+            await b.handle_command(text)
             return
 
         # Questions open-ended answer
-        if b.sm.state == b.AppState.QUESTIONS and app.questions_handler.state.open_ended:
-            app.questions_handler.state.open_ended = False
-            app.questions_handler.handle_text_answer(text)
+        qh = b.get_questions_handler()
+        if b.sm.state == b.AppState.QUESTIONS and qh.state.open_ended:
+            qh.state.open_ended = False
+            qh.handle_text_answer(text)
             return
 
         # Plan feedback
+        ph = b.get_plan_handler()
         if b.sm.state in (b.AppState.PLAN_REVIEW, b.AppState.PLAN_FEEDBACK):
             if b.sm.state == b.AppState.PLAN_FEEDBACK:
-                app.plan_handler.state.awaiting_feedback = False
-                app.plan_handler.state.awaiting_decision = False
+                ph.state.awaiting_feedback = False
+                ph.state.awaiting_decision = False
                 b.sm.transition(b.AppState.IDLE)
-            app.plan_handler.handle_decision(text)
+            ph.handle_decision(text)
             return
 
         # Queued while generating

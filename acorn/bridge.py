@@ -168,6 +168,47 @@ class AppBridge:
     def collapse_header(self):
         self._app._collapse_header()
 
+    # ── Handler cross-references ───────────────────────────────────
+    # Handlers need to call each other. Instead of b._app.questions_handler,
+    # they go through the bridge.
+
+    def get_questions_handler(self):
+        return self._app.questions_handler
+
+    def get_plan_handler(self):
+        return self._app.plan_handler
+
+    def get_chat_handler(self):
+        return self._app.chat_handler
+
+    # ── Legacy widget access ───────────────────────────────────────
+
+    def query_note_input(self):
+        """Get the note-input Input widget."""
+        from textual.widgets import Input
+        return self._app.query_one('#note-input', Input)
+
+    def render_local_history(self, messages):
+        if hasattr(self._app, '_render_local_history'):
+            self._app._render_local_history(messages)
+
+    async def handle_command(self, text):
+        await self._app._handle_command(text)
+
+    # ── Autocomplete ───────────────────────────────────────────────
+
+    def clear_autocomplete(self):
+        self._app._autocomplete_matches = []
+        self.hide_widget('#autocomplete')
+
+    # ── Permission state (temporary — should be on PromptProvider) ─
+
+    def get_permission_attr(self, name, default=None):
+        return getattr(self._app, name, default)
+
+    def set_permission_attr(self, name, value):
+        setattr(self._app, name, value)
+
     # ── Timer ──────────────────────────────────────────────────────
 
     def set_timer(self, delay, callback):

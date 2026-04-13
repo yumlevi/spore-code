@@ -36,9 +36,9 @@ class PlanHandler:
             self._show_file_summary(self.state.last_plan_text)
 
         # Use questions handler for the selector
-        app = b._app
-        app.questions_handler.state.plan_approval = True
-        app.questions_handler.start_questions([{
+        qh = b.get_questions_handler()
+        qh.state.plan_approval = True
+        qh.start_questions([{
             'text': 'Plan ready — what would you like to do?',
             'options': ['▶ Execute plan', '✎ Revise with feedback', '✕ Cancel'],
             'multi': False,

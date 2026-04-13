@@ -117,7 +117,7 @@ class QuestionsHandler:
         s.active = False
         s.open_ended = False
         s.noting = False
-        b._app._answering_questions = False
+        b.set_permission_attr('_answering_questions', False)
         b.sm.transition(b.AppState.IDLE)
         b.hide_widget('#question-selector')
         b.hide_widget('#note-input')
@@ -155,7 +155,7 @@ class QuestionsHandler:
             b.show_widget('#note-input')
             try:
                 from textual.widgets import Input
-                note_inp = b._app.query_one('#note-input', Input)
+                note_inp = b.query_note_input()
                 note_inp.value = s.notes.get(s.current_idx, '')
                 note_inp.focus()
             except Exception:
@@ -187,16 +187,16 @@ class QuestionsHandler:
             s.plan_approval = False
             self._exit()
             choice = s.selected
-            app = b._app
+            ph = b.get_plan_handler()
             if choice == 0:
                 b.log(Text(f'  → Execute', style=t['success']))
-                app.plan_handler.handle_decision('1')
+                ph.handle_decision('1')
             elif choice == 1:
                 b.log(Text(f'  → Revise', style=t['accent']))
-                app.plan_handler.handle_decision('2')
+                ph.handle_decision('2')
             else:
                 b.log(Text(f'  → Cancel', style=t['muted']))
-                app.plan_handler.handle_decision('3')
+                ph.handle_decision('3')
             b.scroll_bottom()
             return
 
@@ -205,9 +205,8 @@ class QuestionsHandler:
             s.permission_mode = False
             self._exit()
             # Result handled by permissions.py via _prompt_result/_prompt_event
-            app = b._app
-            dangerous = getattr(app, '_permission_dangerous', False)
-            rule = getattr(app, '_permission_rule', '')
+            dangerous = b.get_permission_attr('_permission_dangerous', False)
+            rule = b.get_permission_attr('_permission_rule', '')
             if dangerous:
                 allowed = (s.selected == 0)
             else:
@@ -220,8 +219,8 @@ class QuestionsHandler:
             else:
                 b.log(Text(f'  ✗ Denied', style=t.get('warning', 'yellow')))
             b.scroll_bottom()
-            app._permission_result = allowed
-            event = getattr(app, '_permission_event', None)
+            b.set_permission_attr('_permission_result', allowed)
+            event = b.get_permission_attr('_permission_event')
             if event:
                 event.set()
             return
@@ -240,11 +239,11 @@ class QuestionsHandler:
         s.current_idx += 1
         b.hide_widget('#question-selector')
         s.active = False
-        b._app._answering_questions = False
+        b.set_permission_attr('_answering_questions', False)
 
         def _next():
             s.active = True
-            b._app._answering_questions = True
+            b.set_permission_attr('_answering_questions', True)
             b.sm.transition(b.AppState.QUESTIONS)
             self._show_current()
         b.set_timer(0.15, _next)
@@ -271,11 +270,11 @@ class QuestionsHandler:
         b.scroll_bottom()
         s.current_idx += 1
         s.active = False
-        b._app._answering_questions = False
+        b.set_permission_attr('_answering_questions', False)
 
         def _next():
             s.active = True
-            b._app._answering_questions = True
+            b.set_permission_attr('_answering_questions', True)
             b.sm.transition(b.AppState.QUESTIONS)
             self._show_current()
         b.set_timer(0.15, _next)
