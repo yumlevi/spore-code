@@ -95,14 +95,14 @@ def reinstall():
     repo = get_repo_dir()
     try:
         r = subprocess.run(
-            ['pip', 'install', '-e', '.', '--quiet'],
+            ['pip', 'install', '-e', '.', '--quiet', '--break-system-packages'],
             cwd=repo, capture_output=True, text=True, timeout=60,
         )
         output = (r.stdout + '\n' + r.stderr).strip()
         if r.returncode != 0:
             # Try pip3
             r = subprocess.run(
-                ['pip3', 'install', '-e', '.', '--quiet'],
+                ['pip3', 'install', '-e', '.', '--quiet', '--break-system-packages'],
                 cwd=repo, capture_output=True, text=True, timeout=60,
             )
             output = (r.stdout + '\n' + r.stderr).strip()
