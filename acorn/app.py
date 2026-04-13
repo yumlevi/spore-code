@@ -295,10 +295,22 @@ class AcornApp(App):
                 self.conn.send(json.dumps({'type': 'chat:history-request', 'sessionId': self.session_id}))
             )
 
+    _last_click_time = 0
+
+    def on_click(self, event):
+        """Double-click focuses the input. Single click allows text selection."""
+        now = time.time()
+        if now - self._last_click_time < 0.4:
+            try:
+                self.query_one('#user-input', Input).focus()
+            except NoMatches:
+                pass
+        self._last_click_time = now
+
     def on_key(self, event):
-        """Any keypress refocuses the input if it lost focus (e.g. after clicking transcript)."""
-        if event.key in ('up', 'down', 'left', 'right', 'escape', 'tab'):
-            return  # Don't steal these
+        """Typing refocuses the input if it lost focus."""
+        if event.key in ('up', 'down', 'left', 'right', 'escape', 'tab', 'ctrl+p', 'ctrl+c'):
+            return
         try:
             inp = self.query_one('#user-input', Input)
             if not inp.has_focus:
