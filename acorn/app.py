@@ -85,6 +85,20 @@ PLAN_EXECUTE_MSG = (
 )
 
 
+class FocusableStatic(Static):
+    """A Static widget that can receive focus for key events.
+    Routes key events to the app's question handler."""
+    can_focus = True
+
+    def on_key(self, event):
+        app = self.app
+        if hasattr(app, '_handle_question_key') and getattr(app, '_answering_questions', False):
+            if event.key in ('up', 'down', 'space', 'tab', 'enter', 'escape'):
+                app._handle_question_key(event.key)
+                event.prevent_default()
+                event.stop()
+
+
 class SelectableLog(RichLog):
     """RichLog that doesn't capture mouse click/drag, allowing terminal-native text selection.
     Mouse scroll is preserved for scrolling through conversation."""
@@ -263,7 +277,7 @@ class AcornApp(App):
         yield SelectableLog(id='transcript', wrap=True, highlight=True, markup=True)
         with Vertical(id='bottom-area'):
             yield Input(placeholder='Message acorn...', id='user-input')
-            yield Static('', id='question-selector', classes='hidden')
+            yield FocusableStatic('', id='question-selector', classes='hidden')
             yield Input(placeholder='Add context/notes (Tab to go back)...', id='note-input', classes='hidden')
             yield Static('', id='footer-bar')
 
@@ -339,6 +353,7 @@ class AcornApp(App):
                 self._hide_widget('#note-input')
                 self._show_widget('#question-selector')
                 self._render_question_selector()
+                self.query_one('#question-selector', FocusableStatic).focus()
             except NoMatches:
                 pass
             event.prevent_default()
@@ -916,6 +931,10 @@ class AcornApp(App):
             self._hide_widget('#user-input')
             self._show_widget('#question-selector')
             self._render_question_selector()
+            try:
+                self.query_one('#question-selector', FocusableStatic).focus()
+            except NoMatches:
+                pass
         else:
             # Open-ended: use the regular input
             self._answering_questions = True
@@ -961,7 +980,7 @@ class AcornApp(App):
             lines.append(' ↑↓ select · Tab notes · Enter confirm', style=t['muted'])
 
         try:
-            self.query_one('#question-selector', Static).update(lines)
+            self.query_one('#question-selector', FocusableStatic).update(lines)
         except NoMatches:
             pass
 
@@ -1070,6 +1089,10 @@ class AcornApp(App):
             self._hide_widget('#note-input')
             self._show_widget('#question-selector')
             self._render_question_selector()
+            try:
+                self.query_one('#question-selector', FocusableStatic).focus()
+            except NoMatches:
+                pass
             return
 
         # Open-ended answer
