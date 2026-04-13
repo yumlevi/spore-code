@@ -48,31 +48,137 @@ def save_config(cfg: dict):
 
 
 def run_setup_wizard() -> dict:
-    from acorn.themes import list_themes
-    print('Welcome to Acorn! Let\'s connect to your Anima agent.\n')
-    host = input('Anima host or URL [localhost]: ').strip() or 'localhost'
-    port_str = input('Anima web port [18810] (ignored if host is a full URL): ').strip() or '18810'
-    port = int(port_str)
-    user = input('Your username: ').strip()
-    if not user:
-        print('Username is required.')
-        sys.exit(1)
-    key = input('Team key (ANIMA_ACORN_KEY from server .env): ').strip()
-    if not key:
-        print('Team key is required.')
-        sys.exit(1)
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.text import Text
+    from rich.prompt import Prompt, Confirm
+    from rich.rule import Rule
+    from rich.table import Table
+    from acorn.themes import list_themes, get_theme
+
+    console = Console()
+
+    # Banner
+    logo = Text()
+    logo.append(r"""
+     ██████╗  ██████╗ ██████╗ ██████╗ ███╗   ██╗
+    ██╔══██╗██╔════╝██╔═══██╗██╔══██╗████╗  ██║
+    ███████║██║     ██║   ██║██████╔╝██╔██╗ ██║
+    ██╔══██║██║     ██║   ██║██╔══██╗██║╚██╗██║
+    ██║  ██║╚██████╗╚██████╔╝██║  ██║██║ ╚████║
+    ╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝
+""", style='bold cyan')
+    console.print(logo)
+    console.print(Panel(
+        '[bold]Welcome to Acorn[/bold]\n'
+        'CLI coding assistant powered by Anima',
+        border_style='cyan',
+        padding=(0, 2),
+    ))
+    console.print()
+
+    # Step 1: Connection
+    console.print(Rule('[bold cyan]1. Connect to Anima[/bold cyan]', style='dim'))
+    console.print()
+    console.print('  [dim]Enter your Anima server address.[/dim]')
+    console.print('  [dim]Examples: 192.168.1.78 · https://acorn.example.com[/dim]')
+    console.print()
+    host = Prompt.ask('  [bold]Host[/bold]', default='localhost', console=console)
+
+    port = 18810
+    if '://' not in host:
+        port_str = Prompt.ask('  [bold]Port[/bold]', default='18810', console=console)
+        try:
+            port = int(port_str)
+        except ValueError:
+            port = 18810
+    console.print()
+
+    # Step 2: Identity
+    console.print(Rule('[bold cyan]2. Your identity[/bold cyan]', style='dim'))
+    console.print()
+    console.print('  [dim]Choose a username — the agent will remember you by this name.[/dim]')
+    console.print()
+    user = ''
+    while not user:
+        user = Prompt.ask('  [bold]Username[/bold]', console=console).strip()
+        if not user:
+            console.print('  [red]Username is required.[/red]')
+    console.print()
+
+    # Step 3: Team key
+    console.print(Rule('[bold cyan]3. Authentication[/bold cyan]', style='dim'))
+    console.print()
+    console.print('  [dim]Enter the team key from your Anima server\'s .env file[/dim]')
+    console.print('  [dim](ANIMA_ACORN_KEY value)[/dim]')
+    console.print()
+    key = ''
+    while not key:
+        key = Prompt.ask('  [bold]Team key[/bold]', console=console).strip()
+        if not key:
+            console.print('  [red]Team key is required.[/red]')
+    console.print()
+
+    # Step 4: Test connection
+    console.print(Rule('[bold cyan]4. Testing connection[/bold cyan]', style='dim'))
+    console.print()
+    from acorn.connection import Connection, AuthError
+    import asyncio
+    conn = Connection(host, port)
+    try:
+        loop = asyncio.new_event_loop()
+        token = loop.run_until_complete(conn.authenticate(user, key))
+        loop.close()
+        console.print('  [bold green]✓[/bold green] Connected and authenticated successfully!')
+    except AuthError as e:
+        console.print(f'  [bold red]✗[/bold red] Authentication failed: {e}')
+        console.print('  [dim]Check your team key and try again.[/dim]')
+        if not Confirm.ask('  Continue anyway?', default=False, console=console):
+            sys.exit(1)
+    except Exception as e:
+        console.print(f'  [bold red]✗[/bold red] Cannot reach server: {e}')
+        console.print('  [dim]Check the host/port and make sure Anima is running.[/dim]')
+        if not Confirm.ask('  Continue anyway?', default=False, console=console):
+            sys.exit(1)
+    console.print()
+
+    # Step 5: Theme
+    console.print(Rule('[bold cyan]5. Choose a theme[/bold cyan]', style='dim'))
+    console.print()
     themes = list_themes()
-    print(f'\nAvailable themes: {", ".join(themes)}')
-    theme = input(f'Theme [{themes[0]}]: ').strip() or themes[0]
-    if theme not in themes:
-        print(f'Unknown theme, using {themes[0]}')
-        theme = themes[0]
+    theme_table = Table.grid(padding=(0, 3))
+    for name in themes:
+        td = get_theme(name)
+        row = Text()
+        row.append(f'  {td.get("icon", "?")} ', style='')
+        row.append(f'{name:8s}', style=f'bold {td["accent"]}')
+        row.append(f'  {td["bg"]}', style=td.get('muted', 'dim'))
+        theme_table.add_row(row)
+    console.print(theme_table)
+    console.print()
+    theme = Prompt.ask('  [bold]Theme[/bold]', default=themes[0], choices=themes, console=console)
+    console.print()
+
+    # Save
     cfg = {
         'connection': {'host': host, 'port': port, 'user': user, 'key': key},
         'display': {'theme': theme, 'show_thinking': True, 'show_tools': True, 'show_usage': True},
     }
     save_config(cfg)
-    print(f'\nConfig saved to {GLOBAL_CONFIG}\n')
+
+    console.print(Rule(style='dim'))
+    console.print()
+    console.print(Panel(
+        f'[bold green]✓ Setup complete![/bold green]\n\n'
+        f'  Config saved to [cyan]{GLOBAL_CONFIG}[/cyan]\n'
+        f'  User: [bold]{user}[/bold]\n'
+        f'  Server: [bold]{host}:{port}[/bold]\n'
+        f'  Theme: [bold]{theme}[/bold]\n\n'
+        f'[dim]Run [bold]acorn[/bold] to start · [bold]acorn --help[/bold] for options[/dim]',
+        border_style='green',
+        padding=(1, 2),
+    ))
+    console.print()
     return cfg
 
 
