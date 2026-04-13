@@ -83,13 +83,14 @@ class PlanHandler:
                 b.log(b.themed_text(f'  Plan saved to {plan_path}', style=t['muted']))
 
             b.plan_mode = False
-            b.update_mode_bar()
-            b.update_header()
+            b.log(b.themed_text('  Mode → execute', style=t['accent']))
             b.log(b.themed_text('  ▶ Executing plan...', style=t['success']))
             b.scroll_bottom()
 
             b.generating = True
+            # Force both footer and header to reflect EXEC mode
             b.update_footer()
+            b.update_mode_bar()
             b.update_header()
             asyncio.create_task(b.conn.send(chat_message(b.session_id, PLAN_EXECUTE_MSG, b.user)))
 
