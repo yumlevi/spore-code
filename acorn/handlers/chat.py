@@ -1,79 +1,90 @@
-"""Chat handler mixin — message sending, textarea submit, context enrichment."""
+"""Chat handler — owns chat state, message sending, context enrichment."""
 
 import asyncio
+from dataclasses import dataclass
 from rich.text import Text
 
 from acorn.constants import PLAN_PREFIX
 from acorn.protocol import chat_message
 
 
-class ChatMixin:
-    """Mixin providing message sending for AcornApp."""
+@dataclass
+class ChatState:
+    queued_message: str = None
+    message_count: int = 0
 
-    async def _handle_textarea_submit(self, text):
-        """Handle submission from the TextArea (Enter key)."""
-        self._autocomplete_matches = []
-        self._hide_widget('#autocomplete')
-        self._hide_widget('#paste-indicator')
+
+class ChatHandler:
+    """Handles message sending. Owns chat state."""
+
+    def __init__(self, bridge):
+        self.bridge = bridge
+        self.state = ChatState()
+
+    async def handle_submit(self, text):
+        """Handle submission from the message input."""
+        b = self.bridge
+        app = b._app
+
+        b._app._autocomplete_matches = []
+        b.hide_widget('#autocomplete')
+        b.hide_widget('#paste-indicator')
 
         if text.startswith('/'):
-            await self._handle_command(text)
+            await app._handle_command(text)
             return
 
-        if self.sm.state == self._AppState.QUESTIONS and getattr(self, '_q_open_ended', False):
-            self._q_open_ended = False
-            self._handle_question_answer(text)
+        # Questions open-ended answer
+        if b.sm.state == b.AppState.QUESTIONS and app.questions_handler.state.open_ended:
+            app.questions_handler.state.open_ended = False
+            app.questions_handler.handle_text_answer(text)
             return
 
-        if self.sm.state in (self._AppState.PLAN_REVIEW, self._AppState.PLAN_FEEDBACK):
-            if self.sm.state == self._AppState.PLAN_FEEDBACK:
-                self._awaiting_plan_feedback = False
-                self._awaiting_plan_decision = False
-                self.sm.transition(self._AppState.IDLE)
-                self._handle_plan_decision(text)
-            else:
-                self._handle_plan_decision(text)
+        # Plan feedback
+        if b.sm.state in (b.AppState.PLAN_REVIEW, b.AppState.PLAN_FEEDBACK):
+            if b.sm.state == b.AppState.PLAN_FEEDBACK:
+                app.plan_handler.state.awaiting_feedback = False
+                app.plan_handler.state.awaiting_decision = False
+                b.sm.transition(b.AppState.IDLE)
+            app.plan_handler.handle_decision(text)
             return
 
-        if self.generating:
-            t = self.theme_data
-            self._queued_message = text
-            self._log(self._themed_panel(
+        # Queued while generating
+        if b.generating:
+            t = b.theme
+            self.state.queued_message = text
+            b.log(b.themed_panel(
                 f'{text}\n[queued — will send when current response finishes]',
-                title=f'[bold]{self.user}[/bold] [dim](queued)[/dim]',
+                title=f'[bold]{b.user}[/bold] [dim](queued)[/dim]',
                 border_style=t.get('muted', 'dim'),
             ))
-            self._scroll_bottom()
-            self._update_footer()
+            b.scroll_bottom()
+            b.update_footer()
             return
 
-        await self._send_message(text)
+        await self.send_message(text)
 
-    async def _send_message(self, text):
+    async def send_message(self, text):
         """Send a message to the agent."""
-        self.slog.info('send', f'sending {len(text)} chars', plan_mode=self.plan_mode)
-        self.session_writer.write_user(text)
-        t = self.theme_data
-        self._log(self._themed_panel(text, title=f'[bold]{self.user}[/bold]', border_style=t['prompt_user']))
+        b = self.bridge
+        b.slog.info('send', f'sending {len(text)} chars', plan_mode=b.plan_mode)
+        b.session_writer.write_user(text)
+        b.log_user_panel(text)
 
-        # Smart context — full on first message, delta after
-        ctx = self.ctx_manager.get_context()
+        # Smart context
+        ctx = b.ctx_manager.get_context()
         content = (ctx + '\n\n' + text) if ctx else text
-        self.context_sent = True
 
-        if self.plan_mode:
+        if b.plan_mode:
             content = PLAN_PREFIX + content
 
-        self._stream_buffer = ''
-        self._response_text = []
-        self._tool_lines = []
-        self._message_count += 1
-        self.generating = True
-        self._queued_message = None
+        self.state.message_count += 1
+        b.generating = True
+        self.state.queued_message = None
 
-        if self._message_count >= 1:
-            self._collapse_header()
+        if self.state.message_count >= 1:
+            b.collapse_header()
 
-        self._update_footer()
-        self._update_header()
-        await self.conn.send(chat_message(self.session_id, content, self.user))
+        b.update_footer()
+        b.update_header()
+        await b.conn.send(chat_message(b.session_id, content, b.user))

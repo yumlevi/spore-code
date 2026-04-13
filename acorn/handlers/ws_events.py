@@ -1,10 +1,7 @@
-"""WebSocket event handlers — mixin for AcornApp.
-
-Handles: chat:history, chat:start, chat:delta, chat:status,
-chat:done, chat:error, chat:tool, code:view, code:diff
-"""
+"""WebSocket event handlers — owns streaming state, communicates via bridge."""
 
 import asyncio
+from dataclasses import dataclass, field
 from rich.text import Text
 from rich.panel import Panel
 from rich.markdown import Markdown
@@ -13,26 +10,46 @@ from rich.rule import Rule
 from acorn.questions import parse_questions
 
 
-class WSEventsMixin:
-    """Mixin providing WebSocket event handlers for AcornApp."""
+@dataclass
+class StreamState:
+    """State owned by WSEventsHandler — not shared with app."""
+    buffer: str = ''
+    response_parts: list = field(default_factory=list)
+    tool_lines: list = field(default_factory=list)
+    started: bool = False
 
-    async def _on_history(self, msg):
+
+class WSEventsHandler:
+    """Handles WebSocket events. Owns streaming state."""
+
+    def __init__(self, bridge):
+        self.bridge = bridge
+        self.stream = StreamState()
+        self.last_response = ''
+
+    def reset_stream(self):
+        self.stream = StreamState()
+
+    # ── Event handlers ─────────────────────────────────────────────
+
+    async def on_history(self, msg):
         messages = msg.get('messages', [])
-        # Stale session detection — server has no history but we have local data
+        b = self.bridge
+
         if not messages:
-            writer = getattr(self, 'session_writer', None)
+            writer = b.session_writer
             if writer and writer.message_count > 0:
-                t = self.theme_data
-                self._log(Text('  ⚠ Server session expired — local history preserved', style=t.get('warning', 'yellow')))
-                self._scroll_bottom()
-                # Load from local JSONL
+                t = b.theme
+                b.log(Text('  ⚠ Server session expired — local history preserved', style=t.get('warning', 'yellow')))
+                b.scroll_bottom()
                 from acorn.session_writer import load_session
-                local = load_session(self.session_id)
-                if local and hasattr(self, '_render_local_history'):
-                    self._render_local_history(local)
+                local = load_session(b.session_id)
+                if local and hasattr(b._app, '_render_local_history'):
+                    b._app._render_local_history(local)
             return
-        t = self.theme_data
-        self._log(Rule('Session History', style=t['separator']))
+
+        t = b.theme
+        b.log(Rule('Session History', style=t['separator']))
         for m in messages:
             role = m.get('role', 'user')
             text = m.get('text', '')
@@ -40,144 +57,114 @@ class WSEventsMixin:
                 continue
             if role == 'user':
                 display = text[:300] + '...' if len(text) > 300 else text
-                self._log(self._themed_panel(display, title=f'[bold]{self.user}[/bold]', border_style=t['prompt_user']))
+                b.log_user_panel(display)
             elif role == 'assistant':
-                try:
-                    content = Markdown(text)
-                except Exception:
-                    content = Text(text, style=t['fg'])
-                self._log(Panel(content, title='[bold]acorn[/bold]', title_align='left',
-                                border_style=t['accent'], style=f'on {t["bg_panel"]}', padding=(0, 1)))
-        self._log(Rule(style=t['separator']))
-        self._scroll_bottom()
+                b.log_bot_panel(text)
+        b.log(Rule(style=t['separator']))
+        b.scroll_bottom()
 
-    async def _on_start(self, msg):
-        self.slog.debug('ws', 'chat:start')
-        self._stream_buffer = ''
-        self._response_text = []
-        self._tool_lines = []
-        self._streaming_started = False
+    async def on_start(self, msg):
+        b = self.bridge
+        b.slog.debug('ws', 'chat:start')
+        self.reset_stream()
 
-    def _flush_stream_buffer(self):
+    def flush_stream_buffer(self):
         """Flush accumulated text as a panel — called before tool events and on done."""
-        if self._stream_buffer.strip():
-            t = self.theme_data
-            try:
-                content = Markdown(self._stream_buffer)
-            except Exception:
-                content = Text(self._stream_buffer, style=t['fg'])
-            self._log(Panel(
-                content,
-                title='[bold]acorn[/bold]',
-                title_align='left',
-                border_style=t['accent'],
-                style=f'on {t["bg_panel"]}',
-                padding=(0, 1),
-            ))
-            self._scroll_bottom()
-        self._stream_buffer = ''
-        self._streaming_started = False
+        if self.stream.buffer.strip():
+            b = self.bridge
+            b.log_bot_panel(self.stream.buffer)
+            b.scroll_bottom()
+        self.stream.buffer = ''
+        self.stream.started = False
 
-    async def _on_delta(self, msg):
+    async def on_delta(self, msg):
         text = msg.get('text', '')
-        self._stream_buffer += text
-        self._response_text.append(text)
+        self.stream.buffer += text
+        self.stream.response_parts.append(text)
+        if not self.stream.started:
+            self.stream.started = True
 
-        if not getattr(self, '_streaming_started', False):
-            self._streaming_started = True
-
-    async def _on_status(self, msg):
-        t = self.theme_data
+    async def on_status(self, msg):
+        b = self.bridge
+        t = b.theme
         status = msg.get('status', '')
-        self.slog.debug('ws:status', status, **{k: v for k, v in msg.items() if k != 'type' and k != 'status'})
+        b.slog.debug('ws:status', status, **{k: v for k, v in msg.items() if k not in ('type', 'status')})
 
-        # Flush any accumulated text before tool events
         if status in ('tool_exec_start', 'thinking_start'):
-            self._flush_stream_buffer()
+            self.flush_stream_buffer()
 
         if status == 'thinking_start':
-            self._current_activity = 'thinking...'
-            self._update_header()
-            self._tool_lines.append(('thinking', '● Thinking...'))
-            self._update_tool_display()
+            b.set_activity('thinking...')
+            self.stream.tool_lines.append(('thinking', '● Thinking...'))
+            self._display_tool_line()
         elif status == 'thinking_done':
-            self._current_activity = ''
-            self._update_header()
-            self._tool_lines = [(k, v) for k, v in self._tool_lines if k != 'thinking']
-            self._update_tool_display()
+            b.set_activity('')
+            self.stream.tool_lines = [(k, v) for k, v in self.stream.tool_lines if k != 'thinking']
         elif status == 'tool_exec_start':
             tool = msg.get('tool', '')
             detail = msg.get('detail', '')[:80]
-            self._current_activity = f'{tool} {detail[:40]}'
-            self._update_header()
-            self._tool_lines.append(('tool_start', f'⚙ {tool} {detail}'))
-            self._update_tool_display()
+            b.set_activity(f'{tool} {detail[:40]}')
+            self.stream.tool_lines.append(('tool_start', f'⚙ {tool} {detail}'))
+            self._display_tool_line()
         elif status == 'tool_exec_done':
-            self._current_activity = ''
-            self._update_header()
+            b.set_activity('')
             parts = []
             if msg.get('durationMs'):
                 parts.append(f'{msg["durationMs"]}ms')
             if msg.get('resultChars'):
                 parts.append(f'{msg["resultChars"]:,} chars')
-            self._tool_lines.append(('tool_done', f'✓ {" · ".join(parts)}'))
-            self._update_tool_display()
+            self.stream.tool_lines.append(('tool_done', f'✓ {" · ".join(parts)}'))
+            self._display_tool_line()
 
-    def _update_tool_display(self):
-        """Render the latest tool activity line into the transcript."""
-        if not self._tool_lines:
+    def _display_tool_line(self):
+        if not self.stream.tool_lines:
             return
-        t = self.theme_data
-        last_type, last_text = self._tool_lines.pop()
-        self._tool_lines.clear()
+        b = self.bridge
+        t = b.theme
+        last_type, last_text = self.stream.tool_lines.pop()
+        self.stream.tool_lines.clear()
         style_map = {
-            'thinking': t['thinking'],
-            'tool_start': t['tool_icon'],
-            'tool_done': t['tool_done'],
-            'read': t['read_icon'],
-            'edit': t['edit_icon'],
+            'thinking': t['thinking'], 'tool_start': t['tool_icon'],
+            'tool_done': t['tool_done'], 'read': t['read_icon'], 'edit': t['edit_icon'],
         }
-        style = style_map.get(last_type, 'dim')
-        self._log(Text(f'  {last_text}', style=style))
-        self._scroll_bottom()
+        b.log(Text(f'  {last_text}', style=style_map.get(last_type, 'dim')))
+        b.scroll_bottom()
 
-    async def _on_code_view(self, msg):
-        t = self.theme_data
+    async def on_code_view(self, msg):
+        t = self.bridge.theme
         path = msg.get('path', '')
         lines = msg.get('content', '').count('\n') + 1
-        is_new = msg.get('isNew', False)
-        label = 'new' if is_new else 'read'
-        self._tool_lines.append(('read', f'📄 {label} {path} ({lines} lines)'))
-        self._update_tool_display()
+        label = 'new' if msg.get('isNew') else 'read'
+        self.stream.tool_lines.append(('read', f'📄 {label} {path} ({lines} lines)'))
+        self._display_tool_line()
 
-    async def _on_code_diff(self, msg):
-        t = self.theme_data
+    async def on_code_diff(self, msg):
         path = msg.get('path', '')
-        self._tool_lines.append(('edit', f'✏️  edit {path}'))
-        self._update_tool_display()
+        self.stream.tool_lines.append(('edit', f'✏️  edit {path}'))
+        self._display_tool_line()
 
-    async def _on_done(self, msg):
-        self.generating = False
-        self._update_footer()
-        self._update_header()
-        response = ''.join(self._response_text)
+    async def on_done(self, msg):
+        b = self.bridge
+        b.generating = False
+        b.update_footer()
+        b.update_header()
+
+        response = ''.join(self.stream.response_parts)
         usage = msg.get('usage', {})
         server_text = msg.get('text', '')
-        self.slog.info('ws:done', f'{len(response)} chars accumulated, {len(server_text)} chars server',
-                      iters=msg.get('iterations'), tools=msg.get('toolUsage'),
-                      input_tokens=usage.get('input_tokens'), output_tokens=usage.get('output_tokens'))
-        if response.strip():
-            self._last_response = response
-            # Persist to local session file
-            if hasattr(self, 'session_writer'):
-                self.session_writer.write_assistant(response, usage=usage, iterations=msg.get('iterations'))
-        t = self.theme_data
+        b.slog.info('ws:done', f'{len(response)} chars accumulated, {len(server_text)} chars server',
+                     iters=msg.get('iterations'), tools=msg.get('toolUsage'),
+                     input_tokens=usage.get('input_tokens'), output_tokens=usage.get('output_tokens'))
 
-        # Flush any remaining streamed text
-        self._flush_stream_buffer()
+        if response.strip():
+            self.last_response = response
+            if hasattr(b, 'session_writer') and b.session_writer:
+                b.session_writer.write_assistant(response, usage=usage, iterations=msg.get('iterations'))
+
+        t = b.theme
+        self.flush_stream_buffer()
 
         # Usage stats
-        usage = msg.get('usage', {})
         if usage:
             inp = usage.get('input_tokens', 0)
             out = usage.get('output_tokens', 0)
@@ -190,53 +177,45 @@ class WSEventsMixin:
                 total = sum(tool_usage.values())
                 if total:
                     parts.append(f'{total} tools')
-            self._log(Text(f'  {"  ".join(parts)}', style=t['usage']))
+            b.log(Text(f'  {"  ".join(parts)}', style=t['usage']))
 
-        self._scroll_bottom()
+        b.scroll_bottom()
 
-        # Detect structured questions from the agent
+        # Detect questions
         questions = parse_questions(response) if response else []
-        self.slog.info('question-detect', f'response={len(response)} chars, questions={len(questions)}',
-                       has_marker='QUESTIONS' in response.upper() if response else False)
+        b.slog.info('question-detect', f'response={len(response)} chars, questions={len(questions)}',
+                     has_marker='QUESTIONS' in response.upper() if response else False)
+
         if questions and len(questions) >= 1:
-            self._log(Text(f'  Agent has {len(questions)} question(s) for you', style=t['accent2']))
-            self._scroll_bottom()
-            self._pending_questions = questions
-            self._pending_answers = {}
-            self._pending_notes = {}
-            self._current_question_idx = 0
-            self._log(Text(''))
-            self._show_current_question()
-        elif self.plan_mode and response and ('PLAN_READY' in response or len(response) > 500):
-            self._last_plan_text = response
-            self._show_plan_choices()
+            b.log(Text(f'  Agent has {len(questions)} question(s) for you', style=t['accent2']))
+            b.scroll_bottom()
+            # Delegate to questions handler
+            app = b._app
+            app.questions_handler.start_questions(questions)
+        elif b.plan_mode and response and ('PLAN_READY' in response or len(response) > 500):
+            app = b._app
+            app.plan_handler.state.last_plan_text = response
+            app.plan_handler.show_choices()
 
-        self._stream_buffer = ''
-        self._response_text = []
-        self._tool_lines = []
+        self.reset_stream()
 
-        # Send queued message if one was waiting
-        if self._queued_message and not questions:
-            queued = self._queued_message
-            self._queued_message = None
-            asyncio.create_task(self._send_message(queued))
+        # Send queued message
+        app = b._app
+        if hasattr(app, 'chat_handler') and app.chat_handler.state.queued_message:
+            queued = app.chat_handler.state.queued_message
+            app.chat_handler.state.queued_message = None
+            asyncio.create_task(app.chat_handler.send_message(queued))
 
-    async def _on_error(self, msg):
-        self.generating = False
-        self._update_footer()
-        t = self.theme_data
+    async def on_error(self, msg):
+        b = self.bridge
+        b.generating = False
+        b.update_footer()
         error = msg.get('error', 'Unknown error')
-        self.slog.error_event(error)
-        if hasattr(self, 'session_writer'):
-            self.session_writer.write_error(error)
-        self._log(Panel(
-            Text(error, style=t['error']),
-            title='[bold]Error[/bold]',
-            border_style='red',
-            style=f'on {t["bg_panel"]}',
-            padding=(0, 1),
-        ))
-        self._scroll_bottom()
+        b.slog.error_event(error)
+        if b.session_writer:
+            b.session_writer.write_error(error)
+        b.log_error(error)
+        b.scroll_bottom()
 
-    async def _on_tool(self, msg):
+    async def on_tool(self, msg):
         pass

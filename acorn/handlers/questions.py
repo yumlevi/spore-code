@@ -1,310 +1,304 @@
-"""Question handler mixin — interactive question selector flow."""
+"""Questions handler — owns question state, communicates via bridge."""
 
 import asyncio
+from dataclasses import dataclass, field
 from rich.text import Text
 
 from acorn.questions import format_answers
 from acorn.protocol import chat_message
 
 
-class QuestionsMixin:
-    """Mixin providing interactive question handling for AcornApp."""
+@dataclass
+class QuestionState:
+    """State owned by QuestionsHandler."""
+    questions: list = field(default_factory=list)
+    answers: dict = field(default_factory=dict)
+    notes: dict = field(default_factory=dict)
+    current_idx: int = 0
+    selected: int = 0
+    checked: set = field(default_factory=set)
+    noting: bool = False
+    open_ended: bool = False
+    transitioning: bool = False
+    test_mode: bool = False
+    plan_approval: bool = False
+    permission_mode: bool = False
+    active: bool = False
 
-    def _show_current_question(self):
-        """Show the current question — replace input area with selector for options."""
-        questions = getattr(self, '_pending_questions', [])
-        idx = getattr(self, '_current_question_idx', 0)
-        if idx >= len(questions):
-            self._exit_question_mode()
-            self._send_question_answers()
+
+class QuestionsHandler:
+    """Handles interactive question selector flow. Owns its own state."""
+
+    def __init__(self, bridge):
+        self.bridge = bridge
+        self.state = QuestionState()
+
+    def start_questions(self, questions, test_mode=False):
+        """Begin a new question flow."""
+        self.state = QuestionState(
+            questions=questions,
+            active=True,
+            test_mode=test_mode,
+        )
+        # Also set legacy flag for FocusableStatic compatibility
+        self.bridge._app._answering_questions = True
+        self.bridge.sm.transition(self.bridge.AppState.QUESTIONS)
+        self.bridge.log(Text(''))
+        self._show_current()
+
+    def _show_current(self):
+        s = self.state
+        b = self.bridge
+        if s.current_idx >= len(s.questions):
+            self._exit()
+            self._send_answers()
             return
-        q = questions[idx]
-        t = self.theme_data
-        total = len(questions)
 
-        # Show question in transcript
+        q = s.questions[s.current_idx]
+        t = b.theme
+        total = len(s.questions)
+
         header = Text()
-        header.append(f'  Question {idx + 1}/{total}: ', style=f'bold {t["accent"]}')
+        header.append(f'  Question {s.current_idx + 1}/{total}: ', style=f'bold {t["accent"]}')
         header.append(q['text'], style='bold')
-        self._log(header)
-        self._scroll_bottom()
+        b.log(header)
+        b.scroll_bottom()
 
-        self._q_selected = 0
-        self._q_checked = set()
-        self._q_noting = False
-        self._q_open_ended = False
-        self._q_transitioning = False
+        s.selected = 0
+        s.checked = set()
+        s.noting = False
+        s.open_ended = False
+        s.transitioning = False
 
         if q['options']:
-            # Show selector in bottom area, hide regular input
-            self._answering_questions = True; self.sm.transition(self._AppState.QUESTIONS)
-            self._hide_widget('#user-input')
-            self._show_widget('#question-selector')
-            self._render_question_selector()
-            try:
-                from acorn.ui.widgets import FocusableStatic
-                self.query_one('#question-selector', FocusableStatic).focus()
-            except Exception:
-                pass
+            s.active = True
+            b.hide_widget('#user-input')
+            b.show_widget('#question-selector')
+            self._render_selector()
+            b.focus_selector()
         else:
-            # Open-ended: show regular input, hide selector
-            self._answering_questions = True; self.sm.transition(self._AppState.QUESTIONS)
-            self._q_open_ended = True
-            self._hide_widget('#question-selector')
-            self._show_widget('#user-input')
-            try:
-                from acorn.ui.widgets import MessageInput
-                inp = self.query_one('#user-input', MessageInput)
-                inp.clear()
-                inp.focus()
-            except Exception:
-                pass
+            s.active = True
+            s.open_ended = True
+            b.hide_widget('#question-selector')
+            b.show_widget('#user-input')
+            b.focus_input()
 
-    def _render_question_selector(self):
-        """Render the option selector in the bottom area."""
-        questions = self._pending_questions
-        idx = self._current_question_idx
-        q = questions[idx]
-        t = self.theme_data
+    def _render_selector(self):
+        s = self.state
+        q = s.questions[s.current_idx]
+        t = self.bridge.theme
         is_multi = q.get('multi', False)
 
         lines = Text()
         for i, opt in enumerate(q['options']):
-            cursor = '▸' if i == self._q_selected else ' '
+            cursor = '▸' if i == s.selected else ' '
             if is_multi:
-                check = '◉' if i in self._q_checked else '○'
-                if i == self._q_selected:
+                check = '◉' if i in s.checked else '○'
+                if i == s.selected:
                     lines.append(f' {cursor} {check} {opt}', style=f'bold {t["accent"]}')
-                elif i in self._q_checked:
+                elif i in s.checked:
                     lines.append(f' {cursor} {check} {opt}', style=t['success'])
                 else:
                     lines.append(f' {cursor} {check} {opt}', style=t['fg'])
             else:
-                if i == self._q_selected:
+                if i == s.selected:
                     lines.append(f' {cursor}  {opt}', style=f'bold {t["accent"]}')
                 else:
                     lines.append(f' {cursor}  {opt}', style=t['fg'])
             lines.append('\n')
 
-        # Hint line
-        if is_multi:
-            lines.append(' ↑↓ move · Space toggle · Tab notes · Enter submit', style=t['muted'])
-        else:
-            lines.append(' ↑↓ select · Tab notes · Enter confirm', style=t['muted'])
+        hint = ' ↑↓ move · Space toggle · Tab notes · Enter submit' if is_multi else ' ↑↓ select · Tab notes · Enter confirm'
+        lines.append(hint, style=t.get('muted', 'dim'))
+        self.bridge.update_selector(lines)
 
-        try:
-            from acorn.ui.widgets import FocusableStatic
-            self.query_one('#question-selector', FocusableStatic).update(lines)
-        except Exception:
-            pass
+    def _exit(self):
+        s = self.state
+        b = self.bridge
+        s.active = False
+        s.open_ended = False
+        s.noting = False
+        b._app._answering_questions = False
+        b.sm.transition(b.AppState.IDLE)
+        b.hide_widget('#question-selector')
+        b.hide_widget('#note-input')
+        b.show_widget('#user-input')
+        b.focus_input()
 
-    def _show_widget(self, selector):
-        try:
-            self.query_one(selector).remove_class('hidden')
-        except Exception:
-            pass
+    def handle_key(self, key):
+        """Handle key from FocusableStatic. Returns True if consumed."""
+        s = self.state
+        if not s.active or s.open_ended or s.noting:
+            return False
 
-    def _hide_widget(self, selector):
-        try:
-            self.query_one(selector).add_class('hidden')
-        except Exception:
-            pass
+        q = s.questions[s.current_idx] if s.current_idx < len(s.questions) else None
+        if not q or not q.get('options'):
+            return False
 
-    def _exit_question_mode(self):
-        """Restore the normal input area."""
-        self._answering_questions = False; self.sm.transition(self._AppState.IDLE)
-        self._q_open_ended = False
-        self._q_noting = False
-        self._hide_widget('#question-selector')
-        self._hide_widget('#note-input')
-        self._show_widget('#user-input')
-        try:
-            from acorn.ui.widgets import MessageInput
-            inp = self.query_one('#user-input', MessageInput)
-            inp.clear()
-            inp.focus()
-        except Exception:
-            pass
-
-    def _handle_question_key(self, key):
-        """Handle key events during question selector mode."""
-        questions = self._pending_questions
-        idx = self._current_question_idx
-        if idx >= len(questions):
-            return
-        q = questions[idx]
         is_multi = q.get('multi', False)
+        b = self.bridge
 
         if key == 'up':
-            self._q_selected = (self._q_selected - 1) % len(q['options'])
-            self._render_question_selector()
+            s.selected = (s.selected - 1) % len(q['options'])
+            self._render_selector()
         elif key == 'down':
-            self._q_selected = (self._q_selected + 1) % len(q['options'])
-            self._render_question_selector()
+            s.selected = (s.selected + 1) % len(q['options'])
+            self._render_selector()
         elif key == 'space' and is_multi:
-            if self._q_selected in self._q_checked:
-                self._q_checked.discard(self._q_selected)
+            if s.selected in s.checked:
+                s.checked.discard(s.selected)
             else:
-                self._q_checked.add(self._q_selected)
-            self._render_question_selector()
+                s.checked.add(s.selected)
+            self._render_selector()
         elif key == 'tab':
-            # Show note input
-            self._q_noting = True
-            self._hide_widget('#question-selector')
-            self._show_widget('#note-input')
+            s.noting = True
+            b.hide_widget('#question-selector')
+            b.show_widget('#note-input')
             try:
                 from textual.widgets import Input
-                note_inp = self.query_one('#note-input', Input)
-                note_inp.value = self._pending_notes.get(idx, '')
+                note_inp = b._app.query_one('#note-input', Input)
+                note_inp.value = s.notes.get(s.current_idx, '')
                 note_inp.focus()
             except Exception:
                 pass
         elif key == 'enter':
-            self._submit_question_answer()
+            self._submit()
         elif key == 'escape':
-            self._exit_question_mode()
-            t = self.theme_data
-            self._log(Text('  Questions cancelled', style=t['muted']))
-            self._scroll_bottom()
+            self._exit()
+            b.log(Text('  Questions cancelled', style=b.theme['muted']))
+            b.scroll_bottom()
+        else:
+            return False
+        return True
 
-    def _submit_question_answer(self):
-        """Submit the current question's answer and move to next."""
-        questions = self._pending_questions
-        idx = self._current_question_idx
-        q = questions[idx]
-        t = self.theme_data
+    def _submit(self):
+        s = self.state
+        b = self.bridge
+        q = s.questions[s.current_idx]
+        t = b.theme
 
         if q['options'] and q.get('multi'):
-            selected = [q['options'][i] for i in sorted(self._q_checked)]
-            self._pending_answers[idx] = selected if selected else ['(none)']
+            selected = [q['options'][i] for i in sorted(s.checked)]
+            s.answers[s.current_idx] = selected if selected else ['(none)']
         elif q['options']:
-            self._pending_answers[idx] = q['options'][self._q_selected]
+            s.answers[s.current_idx] = q['options'][s.selected]
 
-        answer = self._pending_answers.get(idx, '')
-        display = ', '.join(answer) if isinstance(answer, list) else str(answer)
-
-        # Plan approval mode — route to plan handler
-        if getattr(self, '_q_plan_approval', False):
-            self._q_plan_approval = False
-            self._answering_questions = False; self.sm.transition(self._AppState.IDLE)
-            self._exit_question_mode()
-            choice = self._q_selected
+        # Plan approval routing
+        if s.plan_approval:
+            s.plan_approval = False
+            self._exit()
+            choice = s.selected
+            app = b._app
             if choice == 0:
-                self._log(Text(f'  → Execute', style=t['success']))
-                self._handle_plan_decision('1')
+                b.log(Text(f'  → Execute', style=t['success']))
+                app.plan_handler.handle_decision('1')
             elif choice == 1:
-                self._log(Text(f'  → Revise', style=t['accent']))
-                self._handle_plan_decision('2')
+                b.log(Text(f'  → Revise', style=t['accent']))
+                app.plan_handler.handle_decision('2')
             else:
-                self._log(Text(f'  → Cancel', style=t['muted']))
-                self._handle_plan_decision('3')
-            self._scroll_bottom()
+                b.log(Text(f'  → Cancel', style=t['muted']))
+                app.plan_handler.handle_decision('3')
+            b.scroll_bottom()
             return
 
-        # Permission approval mode
-        if getattr(self, '_q_permission_mode', False):
-            self._q_permission_mode = False
-            self._answering_questions = False; self.sm.transition(self._AppState.IDLE)
-            self._exit_question_mode()
-            choice = self._q_selected
-            dangerous = getattr(self, '_permission_dangerous', False)
-            rule = getattr(self, '_permission_rule', '')
-
+        # Permission routing
+        if s.permission_mode:
+            s.permission_mode = False
+            self._exit()
+            # Result handled by permissions.py via _prompt_result/_prompt_event
+            app = b._app
+            dangerous = getattr(app, '_permission_dangerous', False)
+            rule = getattr(app, '_permission_rule', '')
             if dangerous:
-                allowed = (choice == 0)
+                allowed = (s.selected == 0)
             else:
-                allowed = (choice in (0, 1))
-                if choice == 1 and rule:
-                    self.permissions.session_rules.add(rule)
-                    self._log(Text(f'  ✓ Rule added for session: {rule}', style=t['success']))
-
+                allowed = (s.selected in (0, 1))
+                if s.selected == 1 and rule:
+                    b.permissions.session_rules.add(rule)
+                    b.log(Text(f'  ✓ Rule added: {rule}', style=t['success']))
             if allowed:
-                self._log(Text(f'  ✓ Allowed', style=t['success']))
+                b.log(Text(f'  ✓ Allowed', style=t['success']))
             else:
-                self._log(Text(f'  ✗ Denied', style=t['warning']))
-            self._scroll_bottom()
-
-            self._permission_result = allowed
-            event = getattr(self, '_permission_event', None)
+                b.log(Text(f'  ✗ Denied', style=t.get('warning', 'yellow')))
+            b.scroll_bottom()
+            app._permission_result = allowed
+            event = getattr(app, '_permission_event', None)
             if event:
                 event.set()
             return
 
-        note = self._pending_notes.get(idx)
+        # Normal question answer
+        answer = s.answers.get(s.current_idx, '')
+        display = ', '.join(answer) if isinstance(answer, list) else str(answer)
+        note = s.notes.get(s.current_idx)
         log_text = Text()
         log_text.append(f'  → {display}', style=t['success'])
         if note:
             log_text.append(f'  ({note})', style=t['muted'])
-        self._log(log_text)
-        self._scroll_bottom()
+        b.log(log_text)
+        b.scroll_bottom()
 
-        self._current_question_idx += 1
-
-        # Hide selector during transition, show next after brief pause
-        self._hide_widget('#question-selector')
-        self._answering_questions = False; self.sm.transition(self._AppState.IDLE)
+        s.current_idx += 1
+        b.hide_widget('#question-selector')
+        s.active = False
+        b._app._answering_questions = False
 
         def _next():
-            self._answering_questions = True; self.sm.transition(self._AppState.QUESTIONS)
-            self._show_current_question()
-        self.set_timer(0.15, _next)
+            s.active = True
+            b._app._answering_questions = True
+            b.sm.transition(b.AppState.QUESTIONS)
+            self._show_current()
+        b.set_timer(0.15, _next)
 
-    def _handle_question_answer(self, text):
+    def handle_text_answer(self, text):
         """Handle text input for open-ended questions or note input."""
-        if self._q_noting:
-            # Save note and return to selector
-            self._q_noting = False
-            idx = self._current_question_idx
+        s = self.state
+        b = self.bridge
+        t = b.theme
+
+        if s.noting:
+            s.noting = False
             if text.strip():
-                self._pending_notes[idx] = text.strip()
-            self._hide_widget('#note-input')
-            self._show_widget('#question-selector')
-            self._render_question_selector()
-            try:
-                from acorn.ui.widgets import FocusableStatic
-                self.query_one('#question-selector', FocusableStatic).focus()
-            except Exception:
-                pass
+                s.notes[s.current_idx] = text.strip()
+            b.hide_widget('#note-input')
+            b.show_widget('#question-selector')
+            self._render_selector()
+            b.focus_selector()
             return
 
         # Open-ended answer
-        idx = self._current_question_idx
-        self._pending_answers[idx] = text
-        t = self.theme_data
-        self._log(Text(f'  → {text}', style=t['success']))
-        self._scroll_bottom()
-        self._current_question_idx += 1
-        self._q_transitioning = True
+        s.answers[s.current_idx] = text
+        b.log(Text(f'  → {text}', style=t['success']))
+        b.scroll_bottom()
+        s.current_idx += 1
+        s.active = False
+        b._app._answering_questions = False
+
         def _next():
-            self._q_transitioning = False
-            self._show_current_question()
-        self.set_timer(0.15, _next)
+            s.active = True
+            b._app._answering_questions = True
+            b.sm.transition(b.AppState.QUESTIONS)
+            self._show_current()
+        b.set_timer(0.15, _next)
 
-    def _send_question_answers(self):
-        """Format and send all answers back to the agent."""
-        self._answering_questions = False; self.sm.transition(self._AppState.IDLE)
-        questions = self._pending_questions
-        answers_data = {'answers': self._pending_answers, 'notes': self._pending_notes}
-        formatted = format_answers(questions, answers_data)
-        t = self.theme_data
+    def _send_answers(self):
+        s = self.state
+        b = self.bridge
+        answers_data = {'answers': s.answers, 'notes': s.notes}
+        formatted = format_answers(s.questions, answers_data)
+        t = b.theme
 
-        self._log(Text(''))
-        self._log(self._themed_panel(formatted, title=f'[bold]{self.user}[/bold]', border_style=t['prompt_user']))
-        self._scroll_bottom()
+        b.log(Text(''))
+        b.log_user_panel(formatted)
+        b.scroll_bottom()
 
-        # In test mode, just display — don't send to agent
-        if getattr(self, '_q_test_mode', False):
-            self._q_test_mode = False
-            self._log(Text('  ✓ Questions completed (test mode — not sent)', style=t['success']))
-            self._scroll_bottom()
+        if s.test_mode:
+            b.log(Text('  ✓ Questions completed (test mode)', style=t['success']))
+            b.scroll_bottom()
             return
 
-        self._stream_buffer = ''
-        self._response_text = []
-        self._tool_lines = []
-        self.generating = True
-        self._update_footer()
-        self._update_header()
+        b.generating = True
+        b.update_footer()
+        b.update_header()
         asyncio.create_task(
-            self.conn.send(chat_message(self.session_id, formatted, self.user))
+            b.conn.send(chat_message(b.session_id, formatted, b.user))
         )

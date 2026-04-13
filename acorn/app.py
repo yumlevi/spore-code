@@ -85,13 +85,14 @@ def _register_acorn_themes(app):
         ))
 
 
-from acorn.handlers.ws_events import WSEventsMixin
-from acorn.handlers.questions import QuestionsMixin
-from acorn.handlers.plan import PlanMixin
-from acorn.handlers.chat import ChatMixin
+from acorn.handlers.ws_events import WSEventsHandler
+from acorn.handlers.questions import QuestionsHandler
+from acorn.handlers.plan import PlanHandler
+from acorn.handlers.chat import ChatHandler
+from acorn.bridge import AppBridge
 
 
-class AcornApp(WSEventsMixin, QuestionsMixin, PlanMixin, ChatMixin, App):
+class AcornApp(App):
     """Full-screen Acorn TUI."""
 
     BINDINGS = [
@@ -223,24 +224,12 @@ class AcornApp(WSEventsMixin, QuestionsMixin, PlanMixin, ChatMixin, App):
         self.sm = StateMachine()
         self._AppState = AppState
         self.sm.on_change(lambda old, new: self.slog.debug('state', f'{old.name} → {new.name}') if hasattr(self, 'slog') else None)
-        self._stream_buffer = ''
         self._last_ctrl_c = 0
-        self._response_text = []
-        self._tool_lines = []
-        self._message_count = 0
         self._header_collapsed = False
         self._current_activity = ''
-        self._queued_message = None
         self._spinner_frame = 0
         self._spinner_timer = None
-        self._answering_questions = False
-        self._pending_questions = []
-        self._pending_answers = {}
-        self._pending_notes = {}
-        self._current_question_idx = 0
-        self._awaiting_plan_decision = False
-        self._awaiting_plan_feedback = False
-        self._last_plan_text = ''
+        self._answering_questions = False  # legacy compat for FocusableStatic
         self.process_manager = ProcessManager()
         self.prompter = PromptProvider(self)
         import atexit
@@ -273,6 +262,13 @@ class AcornApp(WSEventsMixin, QuestionsMixin, PlanMixin, ChatMixin, App):
         self._update_mode_bar()
         ensure_local_dir(self.cwd)
 
+        # Create bridge and handlers — handlers own their state
+        self.bridge = AppBridge(self)
+        self.ws_handler = WSEventsHandler(self.bridge)
+        self.questions_handler = QuestionsHandler(self.bridge)
+        self.plan_handler = PlanHandler(self.bridge)
+        self.chat_handler = ChatHandler(self.bridge)
+
         self.permissions = TuiPermissions(self)
         self.executor = ToolExecutor(self.permissions, None, self.cwd, process_manager=self.process_manager)
         self.conn.tool_executor = self.executor
@@ -281,15 +277,16 @@ class AcornApp(WSEventsMixin, QuestionsMixin, PlanMixin, ChatMixin, App):
         self.conn._on_disconnect = lambda: self._on_ws_disconnect()
         self.conn._on_reconnect = lambda: self._on_ws_reconnect()
 
-        self.conn.on('chat:history', self._on_history)
-        self.conn.on('chat:delta', self._on_delta)
-        self.conn.on('chat:status', self._on_status)
-        self.conn.on('chat:done', self._on_done)
-        self.conn.on('chat:error', self._on_error)
-        self.conn.on('chat:tool', self._on_tool)
-        self.conn.on('code:view', self._on_code_view)
-        self.conn.on('code:diff', self._on_code_diff)
-        self.conn.on('chat:start', self._on_start)
+        # Wire WebSocket events to handler methods
+        self.conn.on('chat:history', self.ws_handler.on_history)
+        self.conn.on('chat:delta', self.ws_handler.on_delta)
+        self.conn.on('chat:status', self.ws_handler.on_status)
+        self.conn.on('chat:done', self.ws_handler.on_done)
+        self.conn.on('chat:error', self.ws_handler.on_error)
+        self.conn.on('chat:tool', self.ws_handler.on_tool)
+        self.conn.on('code:view', self.ws_handler.on_code_view)
+        self.conn.on('code:diff', self.ws_handler.on_code_diff)
+        self.conn.on('chat:start', self.ws_handler.on_start)
 
         self.query_one('#user-input', MessageInput).focus()
 
@@ -356,36 +353,34 @@ class AcornApp(WSEventsMixin, QuestionsMixin, PlanMixin, ChatMixin, App):
 
     def on_message_input_submitted(self, event):
         """Handle Enter from the MessageInput widget."""
-        self._autocomplete_matches = []
-        self._hide_widget('#autocomplete')
-        self._hide_widget('#paste-indicator')
-        asyncio.create_task(self._handle_textarea_submit(event.text))
+        asyncio.create_task(self.chat_handler.handle_submit(event.text))
+
+    async def on_input_submitted(self, event):
+        """Handle Enter from Input widgets (note-input)."""
+        input_id = event.input.id if hasattr(event, 'input') else ''
+        if input_id == 'note-input':
+            event.input.value = ''
+            self.questions_handler.handle_text_answer(event.value.strip() or '')
 
     def on_key(self, event):
         """Route keys: question selector, autocomplete."""
         # Question selector mode — intercept arrow keys, space, tab, enter, escape
-        if self.sm.state == self._AppState.QUESTIONS and not getattr(self, '_q_open_ended', False) and not getattr(self, '_q_noting', False):
-            q = self._pending_questions[self._current_question_idx] if self._current_question_idx < len(self._pending_questions) else None
-            if q and q.get('options'):
+        # Route to questions handler if active
+        if hasattr(self, 'questions_handler') and self.questions_handler.state.active:
+            if not self.questions_handler.state.open_ended and not self.questions_handler.state.noting:
                 if event.key in ('up', 'down', 'space', 'tab', 'enter', 'escape'):
-                    self._handle_question_key(event.key)
-                    event.prevent_default()
-                    event.stop()
-                    return
+                    if self.questions_handler.handle_key(event.key):
+                        event.prevent_default()
+                        event.stop()
+                        return
 
         # Note input escape → back to selector
-        if getattr(self, '_q_noting', False) and event.key == 'escape':
-            self._q_noting = False
+        if hasattr(self, 'questions_handler') and self.questions_handler.state.noting and event.key == 'escape':
             try:
                 note_val = self.query_one('#note-input', Input).value.strip()
-                if note_val:
-                    self._pending_notes[self._current_question_idx] = note_val
-                self._hide_widget('#note-input')
-                self._show_widget('#question-selector')
-                self._render_question_selector()
-                self.query_one('#question-selector', FocusableStatic).focus()
+                self.questions_handler.handle_text_answer(note_val)
             except NoMatches:
-                pass
+                self.questions_handler.state.noting = False
             event.prevent_default()
             event.stop()
             return
@@ -504,7 +499,7 @@ class AcornApp(WSEventsMixin, QuestionsMixin, PlanMixin, ChatMixin, App):
             frame = SPINNER[self._spinner_frame % len(SPINNER)]
             activity = self._current_activity or 'generating'
             line3.append(f'  {frame} {activity}', style=t['thinking'])
-            if self._queued_message:
+            if hasattr(self, 'chat_handler') and self.chat_handler.state.queued_message:
                 line3.append('  │  1 queued', style=t.get('warning', 'yellow'))
         if not self.generating and hasattr(self, 'permissions'):
             perm_mode = getattr(self.permissions, 'mode', 'ask')
@@ -643,7 +638,8 @@ class AcornApp(WSEventsMixin, QuestionsMixin, PlanMixin, ChatMixin, App):
             asyncio.create_task(self.conn.send(stop_message(self.session_id)))
             self.generating = False
             self._current_activity = ''
-            self._queued_message = None
+            if hasattr(self, 'chat_handler'):
+                self.chat_handler.state.queued_message = None
             self._log(Text('  ⏹ Stopped', style='dim'))
             self._update_header()
             self._update_footer()
