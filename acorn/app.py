@@ -1105,11 +1105,12 @@ class AcornApp(App):
             self._update_tool_display()
 
     def _update_tool_display(self):
-        """Render tool activity lines into the transcript."""
+        """Render the latest tool activity line into the transcript."""
         if not self._tool_lines:
             return
         t = self.theme_data
-        last_type, last_text = self._tool_lines[-1]
+        last_type, last_text = self._tool_lines.pop()  # consume instead of peek
+        self._tool_lines.clear()  # clear old entries
         style_map = {
             'thinking': t['thinking'],
             'tool_start': t['tool_icon'],
