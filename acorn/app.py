@@ -215,6 +215,16 @@ class AcornApp(App):
         background: $background;
         color: $foreground;
     }
+    #autocomplete {
+        height: auto;
+        max-height: 10;
+        padding: 0 1;
+        background: $surface;
+        border-top: solid $accent;
+    }
+    #autocomplete.hidden {
+        display: none;
+    }
     #question-selector {
         height: auto;
         max-height: 12;
@@ -278,11 +288,34 @@ class AcornApp(App):
         self._awaiting_plan_feedback = False
         self._last_plan_text = ''
         self.process_manager = ProcessManager()
+        self._autocomplete_selected = 0
+        self._autocomplete_matches = []
+        self._slash_commands = [
+            ('/help', 'Show available commands'),
+            ('/quit', 'Exit Acorn'),
+            ('/clear', 'Clear session history'),
+            ('/stop', 'Stop current generation'),
+            ('/plan', 'Toggle plan mode'),
+            ('/status', 'Connection info'),
+            ('/theme', 'Switch theme (dark, light, oak, forest, oled)'),
+            ('/mode', 'Tool approval mode (auto, ask, locked)'),
+            ('/mode auto', 'Auto-approve non-dangerous tools'),
+            ('/mode ask', 'Prompt for every tool'),
+            ('/mode locked', 'Deny all writes/exec'),
+            ('/mode rules', 'Show session allow rules'),
+            ('/approve-all', 'Shortcut for /mode auto'),
+            ('/test', 'Run UI tests'),
+            ('/test all', 'Run all tests'),
+            ('/bg', 'List background processes'),
+            ('/bg run', 'Run command in background'),
+            ('/bg kill', 'Kill a background process'),
+        ]
 
     def compose(self) -> ComposeResult:
         yield Static('', id='header-bar')
         yield SelectableLog(id='transcript', wrap=True, highlight=True, markup=True)
         with Vertical(id='bottom-area'):
+            yield Static('', id='autocomplete', classes='hidden')
             yield Input(placeholder='Message acorn...', id='user-input')
             yield FocusableStatic('', id='question-selector', classes='hidden')
             yield Input(placeholder='Add context/notes (Tab to go back)...', id='note-input', classes='hidden')
@@ -366,6 +399,41 @@ class AcornApp(App):
             event.prevent_default()
             event.stop()
             return
+
+        # Autocomplete navigation
+        if self._autocomplete_matches:
+            if event.key == 'up':
+                self._autocomplete_selected = (self._autocomplete_selected - 1) % len(self._autocomplete_matches[:8])
+                self._render_autocomplete()
+                event.prevent_default()
+                event.stop()
+                return
+            elif event.key == 'down':
+                self._autocomplete_selected = (self._autocomplete_selected + 1) % len(self._autocomplete_matches[:8])
+                self._render_autocomplete()
+                event.prevent_default()
+                event.stop()
+                return
+            elif event.key == 'tab':
+                # Fill the selected command into the input
+                cmd, _ = self._autocomplete_matches[self._autocomplete_selected]
+                try:
+                    inp = self.query_one('#user-input', Input)
+                    inp.value = cmd + ' '
+                    inp.cursor_position = len(inp.value)
+                except NoMatches:
+                    pass
+                self._autocomplete_matches = []
+                self._hide_widget('#autocomplete')
+                event.prevent_default()
+                event.stop()
+                return
+            elif event.key == 'escape':
+                self._autocomplete_matches = []
+                self._hide_widget('#autocomplete')
+                event.prevent_default()
+                event.stop()
+                return
 
         # Default: refocus input on typing
         if event.key in ('up', 'down', 'left', 'right', 'escape', 'tab', 'ctrl+p', 'ctrl+c'):
@@ -605,7 +673,46 @@ class AcornApp(App):
 
     # ── Input handling ─────────────────────────────────────────────
 
+    def on_input_changed(self, event: Input.Changed):
+        """Show autocomplete popup when typing slash commands."""
+        if event.input.id != 'user-input':
+            return
+        text = event.value
+        if text.startswith('/') and len(text) >= 1:
+            query = text.lower()
+            matches = [(cmd, desc) for cmd, desc in self._slash_commands if cmd.startswith(query)]
+            self._autocomplete_matches = matches
+            self._autocomplete_selected = 0
+            if matches:
+                self._render_autocomplete()
+                self._show_widget('#autocomplete')
+            else:
+                self._hide_widget('#autocomplete')
+        else:
+            self._autocomplete_matches = []
+            self._hide_widget('#autocomplete')
+
+    def _render_autocomplete(self):
+        t = self.theme_data
+        lines = Text()
+        for i, (cmd, desc) in enumerate(self._autocomplete_matches[:8]):
+            if i == self._autocomplete_selected:
+                lines.append(f' ▸ {cmd}  ', style=f'bold {t["accent"]}')
+                lines.append(desc, style=t['fg'])
+            else:
+                lines.append(f'   {cmd}  ', style=t['fg'])
+                lines.append(desc, style=t['muted'])
+            lines.append('\n')
+        try:
+            self.query_one('#autocomplete', Static).update(lines)
+        except NoMatches:
+            pass
+
     async def on_input_submitted(self, event: Input.Submitted):
+        # Dismiss autocomplete on submit
+        self._autocomplete_matches = []
+        self._hide_widget('#autocomplete')
+
         text = event.value.strip()
         input_id = event.input.id if hasattr(event, 'input') else ''
 
