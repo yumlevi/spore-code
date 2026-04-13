@@ -112,8 +112,19 @@ class Connection:
         tool_id = msg.get('id', '')
         tool_name = msg.get('name', '')
         tool_input = msg.get('input', {})
+        import time as _time
+        start = _time.time()
+        log = getattr(self, '_log', None)
+        if log:
+            log.tool_request(tool_name, tool_input)
         try:
             result = await self.tool_executor.execute(tool_name, tool_input)
+            ms = int((_time.time() - start) * 1000)
+            local = result is not None
+            if log:
+                log.tool_result(tool_name, result, local=local, duration_ms=ms)
             await self.send(json.dumps({'type': 'tool:result', 'id': tool_id, 'result': result}))
         except Exception as e:
+            if log:
+                log.exception('tool', e)
             await self.send(json.dumps({'type': 'tool:result', 'id': tool_id, 'result': {'error': str(e)}}))

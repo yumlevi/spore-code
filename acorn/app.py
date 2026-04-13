@@ -31,6 +31,7 @@ from acorn.tools.executor import ToolExecutor
 from acorn.themes import get_theme
 from acorn.questions import parse_questions, format_answers
 from acorn.background import ProcessManager
+from acorn.logging import SessionLogger, cleanup_old_logs
 import acorn.commands.test  # noqa: F401 — registers /test command
 import acorn.commands.bg    # noqa: F401 — registers /bg command
 
@@ -296,6 +297,10 @@ class AcornApp(App):
         self._awaiting_plan_feedback = False
         self._last_plan_text = ''
         self.process_manager = ProcessManager()
+        self._session_start = __import__('time').time()
+        self.log = SessionLogger(session_id, user, cwd)
+        self.log.info('init', f'AcornApp created theme={theme_name} continue={is_continue}')
+        cleanup_old_logs(keep_days=14)
         self._autocomplete_selected = 0
         self._autocomplete_matches = []
         self._slash_commands = [
@@ -339,6 +344,7 @@ class AcornApp(App):
         self.permissions = TuiPermissions(self)
         self.executor = ToolExecutor(self.permissions, None, self.cwd, process_manager=self.process_manager)
         self.conn.tool_executor = self.executor
+        self.conn._log = self.log  # share session logger with connection
 
         self.conn.on('chat:history', self._on_history)
         self.conn.on('chat:delta', self._on_delta)
@@ -684,6 +690,8 @@ class AcornApp(App):
             return
         # If idle → double tap to quit
         if now - self._last_ctrl_c < 1.0:
+            self.log.session_end(self._message_count, __import__('time').time() - self._session_start)
+            self.log.close()
             self.exit()
         else:
             self._last_ctrl_c = now
@@ -811,6 +819,7 @@ class AcornApp(App):
 
     async def _send_message(self, text):
         """Send a message to the agent."""
+        self.log.info('send', f'sending {len(text)} chars', plan_mode=self.plan_mode)
         t = self.theme_data
         self._log(self._themed_panel(text, title=f'[bold]{self.user}[/bold]', border_style=t['prompt_user']))
 
@@ -842,8 +851,11 @@ class AcornApp(App):
         cmd = parts[0].lower()
         args = parts[1] if len(parts) > 1 else ''
         t = self.theme_data
+        self.log.command(cmd, args)
 
         if cmd in ('/quit', '/exit'):
+            self.log.session_end(self._message_count, __import__('time').time() - self._session_start)
+            self.log.close()
             self.exit()
         elif cmd == '/stop':
             self.action_quit_check() if self.generating else self._log(Text('  Nothing to stop', style=t['muted']))
@@ -974,6 +986,7 @@ class AcornApp(App):
         self._scroll_bottom()
 
     async def _on_start(self, msg):
+        self.log.debug('ws', 'chat:start')
         self._stream_buffer = ''
         self._response_text = []
         self._tool_lines = []
@@ -1010,6 +1023,7 @@ class AcornApp(App):
     async def _on_status(self, msg):
         t = self.theme_data
         status = msg.get('status', '')
+        self.log.debug('ws:status', status, **{k: v for k, v in msg.items() if k != 'type' and k != 'status'})
 
         # Flush any accumulated text before tool events
         if status in ('tool_exec_start', 'thinking_start'):
@@ -1080,6 +1094,10 @@ class AcornApp(App):
         self._update_footer()
         self._update_header()
         response = ''.join(self._response_text)
+        usage = msg.get('usage', {})
+        self.log.info('ws:done', f'{len(response)} chars response',
+                      iters=msg.get('iterations'), tools=msg.get('toolUsage'),
+                      input_tokens=usage.get('input_tokens'), output_tokens=usage.get('output_tokens'))
         if response.strip():
             self._last_response = response
         t = self.theme_data
@@ -1523,6 +1541,7 @@ class AcornApp(App):
         self._update_footer()
         t = self.theme_data
         error = msg.get('error', 'Unknown error')
+        self.log.error_event(error)
         self._log(Panel(
             Text(error, style=t['error']),
             title='[bold]Error[/bold]',
