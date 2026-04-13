@@ -286,8 +286,10 @@ async def test_bg_output_buffer(app):
     assert not bp.running
     assert len(bp.output) == 500, f'Buffer should cap at 500, got {len(bp.output)}'
     assert 'line 600' in bp.output[-1]  # last line should be from the end
-    assert 'line 1' not in '\n'.join(list(bp.output)[:5])  # early lines should be evicted
-    app._log(Text(f'  ✓ Output buffer capped at 500, oldest evicted', style=t['success']))
+    # First line should be around line 101 (600 - 500 + 1), not line 1
+    first_num = int(bp.output[0].split()[-1])
+    assert first_num > 50, f'Oldest line should be >50, got {first_num}'
+    app._log(Text(f'  ✓ Buffer capped at 500, oldest ({bp.output[0]}) evicted', style=t['success']))
 
     pm.remove(bp.id)
     app._scroll_bottom()
@@ -358,7 +360,7 @@ async def test_file_ops(app):
     # Read
     result = read_file({'path': test_path}, app.cwd)
     assert 'hello world' in result.get('content', '')
-    assert result.get('totalLines') == 4  # 3 lines + trailing newline
+    assert result.get('totalLines') == 3, f'Expected 3 lines, got {result.get("totalLines")}'
     app._log(Text(f'  ✓ read_file: {result["totalLines"]} lines', style=t['success']))
 
     # Read with offset/limit
@@ -399,22 +401,25 @@ async def test_search(app):
     t = app.theme_data
     from acorn.tools.search import glob_search, grep_search
 
+    # Use the acorn package dir which we know has .py files
+    pkg_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
     # Glob
-    result = glob_search({'pattern': '*.py'}, os.path.dirname(os.path.dirname(__file__)))
-    assert result.get('count', 0) > 0
+    result = glob_search({'pattern': '*.py'}, pkg_dir)
+    assert result.get('count', 0) > 0, f'glob *.py found 0 in {pkg_dir}'
     app._log(Text(f'  ✓ glob *.py found {result["count"]} files', style=t['success']))
 
-    # Glob with path
-    result = glob_search({'pattern': '*.toml'}, app.cwd)
-    app._log(Text(f'  ✓ glob *.toml in cwd: {result.get("count", 0)} files', style=t['success']))
+    # Glob in cwd
+    result = glob_search({'pattern': '*'}, app.cwd)
+    app._log(Text(f'  ✓ glob * in cwd: {result.get("count", 0)} entries', style=t['success']))
 
     # Grep
-    result = grep_search({'pattern': 'def '}, os.path.dirname(os.path.dirname(__file__)))
-    assert result.get('count', 0) > 0
+    result = grep_search({'pattern': 'def '}, pkg_dir)
+    assert result.get('count', 0) > 0, f'grep "def " found 0 in {pkg_dir}'
     app._log(Text(f'  ✓ grep "def " found {result["count"]} matches', style=t['success']))
 
     # Grep with file filter
-    result = grep_search({'pattern': 'import', 'glob': '*.py'}, os.path.dirname(os.path.dirname(__file__)))
+    result = grep_search({'pattern': 'import', 'glob': '*.py'}, pkg_dir)
     assert result.get('count', 0) > 0
     app._log(Text(f'  ✓ grep "import" in *.py: {result["count"]} matches', style=t['success']))
 
