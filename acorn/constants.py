@@ -79,4 +79,5 @@ SLASH_COMMANDS = [
     ('/bg', 'List background processes'),
     ('/bg run', 'Run command in background'),
     ('/bg kill', 'Kill a background process'),
+    ('/sessions', 'List saved sessions for this project'),
 ]

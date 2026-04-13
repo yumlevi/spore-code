@@ -829,6 +829,18 @@ class AcornApp(WSEventsMixin, QuestionsMixin, PlanMixin, App):
             self.slog.close()
             self.session_writer.close()
             self.exit()
+        elif cmd == '/sessions':
+            from acorn.session_writer import list_project_sessions
+            sessions = list_project_sessions(self.user, self.cwd)
+            if not sessions:
+                self._log(Text('  No saved sessions for this project', style=t['muted']))
+            else:
+                self._log(Text(f'  {len(sessions)} session(s) for this project:', style=t['accent']))
+                for i, s in enumerate(sessions[:15]):
+                    current = ' ◂' if s['session_id'] == self.session_id else ''
+                    self._log(Text(f'    {i+1}. {s["time_ago"]:12s} {s["message_count"]:3d} msgs  {s["preview"][:50]}{current}', style=t['fg']))
+                self._log(Text(f'\n  Use acorn -c to resume (picks from these)', style=t['muted']))
+            self._scroll_bottom()
         elif cmd == '/stop':
             self.action_quit_check() if self.generating else self._log(Text('  Nothing to stop', style=t['muted']))
         elif cmd == '/clear':
@@ -913,6 +925,7 @@ class AcornApp(WSEventsMixin, QuestionsMixin, PlanMixin, App):
             help_table.add_row('/bg run <cmd>', 'Run command in background')
             help_table.add_row('/bg <id>', 'View process output')
             help_table.add_row('/bg kill <id>', 'Kill a process')
+            help_table.add_row('/sessions', 'List saved sessions')
             help_table.add_row('', '')
             help_table.add_row('Ctrl+C', 'Stop generation (×2 to quit)')
             help_table.add_row('Ctrl+P', 'Toggle plan/execute')

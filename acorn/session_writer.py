@@ -75,6 +75,73 @@ def load_session(session_id: str) -> list:
     return messages
 
 
+def list_project_sessions(user: str, cwd: str) -> list:
+    """List all saved sessions for a user+project, newest first.
+
+    Returns list of dicts: {session_id, path, modified, message_count, preview}
+    """
+    from acorn.session import find_git_root
+    import os
+    import hashlib
+
+    if not SESSIONS_DIR.exists():
+        return []
+
+    project_root = find_git_root(cwd) or cwd
+    name = os.path.basename(project_root)
+    path_hash = hashlib.sha256(project_root.encode()).hexdigest()[:8]
+    prefix = f'cli_{user}@{name}-{path_hash}'
+
+    sessions = []
+    for f in sorted(SESSIONS_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+        if f.suffix == '.jsonl' and f.name.startswith(prefix):
+            # Quick scan: count messages and get first user message as preview
+            msg_count = 0
+            first_user_msg = ''
+            last_assistant_msg = ''
+            try:
+                for line in open(f):
+                    try:
+                        record = json.loads(line.strip())
+                        msg_count += 1
+                        if record.get('role') == 'user' and not first_user_msg:
+                            first_user_msg = record.get('text', '')[:100]
+                        if record.get('role') == 'assistant':
+                            last_assistant_msg = record.get('text', '')[:100]
+                    except json.JSONDecodeError:
+                        continue
+            except Exception:
+                continue
+
+            if msg_count == 0:
+                continue
+
+            # Extract session_id from filename (reverse the safe_id transform)
+            session_id = f.stem.replace('_', ':', 1).replace('_', '@', 1)
+
+            # Format modification time
+            import datetime
+            mtime = datetime.datetime.fromtimestamp(f.stat().st_mtime)
+            age = time.time() - f.stat().st_mtime
+            if age < 3600:
+                time_ago = f'{int(age / 60)}m ago'
+            elif age < 86400:
+                time_ago = f'{int(age / 3600)}h ago'
+            else:
+                time_ago = mtime.strftime('%Y-%m-%d %H:%M')
+
+            sessions.append({
+                'session_id': session_id,
+                'path': f,
+                'modified': mtime,
+                'time_ago': time_ago,
+                'message_count': msg_count,
+                'preview': first_user_msg or last_assistant_msg or '(empty)',
+            })
+
+    return sessions
+
+
 def cleanup_old_sessions(keep_days: int = 30):
     """Remove sessions older than keep_days."""
     if not SESSIONS_DIR.exists():

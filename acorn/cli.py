@@ -42,6 +42,44 @@ PLAN_EXECUTE_MSG = (
 )
 
 
+def _pick_session(sessions, renderer):
+    """Interactive session picker — show numbered list, user picks one."""
+    from rich.table import Table
+    from rich.panel import Panel
+
+    console = renderer.console
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style='bold cyan', min_width=4)
+    table.add_column(min_width=10)
+    table.add_column(min_width=6)
+    table.add_column()
+
+    for i, s in enumerate(sessions[:20]):
+        table.add_row(
+            f'  {i + 1}.',
+            s['time_ago'],
+            f'{s["message_count"]} msgs',
+            s['preview'][:60],
+        )
+
+    console.print(Panel(table, title='[bold]Select a session to resume[/bold]', border_style='cyan'))
+    console.print()
+
+    while True:
+        try:
+            choice = input(f'  Session number [1-{min(len(sessions), 20)}] (or Enter for latest): ').strip()
+            if not choice:
+                return sessions[0]['session_id']
+            num = int(choice)
+            if 1 <= num <= min(len(sessions), 20):
+                picked = sessions[num - 1]
+                console.print(f'  Resuming: {picked["preview"][:60]} ({picked["time_ago"]})')
+                return picked['session_id']
+            console.print(f'  [red]Pick 1-{min(len(sessions), 20)}[/red]')
+        except (ValueError, KeyboardInterrupt):
+            return sessions[0]['session_id']
+
+
 def _save_plan(cwd: str, plan_text: str) -> str:
     """Save an approved plan to .acorn/plans/ in the working directory."""
     import time
@@ -325,15 +363,23 @@ async def async_main(host, port, user, key, theme_name='dark', message=None, con
     # Session — continue last or compute new
     cwd = os.getcwd()
     if continue_session:
-        last_sid, last_cwd = load_last_session()
-        if last_sid:
-            session_id = last_sid
-            renderer.show_info(f'Resuming session: {last_sid}')
-            if last_cwd and last_cwd != cwd:
-                renderer.show_info(f'Note: original dir was {last_cwd}')
+        from acorn.session_writer import list_project_sessions
+        sessions = list_project_sessions(user, cwd)
+        if len(sessions) > 1:
+            # Multiple sessions — let user pick
+            session_id = _pick_session(sessions, renderer)
+        elif len(sessions) == 1:
+            session_id = sessions[0]['session_id']
+            renderer.show_info(f'Resuming: {sessions[0]["preview"][:60]} ({sessions[0]["time_ago"]})')
         else:
-            renderer.show_error('No previous session found')
-            session_id = compute_session_id(user, cwd)
+            # No local sessions — try last_session file
+            last_sid, last_cwd = load_last_session()
+            if last_sid:
+                session_id = last_sid
+                renderer.show_info(f'Resuming session: {last_sid}')
+            else:
+                renderer.show_error('No previous session found')
+                session_id = compute_session_id(user, cwd)
     else:
         session_id = compute_session_id(user, cwd)
 
