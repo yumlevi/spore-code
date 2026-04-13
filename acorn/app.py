@@ -33,7 +33,6 @@ from acorn.questions import parse_questions, format_answers
 from acorn.background import ProcessManager
 import acorn.commands.test  # noqa: F401 — registers /test command
 import acorn.commands.bg    # noqa: F401 — registers /bg command
-import acorn.commands.serve # noqa: F401 — registers /serve command
 
 PLAN_PREFIX = (
     '[MODE: Plan only. You are in planning mode. Follow these phases in order:\n\n'
@@ -685,7 +684,6 @@ class AcornApp(App):
             help_table.add_row('/theme [name]', 'Switch theme')
             help_table.add_row('/approve-all', 'Auto-approve tools')
             help_table.add_row('/test [name]', 'Run UI tests')
-            help_table.add_row('/serve [dir]', 'Start local HTTP server')
             help_table.add_row('/bg', 'Background processes')
             help_table.add_row('/bg run <cmd>', 'Run command in background')
             help_table.add_row('/bg <id>', 'View process output')
