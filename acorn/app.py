@@ -10,7 +10,7 @@ if not os.environ.get("COLORTERM"):
 
 from textual.app import App, ComposeResult
 from textual.containers import Vertical, VerticalScroll
-from textual.widgets import Static, Input, RichLog
+from textual.widgets import Static, Input, RichLog, TextArea
 from textual.binding import Binding
 from textual.css.query import NoMatches
 
@@ -194,7 +194,15 @@ class AcornApp(App):
     }
     #user-input {
         height: 3;
-        padding: 0 1;
+        max-height: 10;
+        background: $surface;
+        color: $foreground;
+        border-top: solid $accent;
+    }
+    #user-input.hidden {
+        display: none;
+    }
+    TextArea {
         background: $surface;
         color: $foreground;
     }
@@ -316,7 +324,7 @@ class AcornApp(App):
         yield SelectableLog(id='transcript', wrap=True, highlight=True, markup=True)
         with Vertical(id='bottom-area'):
             yield Static('', id='autocomplete', classes='hidden')
-            yield Input(placeholder='Message acorn...', id='user-input', max_length=0)
+            yield TextArea('', id='user-input', language=None, show_line_numbers=False, soft_wrap=True)
             yield FocusableStatic('', id='question-selector', classes='hidden')
             yield Input(placeholder='Add context/notes (Tab to go back)...', id='note-input', classes='hidden')
             yield Static('', id='footer-bar')
@@ -342,7 +350,7 @@ class AcornApp(App):
         self.conn.on('code:diff', self._on_code_diff)
         self.conn.on('chat:start', self._on_start)
 
-        self.query_one('#user-input', Input).focus()
+        self.query_one('#user-input', TextArea).focus()
 
         # Run environment audit at startup — cached for the session
         from acorn.context import gather_environment, detect_project_type
@@ -372,7 +380,23 @@ class AcornApp(App):
             )
 
     def on_key(self, event):
-        """Route keys: question selector when active, otherwise refocus input."""
+        """Route keys: TextArea submit, question selector, autocomplete."""
+        # Enter in TextArea → submit (Shift+Enter for newline handled by TextArea)
+        if event.key == 'enter' and not event.shift:
+            try:
+                ta = self.query_one('#user-input', TextArea)
+                if ta.has_focus and not getattr(self, '_answering_questions', False):
+                    text = ta.text.strip()
+                    if text:
+                        ta.clear()
+                        # Route through input_submitted logic
+                        asyncio.create_task(self._handle_textarea_submit(text))
+                        event.prevent_default()
+                        event.stop()
+                        return
+            except NoMatches:
+                pass
+
         # Question selector mode — intercept arrow keys, space, tab, enter, escape
         if getattr(self, '_answering_questions', False) and not getattr(self, '_q_open_ended', False) and not getattr(self, '_q_noting', False):
             q = self._pending_questions[self._current_question_idx] if self._current_question_idx < len(self._pending_questions) else None
@@ -418,9 +442,9 @@ class AcornApp(App):
                 # Fill the selected command into the input
                 cmd, _ = self._autocomplete_matches[self._autocomplete_selected]
                 try:
-                    inp = self.query_one('#user-input', Input)
-                    inp.value = cmd + ' '
-                    inp.cursor_position = len(inp.value)
+                    inp = self.query_one('#user-input', TextArea)
+                    inp.clear()
+                    inp.insert(cmd + ' ')
                 except NoMatches:
                     pass
                 self._autocomplete_matches = []
@@ -439,7 +463,7 @@ class AcornApp(App):
         if event.key in ('up', 'down', 'left', 'right', 'escape', 'tab', 'ctrl+p', 'ctrl+c'):
             return
         try:
-            inp = self.query_one('#user-input', Input)
+            inp = self.query_one('#user-input', TextArea)
             if not inp.has_focus and inp.display:
                 inp.focus()
         except NoMatches:
@@ -673,11 +697,11 @@ class AcornApp(App):
 
     # ── Input handling ─────────────────────────────────────────────
 
-    def on_input_changed(self, event: Input.Changed):
-        """Show autocomplete popup when typing slash commands."""
-        if event.input.id != 'user-input':
+    def on_text_area_changed(self, event: TextArea.Changed):
+        """Show autocomplete popup when typing slash commands in TextArea."""
+        if event.text_area.id != 'user-input':
             return
-        text = event.value
+        text = event.text_area.text
         if text.startswith('/') and len(text) >= 1:
             query = text.lower()
             matches = [(cmd, desc) for cmd, desc in self._slash_commands if cmd.startswith(query)]
@@ -708,11 +732,45 @@ class AcornApp(App):
         except NoMatches:
             pass
 
-    async def on_input_submitted(self, event: Input.Submitted):
-        # Dismiss autocomplete on submit
+    async def _handle_textarea_submit(self, text):
+        """Handle submission from the TextArea (Enter key)."""
         self._autocomplete_matches = []
         self._hide_widget('#autocomplete')
 
+        if text.startswith('/'):
+            await self._handle_command(text)
+            return
+
+        if getattr(self, '_answering_questions', False) and getattr(self, '_q_open_ended', False):
+            self._q_open_ended = False
+            self._handle_question_answer(text)
+            return
+
+        if getattr(self, '_awaiting_plan_decision', False):
+            if getattr(self, '_awaiting_plan_feedback', False):
+                self._awaiting_plan_feedback = False
+                self._awaiting_plan_decision = False
+                self._handle_plan_decision(text)
+            else:
+                self._handle_plan_decision(text)
+            return
+
+        if self.generating:
+            t = self.theme_data
+            self._queued_message = text
+            self._log(self._themed_panel(
+                f'{text}\n[queued — will send when current response finishes]',
+                title=f'[bold]{self.user}[/bold] [dim](queued)[/dim]',
+                border_style=t.get('muted', 'dim'),
+            ))
+            self._scroll_bottom()
+            self._update_footer()
+            return
+
+        await self._send_message(text)
+
+    async def on_input_submitted(self, event: Input.Submitted):
+        """Handle submission from Input widgets (note-input only now)."""
         text = event.value.strip()
         input_id = event.input.id if hasattr(event, 'input') else ''
 
@@ -721,23 +779,6 @@ class AcornApp(App):
             event.input.value = ''
             self._handle_question_answer(text or '')
             return
-
-        if not text:
-            return
-
-        try:
-            self.query_one('#user-input', Input).value = ''
-        except NoMatches:
-            pass
-
-        # Slash commands always run immediately
-        if text.startswith('/'):
-            await self._handle_command(text)
-            return
-
-        # If answering open-ended questions via regular input
-        if getattr(self, '_answering_questions', False) and getattr(self, '_q_open_ended', False):
-            self._q_open_ended = False
             self._handle_question_answer(text)
             return
 
@@ -1132,9 +1173,8 @@ class AcornApp(App):
             self._hide_widget('#question-selector')
             self._show_widget('#user-input')
             try:
-                inp = self.query_one('#user-input', Input)
-                inp.placeholder = f'Answer question {idx + 1}/{total}...'
-                inp.value = ''
+                inp = self.query_one('#user-input', TextArea)
+                inp.clear()
                 inp.focus()
             except NoMatches:
                 pass
@@ -1197,9 +1237,8 @@ class AcornApp(App):
         self._hide_widget('#note-input')
         self._show_widget('#user-input')
         try:
-            inp = self.query_one('#user-input', Input)
-            inp.placeholder = 'Message acorn...'
-            inp.value = ''
+            inp = self.query_one('#user-input', TextArea)
+            inp.clear()
             inp.focus()
         except NoMatches:
             pass
