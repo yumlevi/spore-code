@@ -42,7 +42,7 @@ PLAN_EXECUTE_MSG = (
 )
 
 
-def _pick_session(sessions, renderer):
+async def _pick_session(sessions, renderer):
     """Interactive session picker with arrow keys."""
     from prompt_toolkit import Application
     from prompt_toolkit.key_binding import KeyBindings
@@ -94,7 +94,8 @@ def _pick_session(sessions, renderer):
         key_bindings=kb,
         full_screen=False,
     )
-    app.run()
+
+    await app.run_async()
 
     picked_id = result[0] or items[0]['session_id']
     picked = next((s for s in items if s['session_id'] == picked_id), items[0])
@@ -389,7 +390,7 @@ async def async_main(host, port, user, key, theme_name='dark', message=None, con
         sessions = list_project_sessions(user, cwd)
         if len(sessions) > 1:
             # Multiple sessions — let user pick
-            session_id = _pick_session(sessions, renderer)
+            session_id = await _pick_session(sessions, renderer)
         elif len(sessions) == 1:
             session_id = sessions[0]['session_id']
             renderer.show_info(f'Resuming: {sessions[0]["preview"][:60]} ({sessions[0]["time_ago"]})')
