@@ -192,6 +192,10 @@ class AcornApp(App):
     RichLog {
         background: $background;
         color: $foreground;
+        scrollbar-gutter: stable;
+    }
+    VerticalScroll {
+        scrollbar-gutter: stable;
     }
     """
 
@@ -294,18 +298,6 @@ class AcornApp(App):
             asyncio.create_task(
                 self.conn.send(json.dumps({'type': 'chat:history-request', 'sessionId': self.session_id}))
             )
-
-    _last_click_time = 0
-
-    def on_click(self, event):
-        """Double-click focuses the input. Single click allows text selection."""
-        now = time.time()
-        if now - self._last_click_time < 0.4:
-            try:
-                self.query_one('#user-input', Input).focus()
-            except NoMatches:
-                pass
-        self._last_click_time = now
 
     def on_key(self, event):
         """Typing refocuses the input if it lost focus."""
@@ -630,6 +622,17 @@ class AcornApp(App):
         elif cmd == '/approve-all':
             self.permissions.approve_all = True
             self._log(Text('  ⚡ All tools auto-approved', style='yellow'))
+        elif cmd == '/copy':
+            # Copy last response to clipboard via OSC 52
+            last = ''.join(self._response_text) if self._response_text else getattr(self, '_last_response', '')
+            if last:
+                import base64
+                encoded = base64.b64encode(last.encode()).decode()
+                # OSC 52 clipboard escape sequence
+                print(f'\033]52;c;{encoded}\a', end='', flush=True)
+                self._log(Text('  ✓ Last response copied to clipboard', style=t['success']))
+            else:
+                self._log(Text('  No response to copy', style=t['muted']))
         elif cmd == '/help':
             help_table = Table.grid(padding=(0, 2))
             help_table.add_column(style='bold cyan', min_width=18)
@@ -641,6 +644,7 @@ class AcornApp(App):
             help_table.add_row('/status', 'Connection info')
             help_table.add_row('/theme [name]', 'Switch theme')
             help_table.add_row('/approve-all', 'Auto-approve tools')
+            help_table.add_row('/copy', 'Copy last response to clipboard')
             help_table.add_row('/test [name]', 'Run UI tests')
             help_table.add_row('/bg', 'Background processes')
             help_table.add_row('/bg run <cmd>', 'Run command in background')
@@ -788,6 +792,8 @@ class AcornApp(App):
         self._update_footer()
         self._update_header()
         response = ''.join(self._response_text)
+        if response.strip():
+            self._last_response = response
         t = self.theme_data
 
         # Clear stream area
