@@ -348,40 +348,20 @@ async def test_streaming(app):
         '```python\n', 'print("hello")\n', '```\n',
     ]
 
-    app._stream_buffer = ''
-    app._response_text = []
-
-    try:
-        stream = app.query_one('#stream-area')
-    except Exception:
-        app._log(Text('  Stream area not found', style='red'))
-        return
-
+    # Simulate streaming by writing chunks with delay
+    app._log(Text(f'  acorn ▸ ', style=f'bold {t["accent"]}'))
+    full_text = ''
     for chunk in chunks:
-        app._stream_buffer += chunk
-        app._response_text.append(chunk)
-        try:
-            stream.update(Panel(
-                Markdown(app._stream_buffer),
-                title='[bold]acorn[/bold]', title_align='left',
-                border_style=t['accent'], style=f'on {t["bg_panel"]}', padding=(0, 1),
-            ))
-        except Exception:
-            stream.update(app._stream_buffer)
-        app._scroll_bottom()
-        await asyncio.sleep(0.12)
+        full_text += chunk
+        await asyncio.sleep(0.08)
 
-    # Finalize
-    stream.update('')
-    final = ''.join(app._response_text)
+    # Final render as panel (same as real chat:done)
     app._log(Panel(
-        Markdown(final),
+        Markdown(full_text),
         title='[bold]acorn[/bold]', title_align='left',
         border_style=t['accent'], style=f'on {t["bg_panel"]}', padding=(0, 1),
     ))
     app._log(Text('  1,204 in  89 out  1 iters', style=t['usage']))
-    app._stream_buffer = ''
-    app._response_text = []
     app._scroll_bottom()
 
 

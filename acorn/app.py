@@ -166,13 +166,6 @@ class AcornApp(App):
         background: $background;
         color: $foreground;
     }
-    #stream-area {
-        height: auto;
-        max-height: 20;
-        padding: 0 2;
-        margin: 0 1;
-        background: $background;
-    }
     #bottom-area {
         dock: bottom;
         height: auto;
@@ -247,7 +240,6 @@ class AcornApp(App):
     def compose(self) -> ComposeResult:
         yield Static('', id='header-bar')
         yield SelectableLog(id='transcript', wrap=True, highlight=True, markup=True)
-        yield Static('', id='stream-area')
         with Vertical(id='bottom-area'):
             yield Input(placeholder='Message acorn...', id='user-input')
             yield Static('', id='footer-bar')
@@ -687,33 +679,20 @@ class AcornApp(App):
         self._stream_buffer = ''
         self._response_text = []
         self._tool_lines = []
-        try:
-            self.query_one('#stream-area', Static).update('')
-        except NoMatches:
-            pass
+        self._streaming_started = False
 
     async def _on_delta(self, msg):
         text = msg.get('text', '')
         self._stream_buffer += text
         self._response_text.append(text)
-        try:
-            stream = self.query_one('#stream-area', Static)
+
+        # Show a "typing" indicator on first delta, then let it accumulate
+        # Full markdown render happens on chat:done
+        if not getattr(self, '_streaming_started', False):
+            self._streaming_started = True
             t = self.theme_data
-            try:
-                content = Markdown(self._stream_buffer)
-            except Exception:
-                content = Text(self._stream_buffer, style=t['fg'])
-            stream.update(Panel(
-                content,
-                title='[bold]acorn[/bold]',
-                title_align='left',
-                border_style=t['accent'],
-                style=f'on {t["bg_panel"]}',
-                padding=(0, 1),
-            ))
-            self.query_one('#transcript', SelectableLog).scroll_end(animate=False)
-        except NoMatches:
-            pass
+            self._log(Text(f'  acorn ▸ ', style=f'bold {t["accent"]}'))
+            self._scroll_bottom()
 
     async def _on_status(self, msg):
         t = self.theme_data
@@ -786,12 +765,6 @@ class AcornApp(App):
         if response.strip():
             self._last_response = response
         t = self.theme_data
-
-        # Clear stream area
-        try:
-            self.query_one('#stream-area', Static).update('')
-        except NoMatches:
-            pass
 
         # Write final response as a bordered panel
         if response.strip():
