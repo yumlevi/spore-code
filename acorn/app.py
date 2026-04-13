@@ -924,6 +924,7 @@ class AcornApp(App):
         self._q_selected = 0
         self._q_checked = set()
         self._q_noting = False
+        self._q_open_ended = False
 
         if q['options']:
             # Show selector in bottom area, hide regular input
@@ -1063,7 +1064,6 @@ class AcornApp(App):
             self._pending_answers[idx] = selected if selected else ['(none)']
         elif q['options']:
             self._pending_answers[idx] = q['options'][self._q_selected]
-        # (open-ended is handled via on_input_submitted)
 
         answer = self._pending_answers.get(idx, '')
         display = ', '.join(answer) if isinstance(answer, list) else str(answer)
@@ -1076,7 +1076,8 @@ class AcornApp(App):
         self._scroll_bottom()
 
         self._current_question_idx += 1
-        self._show_current_question()
+        # Defer to next tick so Textual re-renders between questions
+        self.call_later(self._show_current_question)
 
     def _handle_question_answer(self, text):
         """Handle text input for open-ended questions or note input."""
@@ -1102,7 +1103,7 @@ class AcornApp(App):
         self._log(Text(f'  → {text}', style=t['success']))
         self._scroll_bottom()
         self._current_question_idx += 1
-        self._show_current_question()
+        self.call_later(self._show_current_question)
 
     def _send_question_answers(self):
         """Format and send all answers back to the agent."""
