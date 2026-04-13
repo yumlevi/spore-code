@@ -894,7 +894,6 @@ class AcornApp(App):
             self._show_current_question()
         elif self.plan_mode and response and ('PLAN_READY' in response or len(response) > 500):
             self._last_plan_text = response
-            self._awaiting_plan_decision = True
             self._show_plan_choices()
 
         self._stream_buffer = ''
@@ -1075,6 +1074,25 @@ class AcornApp(App):
 
         answer = self._pending_answers.get(idx, '')
         display = ', '.join(answer) if isinstance(answer, list) else str(answer)
+
+        # Plan approval mode — route to plan handler
+        if getattr(self, '_q_plan_approval', False):
+            self._q_plan_approval = False
+            self._answering_questions = False
+            self._exit_question_mode()
+            choice = self._q_selected  # 0=execute, 1=revise, 2=cancel
+            if choice == 0:
+                self._log(Text(f'  → Execute', style=t['success']))
+                self._handle_plan_decision('1')
+            elif choice == 1:
+                self._log(Text(f'  → Revise', style=t['accent']))
+                self._handle_plan_decision('2')
+            else:
+                self._log(Text(f'  → Cancel', style=t['muted']))
+                self._handle_plan_decision('3')
+            self._scroll_bottom()
+            return
+
         note = self._pending_notes.get(idx)
         log_text = Text()
         log_text.append(f'  → {display}', style=t['success'])
@@ -1084,12 +1102,10 @@ class AcornApp(App):
         self._scroll_bottom()
 
         self._current_question_idx += 1
-        remaining = len(self._pending_questions) - self._current_question_idx
-        self._log(Text(f'  [{remaining} questions remaining]', style=t['muted']))
 
         # Hide selector during transition, show next after brief pause
         self._hide_widget('#question-selector')
-        self._answering_questions = False  # temporarily disable key handler
+        self._answering_questions = False
 
         def _next():
             self._answering_questions = True
@@ -1138,6 +1154,13 @@ class AcornApp(App):
         self._log(self._themed_panel(formatted, title=f'[bold]{self.user}[/bold]', border_style=t['prompt_user']))
         self._scroll_bottom()
 
+        # In test mode, just display — don't send to agent
+        if getattr(self, '_q_test_mode', False):
+            self._q_test_mode = False
+            self._log(Text('  ✓ Questions completed (test mode — not sent)', style=t['success']))
+            self._scroll_bottom()
+            return
+
         self._stream_buffer = ''
         self._response_text = []
         self._tool_lines = []
@@ -1149,22 +1172,35 @@ class AcornApp(App):
         )
 
     def _show_plan_choices(self):
-        """Show plan approval options inline."""
+        """Show plan approval using the question selector UI."""
         t = self.theme_data
         self._log(Text(''))
-        self._log(Panel(
-            Text.assemble(
-                ('  1. ', f'bold {t["accent"]}'), ('▶ Execute plan\n', t['success']),
-                ('  2. ', f'bold {t["accent"]}'), ('✎ Revise with feedback\n', t['fg']),
-                ('  3. ', f'bold {t["accent"]}'), ('✕ Cancel\n', t['muted']),
-            ),
-            title='[bold]Plan Ready[/bold]',
-            border_style=t['accent'],
-            style=f'on {t["bg_panel"]}',
-            padding=(0, 1),
-        ))
-        self._log(Text('  Type 1, 2, or 3 (or type feedback directly)', style=t['muted']))
-        self._scroll_bottom()
+
+        # Use the question selector for plan approval
+        self._pending_questions = [{
+            'text': 'Plan ready — what would you like to do?',
+            'options': ['▶ Execute plan', '✎ Revise with feedback', '✕ Cancel'],
+            'multi': False,
+            'index': 1,
+        }]
+        self._pending_answers = {}
+        self._pending_notes = {}
+        self._current_question_idx = 0
+        self._answering_questions = True
+        self._q_plan_approval = True  # flag so we handle the answer differently
+        self._q_open_ended = False
+        self._q_selected = 0
+        self._q_checked = set()
+        self._q_noting = False
+        self._q_transitioning = False
+
+        self._hide_widget('#user-input')
+        self._show_widget('#question-selector')
+        self._render_question_selector()
+        try:
+            self.query_one('#question-selector', FocusableStatic).focus()
+        except NoMatches:
+            pass
 
     def _handle_plan_decision(self, text):
         """Handle user input when awaiting plan decision."""

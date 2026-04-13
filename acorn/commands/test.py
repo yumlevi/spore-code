@@ -108,12 +108,13 @@ async def test_questions_inline(app):
         {'text': 'Project name?', 'options': None, 'multi': False, 'index': 3},
     ]
     app._log(Text('  Starting inline question flow...', style=t['accent']))
-    app._log(Text('  Answer with: number for single, comma-numbers for multi, text for open', style=t['muted']))
+    app._log(Text('  Use arrow keys, Space to toggle, Enter to confirm', style=t['muted']))
     app._pending_questions = questions
     app._pending_answers = {}
     app._pending_notes = {}
     app._current_question_idx = 0
     app._answering_questions = True
+    app._q_test_mode = True  # Don't send to agent after completing
     app._show_current_question()
 
 
