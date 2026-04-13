@@ -261,6 +261,26 @@ class AcornApp(App):
 
         self.query_one('#user-input', Input).focus()
 
+        # Run environment audit at startup — cached for the session
+        from acorn.context import gather_environment, detect_project_type
+        env = gather_environment()
+        proj_type = detect_project_type(self.cwd)
+        t = self.theme_data
+
+        # Show compact env summary in transcript
+        env_lines = env.split('\n')
+        summary_parts = []
+        for line in env_lines:
+            if line.startswith('OS:') or line.startswith('CPU:') or line.startswith('RAM:') or line.startswith('GPU:'):
+                summary_parts.append(line)
+            elif line.strip().startswith('NVIDIA:') or line.strip().startswith('CUDA'):
+                summary_parts.append(line)
+        if proj_type != 'Unknown':
+            summary_parts.append(f'Project: {proj_type}')
+        if summary_parts:
+            self._log(Text('  ' + '  │  '.join(s.strip() for s in summary_parts), style=t['muted']))
+            self._scroll_bottom()
+
         # Request history for --continue sessions
         if self._is_continue:
             import json
