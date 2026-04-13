@@ -196,6 +196,20 @@ class AcornApp(App):
         background: $background;
         color: $foreground;
     }
+    #question-selector {
+        height: auto;
+        max-height: 12;
+        padding: 0 1;
+        background: $surface;
+        display: none;
+    }
+    #note-input {
+        height: 3;
+        padding: 0 1;
+        background: $surface;
+        color: $foreground;
+        display: none;
+    }
     """
 
     LOGO_FULL = r"""
@@ -242,6 +256,8 @@ class AcornApp(App):
         yield SelectableLog(id='transcript', wrap=True, highlight=True, markup=True)
         with Vertical(id='bottom-area'):
             yield Input(placeholder='Message acorn...', id='user-input')
+            yield Static('', id='question-selector')
+            yield Input(placeholder='Add context/notes (Tab to go back)...', id='note-input')
             yield Static('', id='footer-bar')
 
     def on_mount(self):
@@ -295,12 +311,40 @@ class AcornApp(App):
             )
 
     def on_key(self, event):
-        """Typing refocuses the input if it lost focus."""
+        """Route keys: question selector when active, otherwise refocus input."""
+        # Question selector mode — intercept arrow keys, space, tab, enter, escape
+        if getattr(self, '_answering_questions', False) and not getattr(self, '_q_open_ended', False) and not getattr(self, '_q_noting', False):
+            q = self._pending_questions[self._current_question_idx] if self._current_question_idx < len(self._pending_questions) else None
+            if q and q.get('options'):
+                if event.key in ('up', 'down', 'space', 'tab', 'enter', 'escape'):
+                    self._handle_question_key(event.key)
+                    event.prevent_default()
+                    event.stop()
+                    return
+
+        # Note input escape → back to selector
+        if getattr(self, '_q_noting', False) and event.key == 'escape':
+            self._q_noting = False
+            try:
+                note_val = self.query_one('#note-input', Input).value.strip()
+                if note_val:
+                    self._pending_notes[self._current_question_idx] = note_val
+                self.query_one('#note-input', Input).display = False
+                sel = self.query_one('#question-selector', Static)
+                sel.display = True
+                self._render_question_selector()
+            except NoMatches:
+                pass
+            event.prevent_default()
+            event.stop()
+            return
+
+        # Default: refocus input on typing
         if event.key in ('up', 'down', 'left', 'right', 'escape', 'tab', 'ctrl+p', 'ctrl+c'):
             return
         try:
             inp = self.query_one('#user-input', Input)
-            if not inp.has_focus:
+            if not inp.has_focus and inp.display:
                 inp.focus()
         except NoMatches:
             pass
@@ -494,19 +538,30 @@ class AcornApp(App):
 
     async def on_input_submitted(self, event: Input.Submitted):
         text = event.value.strip()
+        input_id = event.input.id if hasattr(event, 'input') else ''
+
+        # Note input submission
+        if input_id == 'note-input':
+            event.input.value = ''
+            self._handle_question_answer(text or '')
+            return
+
         if not text:
             return
 
-        inp = self.query_one('#user-input', Input)
-        inp.value = ''
+        try:
+            self.query_one('#user-input', Input).value = ''
+        except NoMatches:
+            pass
 
         # Slash commands always run immediately
         if text.startswith('/'):
             await self._handle_command(text)
             return
 
-        # If answering inline questions
-        if getattr(self, '_answering_questions', False):
+        # If answering open-ended questions via regular input
+        if getattr(self, '_answering_questions', False) and getattr(self, '_q_open_ended', False):
+            self._q_open_ended = False
             self._handle_question_answer(text)
             return
 
@@ -827,65 +882,195 @@ class AcornApp(App):
             asyncio.create_task(self._send_message(queued))
 
     def _show_current_question(self):
-        """Show the current question inline in the transcript."""
+        """Show the current question — replace input area with selector for options."""
         questions = getattr(self, '_pending_questions', [])
         idx = getattr(self, '_current_question_idx', 0)
         if idx >= len(questions):
-            # All questions answered — send answers back
+            self._exit_question_mode()
             self._send_question_answers()
             return
         q = questions[idx]
         t = self.theme_data
         total = len(questions)
 
+        # Show question in transcript
         header = Text()
         header.append(f'  Question {idx + 1}/{total}: ', style=f'bold {t["accent"]}')
         header.append(q['text'], style='bold')
         self._log(header)
+        self._scroll_bottom()
+
+        self._q_selected = 0
+        self._q_checked = set()
+        self._q_noting = False
 
         if q['options']:
-            for i, opt in enumerate(q['options']):
-                self._log(Text(f'    {i + 1}. {opt}', style=t['fg']))
-            if q.get('multi'):
-                self._log(Text('  Type numbers separated by commas (e.g. 1,3,4)', style=t['muted']))
-            else:
-                self._log(Text('  Type a number or your own answer', style=t['muted']))
+            # Show selector in bottom area, hide regular input
+            self._answering_questions = True
+            try:
+                self.query_one('#user-input', Input).display = False
+                sel = self.query_one('#question-selector', Static)
+                sel.display = True
+                self._render_question_selector()
+                sel.focus()
+            except NoMatches:
+                pass
         else:
-            self._log(Text('  Type your answer', style=t['muted']))
+            # Open-ended: use the regular input
+            self._answering_questions = True
+            self._q_open_ended = True
+            try:
+                inp = self.query_one('#user-input', Input)
+                inp.placeholder = f'Answer question {idx + 1}/{total}... (Tab to add notes)'
+                inp.value = ''
+                inp.focus()
+            except NoMatches:
+                pass
 
-        self._scroll_bottom()
-        # Set flag so on_input_submitted knows to handle as question answer
-        self._answering_questions = True
-
-    def _handle_question_answer(self, text):
-        """Process an answer to the current inline question."""
+    def _render_question_selector(self):
+        """Render the option selector in the bottom area."""
         questions = self._pending_questions
         idx = self._current_question_idx
         q = questions[idx]
+        t = self.theme_data
+        is_multi = q.get('multi', False)
+
+        lines = Text()
+        for i, opt in enumerate(q['options']):
+            cursor = '▸' if i == self._q_selected else ' '
+            if is_multi:
+                check = '◉' if i in self._q_checked else '○'
+                if i == self._q_selected:
+                    lines.append(f' {cursor} {check} {opt}', style=f'bold {t["accent"]}')
+                elif i in self._q_checked:
+                    lines.append(f' {cursor} {check} {opt}', style=t['success'])
+                else:
+                    lines.append(f' {cursor} {check} {opt}', style=t['fg'])
+            else:
+                if i == self._q_selected:
+                    lines.append(f' {cursor}  {opt}', style=f'bold {t["accent"]}')
+                else:
+                    lines.append(f' {cursor}  {opt}', style=t['fg'])
+            lines.append('\n')
+
+        # Hint line
+        if is_multi:
+            lines.append(' ↑↓ move · Space toggle · Tab notes · Enter submit', style=t['muted'])
+        else:
+            lines.append(' ↑↓ select · Tab notes · Enter confirm', style=t['muted'])
+
+        try:
+            self.query_one('#question-selector', Static).update(lines)
+        except NoMatches:
+            pass
+
+    def _exit_question_mode(self):
+        """Restore the normal input area."""
+        self._answering_questions = False
+        self._q_open_ended = False
+        self._q_noting = False
+        try:
+            self.query_one('#question-selector', Static).display = False
+            self.query_one('#note-input', Input).display = False
+            inp = self.query_one('#user-input', Input)
+            inp.display = True
+            inp.placeholder = 'Message acorn...'
+            inp.value = ''
+            inp.focus()
+        except NoMatches:
+            pass
+
+    def _handle_question_key(self, key):
+        """Handle key events during question selector mode."""
+        questions = self._pending_questions
+        idx = self._current_question_idx
+        q = questions[idx]
+        is_multi = q.get('multi', False)
+
+        if key == 'up':
+            self._q_selected = (self._q_selected - 1) % len(q['options'])
+            self._render_question_selector()
+        elif key == 'down':
+            self._q_selected = (self._q_selected + 1) % len(q['options'])
+            self._render_question_selector()
+        elif key == 'space' and is_multi:
+            if self._q_selected in self._q_checked:
+                self._q_checked.discard(self._q_selected)
+            else:
+                self._q_checked.add(self._q_selected)
+            self._render_question_selector()
+        elif key == 'tab':
+            # Show note input
+            self._q_noting = True
+            try:
+                self.query_one('#question-selector', Static).display = False
+                note_inp = self.query_one('#note-input', Input)
+                note_inp.display = True
+                note_inp.value = self._pending_notes.get(idx, '')
+                note_inp.focus()
+            except NoMatches:
+                pass
+        elif key == 'enter':
+            self._submit_question_answer()
+        elif key == 'escape':
+            # Cancel questions entirely
+            self._exit_question_mode()
+            t = self.theme_data
+            self._log(Text('  Questions cancelled', style=t['muted']))
+            self._scroll_bottom()
+
+    def _submit_question_answer(self):
+        """Submit the current question's answer and move to next."""
+        questions = self._pending_questions
+        idx = self._current_question_idx
+        q = questions[idx]
+        t = self.theme_data
 
         if q['options'] and q.get('multi'):
-            # Multi-select: parse comma-separated numbers
-            try:
-                indices = [int(x.strip()) - 1 for x in text.split(',')]
-                selected = [q['options'][i] for i in indices if 0 <= i < len(q['options'])]
-                self._pending_answers[idx] = selected if selected else [text]
-            except (ValueError, IndexError):
-                self._pending_answers[idx] = [text]
-        elif q['options'] and text.isdigit():
-            # Single select by number
-            num = int(text) - 1
-            if 0 <= num < len(q['options']):
-                self._pending_answers[idx] = q['options'][num]
-            else:
-                self._pending_answers[idx] = text
-        else:
-            self._pending_answers[idx] = text
+            selected = [q['options'][i] for i in sorted(self._q_checked)]
+            self._pending_answers[idx] = selected if selected else ['(none)']
+        elif q['options']:
+            self._pending_answers[idx] = q['options'][self._q_selected]
+        # (open-ended is handled via on_input_submitted)
 
-        t = self.theme_data
-        answer = self._pending_answers[idx]
+        answer = self._pending_answers.get(idx, '')
         display = ', '.join(answer) if isinstance(answer, list) else str(answer)
-        self._log(Text(f'  → {display}', style=t['success']))
+        note = self._pending_notes.get(idx)
+        log_text = Text()
+        log_text.append(f'  → {display}', style=t['success'])
+        if note:
+            log_text.append(f'  ({note})', style=t['muted'])
+        self._log(log_text)
+        self._scroll_bottom()
 
+        self._current_question_idx += 1
+        self._show_current_question()
+
+    def _handle_question_answer(self, text):
+        """Handle text input for open-ended questions or note input."""
+        if self._q_noting:
+            # Save note and return to selector
+            self._q_noting = False
+            idx = self._current_question_idx
+            if text.strip():
+                self._pending_notes[idx] = text.strip()
+            try:
+                self.query_one('#note-input', Input).display = False
+                sel = self.query_one('#question-selector', Static)
+                sel.display = True
+                self._render_question_selector()
+                sel.focus()
+            except NoMatches:
+                # Open-ended with note — just continue
+                pass
+            return
+
+        # Open-ended answer
+        idx = self._current_question_idx
+        self._pending_answers[idx] = text
+        t = self.theme_data
+        self._log(Text(f'  → {text}', style=t['success']))
+        self._scroll_bottom()
         self._current_question_idx += 1
         self._show_current_question()
 
