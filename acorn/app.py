@@ -565,6 +565,18 @@ class AcornApp(App):
         except NoMatches:
             pass
 
+    def _hide_widget(self, selector):
+        try:
+            self.query_one(selector).add_class('hidden')
+        except NoMatches:
+            pass
+
+    def _show_widget(self, selector):
+        try:
+            self.query_one(selector).remove_class('hidden')
+        except NoMatches:
+            pass
+
     def _themed_panel(self, content, title='', border_style=None, **kwargs):
         return themed_panel(self.theme_data, content, title, border_style, **kwargs)
 
