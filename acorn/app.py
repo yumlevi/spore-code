@@ -35,20 +35,48 @@ import acorn.commands.test  # noqa: F401 — registers /test command
 import acorn.commands.bg    # noqa: F401 — registers /bg command
 
 PLAN_PREFIX = (
-    '[MODE: Plan only. You are in planning mode.\n'
-    'Phase 1 — UNDERSTAND: Read files, search the codebase, and use web_search/web_fetch as needed to fully understand the task. '
-    'If anything is ambiguous, ask the user clarifying questions using this exact format:\n\n'
+    '[MODE: Plan only. You are in planning mode. Follow these phases in order:\n\n'
+
+    'PHASE 1 — ENVIRONMENT AUDIT:\n'
+    'The context above includes the local environment (OS, installed tools, runtimes). '
+    'Review what is available. If the task requires tools/runtimes not installed, note them. '
+    'Use exec to check versions or configs if needed (e.g. `node --version`, `cat package.json`).\n\n'
+
+    'PHASE 2 — CODEBASE SCAN:\n'
+    'Use read_file, glob, and grep to understand the existing codebase structure, patterns, '
+    'conventions, config files, and dependencies. Identify what exists and what needs to change.\n\n'
+
+    'PHASE 3 — RESEARCH:\n'
+    'Identify topics you need more context on — frameworks, APIs, libraries, best practices. '
+    'Use web_search and web_fetch to research them. For example:\n'
+    '  - "Next.js 14 app router best practices 2024"\n'
+    '  - "Tailwind CSS v4 setup guide"\n'
+    '  - API docs for libraries you plan to use\n'
+    'Do actual searches — don\'t rely on stale training knowledge for fast-moving tools.\n\n'
+
+    'PHASE 4 — CLARIFY:\n'
+    'If anything is still ambiguous, ask the user using this format:\n\n'
     'QUESTIONS:\n'
     '1. Single-select question? [Option A / Option B / Option C]\n'
     '2. Multi-select question? {Option A / Option B / Option C / Option D}\n'
     '3. Open-ended question?\n\n'
-    'Use [brackets] for single-select, {braces} for multi-select (checkboxes), omit for open-ended. '
-    'The client presents these as an interactive form. Users can also press Tab on any answer to add additional context.\n'
-    'Phase 2 — PLAN: Once you have enough context, present a clear step-by-step plan of what you would change and why. '
-    'Include file paths and describe each change.\n'
-    'RULES: Do NOT make any changes (no write_file, edit_file, or exec). '
-    'You MAY use read_file, glob, grep, web_search, and web_fetch.\n'
-    'End your plan with the exact line: "PLAN_READY" on its own line so the client knows to prompt for approval.]\n\n'
+    '[brackets] = single-select, {braces} = multi-select checkboxes, no brackets = open text. '
+    'Users can press Tab on any answer to add notes. Only ask if genuinely needed.\n\n'
+
+    'PHASE 5 — PLAN:\n'
+    'Present a detailed plan with:\n'
+    '  - Prerequisites (what needs to be installed/configured first)\n'
+    '  - Step-by-step changes with file paths\n'
+    '  - New files to create vs existing files to modify\n'
+    '  - Dependencies to install\n'
+    '  - Any commands to run\n'
+    '  - How to verify it works\n\n'
+
+    'RULES:\n'
+    '- Do NOT make changes (no write_file, edit_file).\n'
+    '- Do NOT run destructive or modifying commands.\n'
+    '- You MAY use: read_file, glob, grep, web_search, web_fetch, exec (read-only commands only like ls, cat, which, --version).\n'
+    '- End your plan with "PLAN_READY" on its own line.]\n\n'
 )
 
 PLAN_EXECUTE_MSG = (
