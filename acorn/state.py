@@ -18,7 +18,7 @@ class AppState(Enum):
 TRANSITIONS = {
     AppState.IDLE: {
         AppState.GENERATING, AppState.STREAMING, AppState.QUESTIONS,
-        AppState.PLAN_REVIEW, AppState.DISCONNECTED,
+        AppState.PLAN_REVIEW, AppState.PLAN_FEEDBACK, AppState.DISCONNECTED,
     },
     AppState.GENERATING: {
         AppState.STREAMING, AppState.TOOL_PENDING, AppState.IDLE,

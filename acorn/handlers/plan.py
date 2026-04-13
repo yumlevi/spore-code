@@ -62,7 +62,7 @@ class PlanMixin:
         self._pending_answers = {}
         self._pending_notes = {}
         self._current_question_idx = 0
-        self._answering_questions = True; self.sm.force(self._AppState.QUESTIONS)
+        self._answering_questions = True; self.sm.transition(self._AppState.QUESTIONS)
         self._q_plan_approval = True
         self._q_open_ended = False
         self._q_selected = 0
@@ -81,7 +81,7 @@ class PlanMixin:
 
     def _handle_plan_decision(self, text):
         """Handle user input when awaiting plan decision."""
-        self._awaiting_plan_decision = False; self.sm.force(self._AppState.IDLE)
+        self._awaiting_plan_decision = False; self.sm.transition(self._AppState.IDLE)
         t = self.theme_data
 
         if text == '1' or text.lower().startswith('exec'):
@@ -117,7 +117,7 @@ class PlanMixin:
                 self._log(Text('  Type your feedback:', style=t['muted']))
                 self._awaiting_plan_decision = True
                 self._awaiting_plan_feedback = True
-                self.sm.force(self._AppState.PLAN_FEEDBACK)
+                self.sm.transition(self._AppState.PLAN_FEEDBACK)
                 self._scroll_bottom()
                 return
 

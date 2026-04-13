@@ -15,8 +15,13 @@ class SessionWriter:
         SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
         safe_id = session_id.replace(':', '_').replace('@', '_').replace('/', '_')[:80]
         self.path = SESSIONS_DIR / f'{safe_id}.jsonl'
-        self._file = open(self.path, 'a', buffering=1)  # line-buffered
+        self.session_id = session_id
+        is_new = not self.path.exists()
+        self._file = open(self.path, 'a', buffering=1)
         self.message_count = 0
+        # Write metadata header on new files
+        if is_new:
+            self._append({'_meta': True, 'session_id': session_id, 'created': time.time()})
 
     def _append(self, record: dict):
         record['ts'] = time.time()
@@ -58,7 +63,7 @@ class SessionWriter:
 
 
 def load_session(session_id: str) -> list:
-    """Load a session's message history from local JSONL."""
+    """Load a session's message history from local JSONL. Skips _meta lines."""
     safe_id = session_id.replace(':', '_').replace('@', '_').replace('/', '_')[:80]
     path = SESSIONS_DIR / f'{safe_id}.jsonl'
     if not path.exists():
@@ -67,7 +72,10 @@ def load_session(session_id: str) -> list:
     try:
         for line in open(path):
             try:
-                messages.append(json.loads(line.strip()))
+                record = json.loads(line.strip())
+                if record.get('_meta'):
+                    continue
+                messages.append(record)
             except json.JSONDecodeError:
                 continue
     except Exception:
@@ -117,8 +125,16 @@ def list_project_sessions(user: str, cwd: str) -> list:
             if msg_count == 0:
                 continue
 
-            # Extract session_id from filename (reverse the safe_id transform)
-            session_id = f.stem.replace('_', ':', 1).replace('_', '@', 1)
+            # Read session_id from metadata header if available, else reconstruct from filename
+            session_id = None
+            try:
+                first_line = json.loads(open(f).readline())
+                if first_line.get('_meta'):
+                    session_id = first_line.get('session_id')
+            except Exception:
+                pass
+            if not session_id:
+                session_id = f.stem  # fallback — not perfect but usable
 
             # Format modification time
             import datetime

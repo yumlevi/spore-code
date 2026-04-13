@@ -31,6 +31,7 @@ from acorn.themes import get_theme
 from acorn.questions import parse_questions, format_answers
 from acorn.background import ProcessManager
 from acorn.logging import SessionLogger, cleanup_old_logs
+from acorn.prompt import PromptProvider
 from acorn.session_writer import SessionWriter, cleanup_old_sessions
 from acorn.constants import PLAN_PREFIX, PLAN_EXECUTE_MSG, LOGO_FULL, LOGO_MINI, SLASH_COMMANDS
 from acorn.ui.widgets import MessageInput, FocusableStatic, SelectableLog
@@ -235,6 +236,9 @@ class AcornApp(WSEventsMixin, QuestionsMixin, PlanMixin, App):
         self._awaiting_plan_feedback = False
         self._last_plan_text = ''
         self.process_manager = ProcessManager()
+        self.prompter = PromptProvider(self)
+        import atexit
+        atexit.register(lambda: self.process_manager.kill_all())
         self._session_start = __import__('time').time()
         self.slog = SessionLogger(session_id, user, cwd)
         self.slog.info('init', f'AcornApp created theme={theme_name} continue={is_continue}')
@@ -523,11 +527,11 @@ class AcornApp(WSEventsMixin, QuestionsMixin, PlanMixin, App):
         self._generating = value
         # Sync state machine
         if value and not was:
-            self.sm.transition(self._AppState.GENERATING, force=True)
+            self.sm.transition(self._AppState.GENERATING)
             self._start_spinner()
         elif not value and was:
             if self.sm.state in (self._AppState.GENERATING, self._AppState.STREAMING, self._AppState.TOOL_PENDING):
-                self.sm.transition(self._AppState.IDLE, force=True)
+                self.sm.transition(self._AppState.IDLE)
             self._stop_spinner()
 
     def _start_spinner(self):
@@ -579,14 +583,14 @@ class AcornApp(WSEventsMixin, QuestionsMixin, PlanMixin, App):
         t = self.theme_data
         self._log(Text('  ⚠ Connection lost — reconnecting...', style=t['warning']))
         self._scroll_bottom()
-        self.sm.force(self._AppState.DISCONNECTED)
+        self.sm.transition(self._AppState.DISCONNECTED)
 
     def _on_ws_reconnect(self):
         """Called when WebSocket reconnects."""
         t = self.theme_data
         self._log(Text('  ✓ Reconnected', style=t['success']))
         self._scroll_bottom()
-        self.sm.force(self._AppState.IDLE)
+        self.sm.transition(self._AppState.IDLE)
 
     def action_show_bg(self):
         """Show background process output inline."""
@@ -768,7 +772,7 @@ class AcornApp(WSEventsMixin, QuestionsMixin, PlanMixin, App):
             if self.sm.state == self._AppState.PLAN_FEEDBACK:
                 self._awaiting_plan_feedback = False
                 self._awaiting_plan_decision = False
-                self.sm.force(self._AppState.IDLE)
+                self.sm.transition(self._AppState.IDLE)
                 # Re-enter with the actual feedback
                 self._handle_plan_decision(text)
             else:

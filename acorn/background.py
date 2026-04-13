@@ -103,3 +103,12 @@ class ProcessManager:
     @property
     def running_count(self):
         return sum(1 for bp in self._processes.values() if bp.running)
+
+    def kill_all(self):
+        """Kill all running background processes. Called on exit."""
+        for bp in self._processes.values():
+            if bp.running:
+                try:
+                    bp.kill()
+                except Exception:
+                    pass

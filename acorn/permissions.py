@@ -7,6 +7,7 @@ ALWAYS_SAFE = {'read_file', 'glob', 'grep'}
 
 # Patterns that ALWAYS require approval even in auto mode
 DANGEROUS_PATTERNS = [
+    # Unix
     r'\brm\s+(-rf?|--recursive)', r'\brm\s+/', r'rmdir\s+/',
     r'\bmkfs\b', r'>\s*/dev/', r'dd\s+if=',
     r'chmod\s+(-R\s+)?777', r'chown\s+-R\s+.*/',
@@ -16,6 +17,11 @@ DANGEROUS_PATTERNS = [
     r'\bmkfs\.\w+\b', r'\bfdisk\b', r'\bparted\b',
     r':()\{', r'curl.*\|\s*(ba)?sh', r'wget.*\|\s*(ba)?sh',
     r'\bkill\s+-9\b',
+    # Windows
+    r'\bdel\s+/[sq]', r'\brd\s+/s', r'\brmdir\s+/s',
+    r'\bformat\s+[a-zA-Z]:', r'\bdiskpart\b',
+    r'Remove-Item.*-Recurse.*-Force', r'Stop-Process.*-Force',
+    r'Clear-Content.*-Force', r'Set-ExecutionPolicy\s+Unrestricted',
 ]
 
 DANGEROUS_RE = [re.compile(p, re.IGNORECASE) for p in DANGEROUS_PATTERNS]
@@ -150,49 +156,31 @@ class TuiPermissions:
         self.app._log(label)
         self.app._scroll_bottom()
 
-        # Use the question selector UI
-        options = ['✓ Allow', f'✓ Allow all {rule}', '✗ Deny']
+        # Build options
         if dangerous:
-            # No "allow all" for dangerous commands
             options = ['✓ Allow (once)', '✗ Deny']
+        else:
+            options = ['✓ Allow', f'✓ Allow all {rule}', '✗ Deny']
 
-        # Set up the question selector
-        self.app._pending_questions = [{
-            'text': 'Allow this action?',
-            'options': options,
-            'multi': False,
-            'index': 1,
-        }]
-        self.app._pending_answers = {}
-        self.app._pending_notes = {}
-        self.app._current_question_idx = 0
-        self.app._q_selected = 0
-        self.app._q_checked = set()
-        self.app._q_noting = False
-        self.app._q_open_ended = False
-        self.app._q_transitioning = False
+        # Use PromptProvider — clean API, no monkeypatching
+        result = await self.app.prompter.choice(f'Allow {tool_name}?', options)
 
-        # Create a future that the selector will resolve
-        self.app._permission_future = self.app._loop.create_future() if hasattr(self.app, '_loop') else None
-        self.app._permission_rule = rule
-        self.app._permission_dangerous = dangerous
-        self.app._answering_questions = True
-        self.app._q_permission_mode = True
+        if result.get('cancelled'):
+            return False
 
-        self.app._hide_widget('#user-input')
-        self.app._show_widget('#question-selector')
-        self.app._render_question_selector()
-        try:
-            from acorn.app import FocusableStatic
-            self.app.query_one('#question-selector', FocusableStatic).focus()
-        except Exception:
-            pass
+        choice = result.get('index', -1)
+        if dangerous:
+            allowed = (choice == 0)
+        else:
+            allowed = (choice in (0, 1))
+            if choice == 1 and rule:
+                self.session_rules.add(rule)
+                self.app._log(Text(f'  ✓ Rule added for session: {rule}', style=t['success']))
 
-        # Wait for the user's choice via asyncio Event
-        self.app._permission_event = __import__('asyncio').Event()
-        await self.app._permission_event.wait()
+        if allowed:
+            self.app._log(Text(f'  ✓ Allowed', style=t['success']))
+        else:
+            self.app._log(Text(f'  ✗ Denied', style=t.get('warning', 'yellow')))
+        self.app._scroll_bottom()
 
-        # Get the result
-        result = getattr(self.app, '_permission_result', False)
-        self.app._q_permission_mode = False
-        return result
+        return allowed

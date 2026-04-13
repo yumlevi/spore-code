@@ -156,11 +156,21 @@ class MessageInput(TextArea):
 
 class FocusableStatic(Static):
     """A Static widget that can receive focus for key events.
-    Routes key events to the app's question handler when active."""
+    Routes to PromptProvider first, then question handler as fallback."""
     can_focus = True
 
     def on_key(self, event):
         app = self.app
+
+        # Route to PromptProvider if a prompt is active
+        if getattr(app, '_prompt_active', False) and hasattr(app, 'prompter'):
+            if event.key in ('up', 'down', 'space', 'enter', 'escape'):
+                if app.prompter.handle_key(event.key):
+                    event.prevent_default()
+                    event.stop()
+                    return
+
+        # Fallback: question handler
         if not getattr(app, '_answering_questions', False):
             return
         if getattr(app, '_q_transitioning', False):

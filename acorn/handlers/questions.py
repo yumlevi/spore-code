@@ -37,7 +37,7 @@ class QuestionsMixin:
 
         if q['options']:
             # Show selector in bottom area, hide regular input
-            self._answering_questions = True; self.sm.force(self._AppState.QUESTIONS)
+            self._answering_questions = True; self.sm.transition(self._AppState.QUESTIONS)
             self._hide_widget('#user-input')
             self._show_widget('#question-selector')
             self._render_question_selector()
@@ -48,7 +48,7 @@ class QuestionsMixin:
                 pass
         else:
             # Open-ended: show regular input, hide selector
-            self._answering_questions = True; self.sm.force(self._AppState.QUESTIONS)
+            self._answering_questions = True; self.sm.transition(self._AppState.QUESTIONS)
             self._q_open_ended = True
             self._hide_widget('#question-selector')
             self._show_widget('#user-input')
@@ -112,7 +112,7 @@ class QuestionsMixin:
 
     def _exit_question_mode(self):
         """Restore the normal input area."""
-        self._answering_questions = False; self.sm.force(self._AppState.IDLE)
+        self._answering_questions = False; self.sm.transition(self._AppState.IDLE)
         self._q_open_ended = False
         self._q_noting = False
         self._hide_widget('#question-selector')
@@ -186,7 +186,7 @@ class QuestionsMixin:
         # Plan approval mode — route to plan handler
         if getattr(self, '_q_plan_approval', False):
             self._q_plan_approval = False
-            self._answering_questions = False; self.sm.force(self._AppState.IDLE)
+            self._answering_questions = False; self.sm.transition(self._AppState.IDLE)
             self._exit_question_mode()
             choice = self._q_selected
             if choice == 0:
@@ -204,7 +204,7 @@ class QuestionsMixin:
         # Permission approval mode
         if getattr(self, '_q_permission_mode', False):
             self._q_permission_mode = False
-            self._answering_questions = False; self.sm.force(self._AppState.IDLE)
+            self._answering_questions = False; self.sm.transition(self._AppState.IDLE)
             self._exit_question_mode()
             choice = self._q_selected
             dangerous = getattr(self, '_permission_dangerous', False)
@@ -242,10 +242,10 @@ class QuestionsMixin:
 
         # Hide selector during transition, show next after brief pause
         self._hide_widget('#question-selector')
-        self._answering_questions = False; self.sm.force(self._AppState.IDLE)
+        self._answering_questions = False; self.sm.transition(self._AppState.IDLE)
 
         def _next():
-            self._answering_questions = True; self.sm.force(self._AppState.QUESTIONS)
+            self._answering_questions = True; self.sm.transition(self._AppState.QUESTIONS)
             self._show_current_question()
         self.set_timer(0.15, _next)
 
@@ -282,7 +282,7 @@ class QuestionsMixin:
 
     def _send_question_answers(self):
         """Format and send all answers back to the agent."""
-        self._answering_questions = False; self.sm.force(self._AppState.IDLE)
+        self._answering_questions = False; self.sm.transition(self._AppState.IDLE)
         questions = self._pending_questions
         answers_data = {'answers': self._pending_answers, 'notes': self._pending_notes}
         formatted = format_answers(questions, answers_data)
