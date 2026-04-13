@@ -90,7 +90,8 @@ def list_project_sessions(user: str, cwd: str) -> list:
     project_root = find_git_root(cwd) or cwd
     name = os.path.basename(project_root)
     path_hash = hashlib.sha256(project_root.encode()).hexdigest()[:8]
-    prefix = f'cli_{user}@{name}-{path_hash}'
+    # Match the safe_id format used by SessionWriter (: → _, @ → _)
+    prefix = f'cli_{user}_{name}-{path_hash}'
 
     sessions = []
     for f in sorted(SESSIONS_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
