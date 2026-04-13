@@ -43,19 +43,20 @@ def parse_questions(text: str) -> list:
         options = None
         multi = False
 
-        # Multi-select: {opt1 / opt2 / opt3} — must have / separators
-        multi_match = re.search(r'\{([^}]+/[^}]+)\}', raw)
+        # Multi-select: {opt1 / opt2 / opt3} — split on " / " (spaced) to avoid
+        # breaking on slashes inside file paths like test_input/drs/
+        multi_match = re.search(r'\{([^}]+ / [^}]+)\}', raw)
         if multi_match:
             opts_str = multi_match.group(1)
-            options = [o.strip() for o in opts_str.split('/') if o.strip()]
+            options = [o.strip() for o in opts_str.split(' / ') if o.strip()]
             question_text = raw[:multi_match.start()].strip().rstrip('?').strip() + '?'
             multi = True
         else:
-            # Single-select: [opt1 / opt2 / opt3] — must have / separators
-            single_match = re.search(r'\[([^\]]+/[^\]]+)\]', raw)
+            # Single-select: [opt1 / opt2 / opt3] — split on " / " (spaced)
+            single_match = re.search(r'\[([^\]]+ / [^\]]+)\]', raw)
             if single_match:
                 opts_str = single_match.group(1)
-                options = [o.strip() for o in opts_str.split('/') if o.strip()]
+                options = [o.strip() for o in opts_str.split(' / ') if o.strip()]
                 question_text = raw[:single_match.start()].strip().rstrip('?').strip() + '?'
             else:
                 question_text = raw.rstrip('?').strip() + '?'
