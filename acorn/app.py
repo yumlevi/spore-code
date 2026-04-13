@@ -4,8 +4,9 @@ import asyncio
 import os
 import time
 
-# Ensure truecolor so custom theme backgrounds aren't mapped to black.
-if not os.environ.get("COLORTERM"):
+# Enable truecolor if terminal doesn't advertise it.
+# Can be disabled via ACORN_NO_TRUECOLOR=1 for terminals that don't support it.
+if not os.environ.get("COLORTERM") and not os.environ.get("ACORN_NO_TRUECOLOR"):
     os.environ["COLORTERM"] = "truecolor"
 
 from textual.app import App, ComposeResult
@@ -46,13 +47,17 @@ import acorn.commands.bg    # noqa: F401 — registers /bg command
 
 
 def _to_hex(color_str):
-    """Extract a hex color from a Rich style string. Falls back to a default."""
-    import re
+    """Extract #rrggbb hex from a Rich style string like 'bold #f38ba8'.
+    Returns None for named colors (Textual handles those separately)."""
     if not color_str:
         return None
-    m = re.search(r'#[0-9a-fA-F]{6}', color_str)
-    if m:
-        return m.group(0)
+    # Direct hex
+    if color_str.startswith('#') and len(color_str) == 7:
+        return color_str
+    # Hex embedded in style string (e.g. 'bold #f38ba8')
+    for part in color_str.split():
+        if part.startswith('#') and len(part) == 7:
+            return part
     return None
 
 
@@ -83,9 +88,10 @@ def _register_acorn_themes(app):
 from acorn.handlers.ws_events import WSEventsMixin
 from acorn.handlers.questions import QuestionsMixin
 from acorn.handlers.plan import PlanMixin
+from acorn.handlers.chat import ChatMixin
 
 
-class AcornApp(WSEventsMixin, QuestionsMixin, PlanMixin, App):
+class AcornApp(WSEventsMixin, QuestionsMixin, PlanMixin, ChatMixin, App):
     """Full-screen Acorn TUI."""
 
     BINDINGS = [
@@ -716,112 +722,6 @@ class AcornApp(WSEventsMixin, QuestionsMixin, PlanMixin, App):
             self.query_one('#autocomplete', Static).update(lines)
         except NoMatches:
             pass
-
-    async def _handle_textarea_submit(self, text):
-        """Handle submission from the TextArea (Enter key)."""
-        self._autocomplete_matches = []
-        self._hide_widget('#autocomplete')
-
-        if text.startswith('/'):
-            await self._handle_command(text)
-            return
-
-        if self.sm.state == self._AppState.QUESTIONS and getattr(self, '_q_open_ended', False):
-            self._q_open_ended = False
-            self._handle_question_answer(text)
-            return
-
-        if self.sm.state in (self._AppState.PLAN_REVIEW, self._AppState.PLAN_FEEDBACK):
-            if self.sm.state == self._AppState.PLAN_FEEDBACK:
-                self._awaiting_plan_feedback = False
-                self._awaiting_plan_decision = False
-                self._handle_plan_decision(text)
-            else:
-                self._handle_plan_decision(text)
-            return
-
-        if self.generating:
-            t = self.theme_data
-            self._queued_message = text
-            self._log(self._themed_panel(
-                f'{text}\n[queued — will send when current response finishes]',
-                title=f'[bold]{self.user}[/bold] [dim](queued)[/dim]',
-                border_style=t.get('muted', 'dim'),
-            ))
-            self._scroll_bottom()
-            self._update_footer()
-            return
-
-        await self._send_message(text)
-
-    async def on_input_submitted(self, event: Input.Submitted):
-        """Handle submission from Input widgets (note-input only now)."""
-        text = event.value.strip()
-        input_id = event.input.id if hasattr(event, 'input') else ''
-
-        # Note input submission
-        if input_id == 'note-input':
-            event.input.value = ''
-            self._handle_question_answer(text or '')
-            return
-            self._handle_question_answer(text)
-            return
-
-        # If awaiting plan decision (1/2/3 or feedback text)
-        if self.sm.state in (self._AppState.PLAN_REVIEW, self._AppState.PLAN_FEEDBACK):
-            if self.sm.state == self._AppState.PLAN_FEEDBACK:
-                self._awaiting_plan_feedback = False
-                self._awaiting_plan_decision = False
-                self.sm.transition(self._AppState.IDLE)
-                # Re-enter with the actual feedback
-                self._handle_plan_decision(text)
-            else:
-                self._handle_plan_decision(text)
-            return
-
-        # If generating, queue this message and show it as pending
-        if self.generating:
-            t = self.theme_data
-            self._queued_message = text
-            self._log(self._themed_panel(
-                f'{text}\n[queued — will send when current response finishes]',
-                title=f'[bold]{self.user}[/bold] [dim](queued)[/dim]',
-                border_style=t.get('muted', 'dim'),
-            ))
-            self._scroll_bottom()
-            self._update_footer()
-            return
-
-        await self._send_message(text)
-
-    async def _send_message(self, text):
-        """Send a message to the agent."""
-        self.slog.info('send', f'sending {len(text)} chars', plan_mode=self.plan_mode)
-        self.session_writer.write_user(text)
-        t = self.theme_data
-        self._log(self._themed_panel(text, title=f'[bold]{self.user}[/bold]', border_style=t['prompt_user']))
-
-        # Smart context — full on first message, delta after
-        ctx = self.ctx_manager.get_context()
-        content = (ctx + '\n\n' + text) if ctx else text
-        self.context_sent = True  # legacy compat
-
-        if self.plan_mode:
-            content = PLAN_PREFIX + content
-
-        self._stream_buffer = ''
-        self._response_text = []
-        self._tool_lines = []
-        self._message_count += 1
-        self.generating = True
-        self._queued_message = None
-
-        if self._message_count >= 1:
-            self._collapse_header()
-
-        self._update_footer()
-        self._update_header()
-        await self.conn.send(chat_message(self.session_id, content, self.user))
 
     async def _handle_command(self, text):
         parts = text.split(None, 1)

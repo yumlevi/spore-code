@@ -9,7 +9,7 @@ import sys
 # Ensure truecolor support so custom theme backgrounds render correctly.
 # Without this, terminals reporting TERM=linux (common on Unraid/SSH) only
 # advertise 8 colours, causing Rich/Textual to map dark hex backgrounds to black.
-if not os.environ.get("COLORTERM"):
+if not os.environ.get("COLORTERM") and not os.environ.get("ACORN_NO_TRUECOLOR"):
     os.environ["COLORTERM"] = "truecolor"
 
 from rich.console import Console

@@ -7,7 +7,20 @@ import subprocess
 from acorn.session import find_git_root
 
 
-def _run(cmd: str, cwd: str = None) -> str:
+def _run(cmd_args: list, cwd: str = None) -> str:
+    """Run a command with explicit args (no shell=True)."""
+    try:
+        r = subprocess.run(
+            cmd_args, cwd=cwd,
+            capture_output=True, text=True, timeout=5,
+        )
+        return r.stdout.strip() if r.returncode == 0 else ''
+    except Exception:
+        return ''
+
+
+def _run_shell(cmd: str, cwd: str = None) -> str:
+    """Run a shell command — only for trusted internal commands."""
     try:
         r = subprocess.run(
             cmd, shell=True, cwd=cwd,
@@ -19,7 +32,8 @@ def _run(cmd: str, cwd: str = None) -> str:
 
 
 def _git(cmd: str, cwd: str) -> str:
-    return _run(f'git {cmd}', cwd)
+    """Run a git subcommand safely."""
+    return _run(['git'] + cmd.split(), cwd)
 
 
 def _tree(root: str, max_depth: int = 2, max_entries: int = 50) -> str:
@@ -66,9 +80,9 @@ def gather_environment() -> str:
         cpu_count = os.cpu_count() or 0
         parts.append(f'CPU: {cpu_count} cores')
         # Try to get CPU model
-        cpu_model = _run("cat /proc/cpuinfo 2>/dev/null | grep 'model name' | head -1 | cut -d: -f2")
+        cpu_model = _run_shell("cat /proc/cpuinfo 2>/dev/null | grep 'model name' | head -1 | cut -d: -f2")
         if not cpu_model:
-            cpu_model = _run("sysctl -n machdep.cpu.brand_string 2>/dev/null")
+            cpu_model = _run_shell("sysctl -n machdep.cpu.brand_string 2>/dev/null")
         if cpu_model:
             parts.append(f'CPU model: {cpu_model.strip()[:80]}')
     except Exception:
@@ -76,9 +90,9 @@ def gather_environment() -> str:
 
     # ── Memory ──
     try:
-        mem = _run("free -h 2>/dev/null | grep Mem | awk '{print $2}'")
+        mem = _run_shell("free -h 2>/dev/null | grep Mem | awk '{print $2}'")
         if not mem:
-            mem = _run("sysctl -n hw.memsize 2>/dev/null")
+            mem = _run_shell("sysctl -n hw.memsize 2>/dev/null")
             if mem:
                 mem = f'{int(mem) // (1024**3)}Gi'
         if mem:
@@ -89,24 +103,24 @@ def gather_environment() -> str:
     # ── GPU / CUDA ──
     gpu_info = []
     # NVIDIA
-    nvidia = _run("nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader,nounits 2>/dev/null")
+    nvidia = _run_shell("nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader,nounits 2>/dev/null")
     if nvidia:
         for line in nvidia.strip().split('\n'):
             gpu_info.append(f'  NVIDIA: {line.strip()}')
-        cuda_version = _run("nvcc --version 2>/dev/null | grep release | awk '{print $5}' | tr -d ','")
+        cuda_version = _run_shell("nvcc --version 2>/dev/null | grep release | awk '{print $5}' | tr -d ','")
         if cuda_version:
             gpu_info.append(f'  CUDA: {cuda_version}')
         else:
-            cuda_version = _run("nvidia-smi 2>/dev/null | grep 'CUDA Version' | awk '{print $9}'")
+            cuda_version = _run_shell("nvidia-smi 2>/dev/null | grep 'CUDA Version' | awk '{print $9}'")
             if cuda_version:
                 gpu_info.append(f'  CUDA (driver): {cuda_version}')
     # ROCm / AMD
-    rocm = _run("rocm-smi --showproductname 2>/dev/null | head -5")
+    rocm = _run_shell("rocm-smi --showproductname 2>/dev/null | head -5")
     if rocm and 'ERROR' not in rocm:
         gpu_info.append(f'  AMD ROCm: {rocm.split(chr(10))[0][:60]}')
     # Apple Metal
     if platform.system() == 'Darwin':
-        metal = _run("system_profiler SPDisplaysDataType 2>/dev/null | grep 'Chipset Model'")
+        metal = _run_shell("system_profiler SPDisplaysDataType 2>/dev/null | grep 'Chipset Model'")
         if metal:
             gpu_info.append(f'  Apple GPU: {metal.split(":")[-1].strip()[:60]}')
 
@@ -117,7 +131,7 @@ def gather_environment() -> str:
 
     # ── Disk ──
     try:
-        disk = _run("df -h . 2>/dev/null | tail -1 | awk '{print $4 \" available of \" $2}'")
+        disk = _run_shell("df -h . 2>/dev/null | tail -1 | awk '{print $4 \" available of \" $2}'")
         if disk:
             parts.append(f'Disk: {disk}')
     except Exception:
@@ -166,7 +180,7 @@ def gather_environment() -> str:
     for name, cmd in tools.items():
         binary = cmd.split()[0]
         if shutil.which(binary):
-            version = _run(cmd)
+            version = _run_shell(cmd)  # some have pipes/redirects
             if version:
                 available.append(f'  {name}: {version.split(chr(10))[0][:60]}')
             else:
