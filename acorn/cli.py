@@ -43,41 +43,63 @@ PLAN_EXECUTE_MSG = (
 
 
 def _pick_session(sessions, renderer):
-    """Interactive session picker — show numbered list, user picks one."""
-    from rich.table import Table
+    """Interactive session picker with arrow keys."""
+    from prompt_toolkit import Application
+    from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.layout import Layout
+    from prompt_toolkit.layout.containers import HSplit, Window
+    from prompt_toolkit.layout.controls import FormattedTextControl
     from rich.panel import Panel
 
     console = renderer.console
-    table = Table.grid(padding=(0, 2))
-    table.add_column(style='bold cyan', min_width=4)
-    table.add_column(min_width=10)
-    table.add_column(min_width=6)
-    table.add_column()
+    items = sessions[:15]
+    selected = [0]
+    result = [None]
 
-    for i, s in enumerate(sessions[:20]):
-        table.add_row(
-            f'  {i + 1}.',
-            s['time_ago'],
-            f'{s["message_count"]} msgs',
-            s['preview'][:60],
-        )
+    def get_text():
+        lines = []
+        lines.append(('bold', '\n  Select a session to resume\n\n'))
+        for i, s in enumerate(items):
+            if i == selected[0]:
+                lines.append(('bg:ansiblue fg:white bold', f'  ▸ {s["time_ago"]:12s} {s["message_count"]:3d} msgs  {s["preview"][:50]}  '))
+            else:
+                lines.append(('', f'    {s["time_ago"]:12s} {s["message_count"]:3d} msgs  {s["preview"][:50]}  '))
+            lines.append(('', '\n'))
+        lines.append(('dim', '\n  ↑↓ select · Enter resume · Esc latest\n'))
+        return lines
 
-    console.print(Panel(table, title='[bold]Select a session to resume[/bold]', border_style='cyan'))
-    console.print()
+    kb = KeyBindings()
 
-    while True:
-        try:
-            choice = input(f'  Session number [1-{min(len(sessions), 20)}] (or Enter for latest): ').strip()
-            if not choice:
-                return sessions[0]['session_id']
-            num = int(choice)
-            if 1 <= num <= min(len(sessions), 20):
-                picked = sessions[num - 1]
-                console.print(f'  Resuming: {picked["preview"][:60]} ({picked["time_ago"]})')
-                return picked['session_id']
-            console.print(f'  [red]Pick 1-{min(len(sessions), 20)}[/red]')
-        except (ValueError, KeyboardInterrupt):
-            return sessions[0]['session_id']
+    @kb.add('up')
+    def _up(event):
+        selected[0] = (selected[0] - 1) % len(items)
+
+    @kb.add('down')
+    def _down(event):
+        selected[0] = (selected[0] + 1) % len(items)
+
+    @kb.add('enter')
+    def _enter(event):
+        result[0] = items[selected[0]]['session_id']
+        event.app.exit()
+
+    @kb.add('escape')
+    @kb.add('c-c')
+    def _cancel(event):
+        result[0] = items[0]['session_id']
+        event.app.exit()
+
+    app = Application(
+        layout=Layout(HSplit([Window(FormattedTextControl(get_text))])),
+        key_bindings=kb,
+        full_screen=False,
+    )
+    app.run()
+
+    picked_id = result[0] or items[0]['session_id']
+    picked = next((s for s in items if s['session_id'] == picked_id), items[0])
+    console.print(f'  Resuming: {picked["preview"][:60]} ({picked["time_ago"]})')
+    return picked_id
 
 
 def _save_plan(cwd: str, plan_text: str) -> str:
