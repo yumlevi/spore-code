@@ -106,11 +106,16 @@ class AcornApp(App):
     }
     #header-bar {
         dock: top;
-        height: 3;
+        height: auto;
+        max-height: 12;
         padding: 0 1;
         background: $surface;
         color: $foreground;
         border-bottom: solid $accent;
+    }
+    #header-bar.collapsed {
+        height: 1;
+        max-height: 1;
     }
     #main-scroll {
         height: 1fr;
@@ -128,10 +133,13 @@ class AcornApp(App):
         margin: 0 1;
         background: $background;
     }
-    #mode-bar {
+    #footer-bar {
         dock: bottom;
-        height: 1;
+        height: 3;
         width: 100%;
+        background: $surface;
+        border-top: solid $accent;
+        padding: 0 1;
     }
     #user-input {
         dock: bottom;
@@ -139,7 +147,6 @@ class AcornApp(App):
         padding: 0 1;
         background: $surface;
         color: $foreground;
-        border-top: solid $accent;
     }
     Input {
         background: $surface;
@@ -153,6 +160,16 @@ class AcornApp(App):
         color: $foreground;
     }
     """
+
+    LOGO_FULL = r"""
+     ██████╗  ██████╗ ██████╗ ██████╗ ███╗   ██╗
+    ██╔══██╗██╔════╝██╔═══██╗██╔══██╗████╗  ██║
+    ███████║██║     ██║   ██║██████╔╝██╔██╗ ██║
+    ██╔══██║██║     ██║   ██║██╔══██╗██║╚██╗██║
+    ██║  ██║╚██████╗╚██████╔╝██║  ██║██║ ╚████║
+    ╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝"""
+
+    LOGO_MINI = ' 🌰 acorn'
 
     def __init__(self, conn, session_id, user, theme_name, cwd, **kwargs):
         super().__init__(**kwargs)
@@ -168,6 +185,8 @@ class AcornApp(App):
         self._last_ctrl_c = 0
         self._response_text = []
         self._tool_lines = []
+        self._message_count = 0
+        self._header_collapsed = False
 
     def compose(self) -> ComposeResult:
         yield Static('', id='header-bar')
@@ -177,7 +196,7 @@ class AcornApp(App):
             id='main-scroll',
         )
         yield Input(placeholder='Message acorn...', id='user-input')
-        yield Static('', id='mode-bar')
+        yield Static('', id='footer-bar')
 
     def on_mount(self):
         _register_acorn_themes(self)
@@ -228,42 +247,92 @@ class AcornApp(App):
         t = self.theme_data
         proj = project_name(self.cwd)
         branch = get_git_branch(self.cwd)
-        icon = t.get('icon', '🌰')
-
-        header = Text()
-        header.append(f' {icon} ', style='bold')
-        header.append('acorn', style=f'bold {t["accent"]}')
-        header.append('  ', style='')
-        header.append(self.user, style=f'bold {t["prompt_user"]}')
-        header.append('  ', style='dim')
-        header.append(proj, style=f'{t["prompt_project"]}')
-        if branch:
-            header.append(f'  {branch}', style=f'{t["prompt_branch"]}')
 
         try:
-            self.query_one('#header-bar', Static).update(header)
-        except NoMatches:
-            pass
-
-    def _update_mode_bar(self):
-        try:
-            bar = self.query_one('#mode-bar', Static)
+            header_widget = self.query_one('#header-bar', Static)
         except NoMatches:
             return
-        width = self.size.width or 80
-        t = self.theme_data
-        if self.plan_mode:
-            pad = ' ' * max(0, width - 42)
-            line = Text()
-            line.append(' PLAN ', style=t['plan_label'])
-            line.append(f' research & plan only  ctrl+p toggle {pad}', style=t['plan_bar_bg'])
-            bar.update(line)
+
+        if self._header_collapsed:
+            # Mini header — single line
+            header_widget.remove_class('collapsed')  # reset first
+            header_widget.add_class('collapsed')
+            mini = Text()
+            mini.append(self.LOGO_MINI, style=f'bold {t["accent"]}')
+            mini.append(f'  {self.user}', style=t['prompt_user'])
+            mini.append(f'  {proj}', style=t['prompt_project'])
+            if branch:
+                mini.append(f'  {branch}', style=t['prompt_branch'])
+            if self.generating:
+                mini.append('  ●', style=t['thinking'])
+            header_widget.update(mini)
         else:
-            pad = ' ' * max(0, width - 42)
-            line = Text()
-            line.append(' EXECUTE ', style=t['exec_label'])
-            line.append(f' full agent mode  ctrl+p toggle {pad}', style=t['exec_bar_bg'])
-            bar.update(line)
+            # Full splash logo
+            header_widget.remove_class('collapsed')
+            logo = Text()
+            for line in self.LOGO_FULL.strip('\n').split('\n'):
+                logo.append(line + '\n', style=f'bold {t["accent"]}')
+            logo.append(f'    {self.user}', style=f'bold {t["prompt_user"]}')
+            logo.append(' → ', style=t.get('muted', 'dim'))
+            logo.append(proj, style=t['prompt_project'])
+            if branch:
+                logo.append(f' ({branch})', style=t['prompt_branch'])
+            header_widget.update(logo)
+
+    def _collapse_header(self):
+        """Collapse the header after first interaction."""
+        if not self._header_collapsed:
+            self._header_collapsed = True
+            self._update_header()
+
+    def _update_footer(self):
+        t = self.theme_data
+        proj = project_name(self.cwd)
+        width = self.size.width or 80
+
+        try:
+            footer = self.query_one('#footer-bar', Static)
+        except NoMatches:
+            return
+
+        # Line 1: mode indicator
+        line1 = Text()
+        if self.plan_mode:
+            line1.append(' PLAN ', style=t['plan_label'])
+            line1.append(' research & plan only', style=t.get('muted', 'dim'))
+        else:
+            line1.append(' EXEC ', style=t['exec_label'])
+            line1.append(' full agent mode', style=t.get('muted', 'dim'))
+
+        # Line 2: key hints
+        line2 = Text()
+        line2.append(' Ctrl+P', style=f'bold {t["accent"]}')
+        line2.append(' mode ', style=t.get('muted', 'dim'))
+        line2.append(' Esc', style=f'bold {t["accent"]}')
+        line2.append(' stop ', style=t.get('muted', 'dim'))
+        line2.append(' /help', style=f'bold {t["accent"]}')
+        line2.append(' cmds ', style=t.get('muted', 'dim'))
+        line2.append(' Ctrl+C×2', style=f'bold {t["accent"]}')
+        line2.append(' quit', style=t.get('muted', 'dim'))
+
+        # Line 3: session info
+        line3 = Text()
+        line3.append(f' {self.user}@{proj}', style=t.get('muted', 'dim'))
+        if self.generating:
+            line3.append('  ● generating...', style=t['thinking'])
+
+        combined = Text()
+        combined.append_text(line1)
+        combined.append('\n')
+        combined.append_text(line2)
+        combined.append('\n')
+        combined.append_text(line3)
+
+        footer.update(combined)
+
+    def _update_mode_bar(self):
+        """Update the footer bar (replaces old single-line mode bar)."""
+        self._update_footer()
 
     def _log(self, renderable):
         try:
@@ -353,7 +422,14 @@ class AcornApp(App):
         self._stream_buffer = ''
         self._response_text = []
         self._tool_lines = []
+        self._message_count += 1
         self.generating = True
+
+        # Collapse header after first message to save space
+        if self._message_count >= 1:
+            self._collapse_header()
+
+        self._update_footer()
         await self.conn.send(chat_message(self.session_id, content, self.user))
 
     async def _handle_command(self, text):
@@ -550,6 +626,8 @@ class AcornApp(App):
 
     async def _on_done(self, msg):
         self.generating = False
+        self._update_footer()
+        self._update_header()
         response = ''.join(self._response_text)
         t = self.theme_data
 
@@ -639,6 +717,7 @@ class AcornApp(App):
 
     async def _on_error(self, msg):
         self.generating = False
+        self._update_footer()
         t = self.theme_data
         error = msg.get('error', 'Unknown error')
         self._log(Panel(
