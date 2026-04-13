@@ -100,13 +100,7 @@ async def test_questions_inline(app):
         {'text': 'Project name?', 'options': None, 'multi': False, 'index': 3},
     ]
     app._log(Text('  Interactive test — use ↑↓ Enter Space Tab', style=t['accent']))
-    app._pending_questions = questions
-    app._pending_answers = {}
-    app._pending_notes = {}
-    app._current_question_idx = 0
-    app._answering_questions = True
-    app._q_test_mode = True
-    app._show_current_question()
+    app.questions_handler.start_questions(questions, test_mode=True)
 
 
 @test('format-answers', 'Answer formatting with notes')
@@ -216,8 +210,8 @@ async def test_permissions(app):
 @test('plan-approval', 'Plan approval selector (interactive)')
 async def test_plan_approval(app):
     t = app.theme_data
-    app._last_plan_text = '# Test Plan\n\n1. Do thing A\n2. Do thing B\n\nPLAN_READY'
-    app._show_plan_choices()
+    app.plan_handler.state.last_plan_text = '# Test Plan\n\n1. Do thing A\n2. Do thing B\n\nPLAN_READY'
+    app.plan_handler.show_choices()
     app._log(Text('  Use ↑↓ and Enter to select Execute/Revise/Cancel', style=t['muted']))
     app._scroll_bottom()
 

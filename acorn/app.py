@@ -434,7 +434,7 @@ class AcornApp(App):
                 activity = self._current_activity or 'thinking...'
                 mini.append(f'{frame} {activity}', style=t['thinking'])
             else:
-                mini.append(f'{self._message_count} msgs', style=t.get('muted', 'dim'))
+                mini.append(f'{self._get_message_count()} msgs', style=t.get('muted', 'dim'))
                 mode = 'plan' if self.plan_mode else 'exec'
                 mini.append(f'  │  {mode}', style=t.get('muted', 'dim'))
             header_widget.update(mini)
@@ -559,6 +559,11 @@ class AcornApp(App):
         """Update the footer bar (replaces old single-line mode bar)."""
         self._update_footer()
 
+    def _get_message_count(self):
+        if hasattr(self, 'chat_handler'):
+            return self.chat_handler.state.message_count
+        return 0
+
     def _log(self, renderable):
         try:
             self.query_one('#transcript', SelectableLog).write(renderable)
@@ -660,7 +665,7 @@ class AcornApp(App):
             return
         # If idle → double tap to quit
         if now - self._last_ctrl_c < 1.0:
-            self.slog.session_end(self._message_count, __import__('time').time() - self._session_start)
+            self.slog.session_end(self._get_message_count(), __import__('time').time() - self._session_start)
             self.slog.close()
             self.session_writer.close()
             self.exit()
@@ -739,7 +744,7 @@ class AcornApp(App):
         self.slog.command(cmd, args)
 
         if cmd in ('/quit', '/exit'):
-            self.slog.session_end(self._message_count, __import__('time').time() - self._session_start)
+            self.slog.session_end(self._get_message_count(), __import__('time').time() - self._session_start)
             self.slog.close()
             self.session_writer.close()
             self.exit()
