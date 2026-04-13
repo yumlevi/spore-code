@@ -95,17 +95,52 @@ class MessageInput(TextArea):
             self.text = text
 
     def on_key(self, event):
+        # If autocomplete is showing, route up/down/enter/tab/escape to it
+        app = self.app
+        if getattr(app, '_autocomplete_matches', []):
+            if event.key == 'enter' or event.key == 'tab':
+                # Fill selected autocomplete command
+                idx = getattr(app, '_autocomplete_selected', 0)
+                matches = app._autocomplete_matches
+                if idx < len(matches):
+                    cmd, _ = matches[idx]
+                    self.clear()
+                    self.insert(cmd + ' ')
+                app._autocomplete_matches = []
+                app._hide_widget('#autocomplete')
+                event.prevent_default()
+                event.stop()
+                return
+            elif event.key == 'up':
+                app._autocomplete_selected = (app._autocomplete_selected - 1) % min(len(app._autocomplete_matches), 8)
+                app._render_autocomplete()
+                event.prevent_default()
+                event.stop()
+                return
+            elif event.key == 'down':
+                app._autocomplete_selected = (app._autocomplete_selected + 1) % min(len(app._autocomplete_matches), 8)
+                app._render_autocomplete()
+                event.prevent_default()
+                event.stop()
+                return
+            elif event.key == 'escape':
+                app._autocomplete_matches = []
+                app._hide_widget('#autocomplete')
+                event.prevent_default()
+                event.stop()
+                return
+
         # Enter → send message
         if event.key == 'enter':
             text = self.text.strip()
             if text:
-                if hasattr(self.app, 'on_message_input_submitted'):
-                    self.app.on_message_input_submitted(self.Submitted(text))
+                if hasattr(app, 'on_message_input_submitted'):
+                    app.on_message_input_submitted(self.Submitted(text))
                 self.clear()
             event.prevent_default()
             event.stop()
             return
-        # Ctrl+J → insert newline (since Shift+Enter isn't available in terminals)
+        # Ctrl+J → insert newline
         if event.key == 'ctrl+j':
             self.insert('\n')
             event.prevent_default()
@@ -456,41 +491,6 @@ class AcornApp(App):
             event.prevent_default()
             event.stop()
             return
-
-        # Autocomplete navigation
-        if self._autocomplete_matches:
-            if event.key == 'up':
-                self._autocomplete_selected = (self._autocomplete_selected - 1) % len(self._autocomplete_matches[:8])
-                self._render_autocomplete()
-                event.prevent_default()
-                event.stop()
-                return
-            elif event.key == 'down':
-                self._autocomplete_selected = (self._autocomplete_selected + 1) % len(self._autocomplete_matches[:8])
-                self._render_autocomplete()
-                event.prevent_default()
-                event.stop()
-                return
-            elif event.key == 'tab':
-                # Fill the selected command into the input
-                cmd, _ = self._autocomplete_matches[self._autocomplete_selected]
-                try:
-                    inp = self.query_one('#user-input', MessageInput)
-                    inp.clear()
-                    inp.insert(cmd + ' ')
-                except NoMatches:
-                    pass
-                self._autocomplete_matches = []
-                self._hide_widget('#autocomplete')
-                event.prevent_default()
-                event.stop()
-                return
-            elif event.key == 'escape':
-                self._autocomplete_matches = []
-                self._hide_widget('#autocomplete')
-                event.prevent_default()
-                event.stop()
-                return
 
         # Default: refocus input on typing
         if event.key in ('up', 'down', 'left', 'right', 'escape', 'tab', 'ctrl+p', 'ctrl+c'):
