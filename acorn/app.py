@@ -668,9 +668,27 @@ class AcornApp(App):
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             version = await loop.run_in_executor(pool, get_current_version)
-        self._log(Text(f'  ✓ Updated to v{version} — restart Acorn to use the new version', style=f'bold {t["success"]}'))
+        self._log(Text(f'  ✓ Updated to v{version} — restarting...', style=f'bold {t["success"]}'))
         self._pending_update = None
         self._scroll_bottom()
+
+        # Auto-restart: replace current process with fresh acorn invocation
+        import time
+        time.sleep(0.5)  # brief pause so user sees the message
+        self._restart()
+
+    def _restart(self):
+        """Replace current process with a fresh acorn invocation."""
+        import os, sys
+        # Clean up before exec
+        try:
+            self.slog.close()
+            self.session_writer.close()
+        except Exception:
+            pass
+        self.exit()
+        # os.execv replaces the process — everything after this is dead code
+        os.execv(sys.executable, [sys.executable] + sys.argv)
 
     def _log(self, renderable):
         try:
