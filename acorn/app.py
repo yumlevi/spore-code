@@ -258,7 +258,7 @@ class AcornApp(App):
         self.plan_mode = False
         self.context_sent = False
         self._is_continue = is_continue
-        self.generating = False
+        self._generating = False
         self._stream_buffer = ''
         self._last_ctrl_c = 0
         self._response_text = []
@@ -267,6 +267,8 @@ class AcornApp(App):
         self._header_collapsed = False
         self._current_activity = ''
         self._queued_message = None
+        self._spinner_frame = 0
+        self._spinner_timer = None
         self._answering_questions = False
         self._pending_questions = []
         self._pending_answers = {}
@@ -407,11 +409,12 @@ class AcornApp(App):
             mini.append(proj, style=t['prompt_project'])
             if branch:
                 mini.append(f' ({branch})', style=t['prompt_branch'])
+            SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
             mini.append('  │  ', style=t.get('muted', 'dim'))
-            if self.generating and self._current_activity:
-                mini.append(f'● {self._current_activity}', style=t['thinking'])
-            elif self.generating:
-                mini.append('● thinking...', style=t['thinking'])
+            if self.generating:
+                frame = SPINNER[self._spinner_frame % len(SPINNER)]
+                activity = self._current_activity or 'thinking...'
+                mini.append(f'{frame} {activity}', style=t['thinking'])
             else:
                 mini.append(f'{self._message_count} msgs', style=t.get('muted', 'dim'))
                 mode = 'plan' if self.plan_mode else 'exec'
@@ -466,11 +469,14 @@ class AcornApp(App):
         line2.append(' Ctrl+C×2', style=f'bold {t["accent"]}')
         line2.append(' quit', style=t.get('muted', 'dim'))
 
-        # Line 3: session info
+        # Line 3: session info + animated status
+        SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
         line3 = Text()
         line3.append(f' {self.user}@{proj}', style=t.get('muted', 'dim'))
         if self.generating:
-            line3.append('  ● generating...', style=t['thinking'])
+            frame = SPINNER[self._spinner_frame % len(SPINNER)]
+            activity = self._current_activity or 'generating'
+            line3.append(f'  {frame} {activity}', style=t['thinking'])
             if self._queued_message:
                 line3.append('  │  1 queued', style=t.get('warning', 'yellow'))
         bg_count = self.process_manager.running_count
@@ -485,6 +491,39 @@ class AcornApp(App):
         combined.append_text(line3)
 
         footer.update(combined)
+
+    @property
+    def generating(self):
+        return self._generating
+
+    @generating.setter
+    def generating(self, value):
+        was = self._generating
+        self._generating = value
+        if value and not was:
+            self._start_spinner()
+        elif not value and was:
+            self._stop_spinner()
+
+    def _start_spinner(self):
+        """Start the animated spinner in the footer."""
+        if self._spinner_timer:
+            return
+        self._spinner_frame = 0
+        def _tick():
+            self._spinner_frame += 1
+            self._update_footer()
+            # Also update header activity indicator
+            self._update_header()
+        self._spinner_timer = self.set_interval(0.1, _tick)
+
+    def _stop_spinner(self):
+        """Stop the spinner animation."""
+        if self._spinner_timer:
+            self._spinner_timer.stop()
+            self._spinner_timer = None
+        self._update_footer()
+        self._update_header()
 
     def _update_mode_bar(self):
         """Update the footer bar (replaces old single-line mode bar)."""
