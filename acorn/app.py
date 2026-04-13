@@ -1082,12 +1082,17 @@ class AcornApp(App):
         self._scroll_bottom()
 
         self._current_question_idx += 1
-        # Block key events during transition, defer next question
-        self._q_transitioning = True
+        remaining = len(self._pending_questions) - self._current_question_idx
+        self._log(Text(f'  [{remaining} questions remaining]', style=t['muted']))
+
+        # Hide selector during transition, show next after brief pause
+        self._hide_widget('#question-selector')
+        self._answering_questions = False  # temporarily disable key handler
+
         def _next():
-            self._q_transitioning = False
+            self._answering_questions = True
             self._show_current_question()
-        self.set_timer(0.1, _next)
+        self.set_timer(0.15, _next)
 
     def _handle_question_answer(self, text):
         """Handle text input for open-ended questions or note input."""
