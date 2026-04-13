@@ -30,6 +30,7 @@ from acorn.session import compute_session_id, project_name, get_git_branch
 from acorn.tools.executor import ToolExecutor
 from acorn.themes import get_theme
 from acorn.questions import parse_questions, QuestionScreen, format_answers
+from acorn.plan_approval import PlanApprovalScreen
 from acorn.background import ProcessManager
 import acorn.commands.test  # noqa: F401 — registers /test command
 import acorn.commands.bg    # noqa: F401 — registers /bg command
@@ -784,13 +785,11 @@ class AcornApp(App):
                 callback=self._on_questions_answered,
             )
         elif self.plan_mode and response and ('PLAN_READY' in response or len(response) > 500):
-            self._log(Panel(
-                Text('Type "execute" to run the plan, or provide feedback', style=t['fg']),
-                border_style=t['accent2'],
-                style=f'on {t["bg_panel"]}',
-                padding=(0, 1),
-            ))
-            self._scroll_bottom()
+            self._last_plan_text = response
+            self.push_screen(
+                PlanApprovalScreen(t, response),
+                callback=self._on_plan_decision,
+            )
 
         self._stream_buffer = ''
         self._response_text = []
@@ -801,6 +800,61 @@ class AcornApp(App):
             queued = self._queued_message
             self._queued_message = None
             asyncio.create_task(self._send_message(queued))
+
+    def _on_plan_decision(self, result):
+        """Callback from plan approval modal."""
+        if result is None:
+            result = ('cancel', None)
+        action, feedback = result
+        t = self.theme_data
+
+        if action == 'execute':
+            # Save plan locally
+            from acorn.cli import _save_plan
+            plan_path = _save_plan(self.cwd, getattr(self, '_last_plan_text', ''))
+            if plan_path:
+                self._log(self._themed_text(f'  Plan saved to {plan_path}', style=t['muted']))
+
+            # Switch to execute mode and tell the agent to proceed
+            self.plan_mode = False
+            self._update_mode_bar()
+            self._update_header()
+            self._log(self._themed_text(f'  ▶ Executing plan...', style=t['success']))
+            self._scroll_bottom()
+
+            self._stream_buffer = ''
+            self._response_text = []
+            self._tool_lines = []
+            self.generating = True
+            self._update_footer()
+            self._update_header()
+            asyncio.create_task(
+                self.conn.send(chat_message(self.session_id, PLAN_EXECUTE_MSG, self.user))
+            )
+
+        elif action == 'feedback':
+            # Stay in plan mode, send feedback to revise
+            self._log(self._themed_panel(
+                feedback,
+                title=f'[bold]{self.user}[/bold] [dim](feedback)[/dim]',
+                border_style=t['prompt_user'],
+            ))
+            self._scroll_bottom()
+
+            feedback_msg = f'[PLAN FEEDBACK: The user wants you to revise the plan based on this feedback. Stay in plan mode.]\n\n{feedback}'
+            self._stream_buffer = ''
+            self._response_text = []
+            self._tool_lines = []
+            self.generating = True
+            self._update_footer()
+            self._update_header()
+            asyncio.create_task(
+                self.conn.send(chat_message(self.session_id, feedback_msg, self.user))
+            )
+
+        elif action == 'cancel':
+            self._log(self._themed_text('  Plan discarded', style=t['muted']))
+            self._scroll_bottom()
 
     def _on_questions_answered(self, answers):
         """Callback when user finishes the question modal."""
