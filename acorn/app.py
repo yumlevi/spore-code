@@ -147,18 +147,15 @@ class AcornApp(App):
         height: 1;
         max-height: 1;
     }
-    #main-scroll {
-        height: 1fr;
-        background: $background;
-    }
     #transcript {
-        height: auto;
+        height: 1fr;
         padding: 0 1;
         background: $background;
         color: $foreground;
     }
     #stream-area {
         height: auto;
+        max-height: 20;
         padding: 0 2;
         margin: 0 1;
         background: $background;
@@ -192,10 +189,6 @@ class AcornApp(App):
     RichLog {
         background: $background;
         color: $foreground;
-        scrollbar-gutter: stable;
-    }
-    VerticalScroll {
-        scrollbar-gutter: stable;
     }
     """
 
@@ -240,11 +233,8 @@ class AcornApp(App):
 
     def compose(self) -> ComposeResult:
         yield Static('', id='header-bar')
-        yield VerticalScroll(
-            RichLog(id='transcript', wrap=True, highlight=True, markup=True),
-            Static('', id='stream-area'),
-            id='main-scroll',
-        )
+        yield RichLog(id='transcript', wrap=True, highlight=True, markup=True)
+        yield Static('', id='stream-area')
         with Vertical(id='bottom-area'):
             yield Input(placeholder='Message acorn...', id='user-input')
             yield Static('', id='footer-bar')
@@ -453,7 +443,7 @@ class AcornApp(App):
 
     def _scroll_bottom(self):
         try:
-            self.query_one('#main-scroll', VerticalScroll).scroll_end(animate=False)
+            self.query_one('#transcript', RichLog).scroll_end(animate=False)
         except NoMatches:
             pass
 
@@ -622,17 +612,6 @@ class AcornApp(App):
         elif cmd == '/approve-all':
             self.permissions.approve_all = True
             self._log(Text('  ⚡ All tools auto-approved', style='yellow'))
-        elif cmd == '/copy':
-            # Copy last response to clipboard via OSC 52
-            last = ''.join(self._response_text) if self._response_text else getattr(self, '_last_response', '')
-            if last:
-                import base64
-                encoded = base64.b64encode(last.encode()).decode()
-                # OSC 52 clipboard escape sequence
-                print(f'\033]52;c;{encoded}\a', end='', flush=True)
-                self._log(Text('  ✓ Last response copied to clipboard', style=t['success']))
-            else:
-                self._log(Text('  No response to copy', style=t['muted']))
         elif cmd == '/help':
             help_table = Table.grid(padding=(0, 2))
             help_table.add_column(style='bold cyan', min_width=18)
@@ -644,7 +623,6 @@ class AcornApp(App):
             help_table.add_row('/status', 'Connection info')
             help_table.add_row('/theme [name]', 'Switch theme')
             help_table.add_row('/approve-all', 'Auto-approve tools')
-            help_table.add_row('/copy', 'Copy last response to clipboard')
             help_table.add_row('/test [name]', 'Run UI tests')
             help_table.add_row('/bg', 'Background processes')
             help_table.add_row('/bg run <cmd>', 'Run command in background')
@@ -720,7 +698,7 @@ class AcornApp(App):
                 style=f'on {t["bg_panel"]}',
                 padding=(0, 1),
             ))
-            self.query_one('#main-scroll', VerticalScroll).scroll_end(animate=False)
+            self.query_one('#transcript', RichLog).scroll_end(animate=False)
         except NoMatches:
             pass
 
