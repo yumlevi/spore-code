@@ -265,7 +265,10 @@ class AcornApp(WSEventsMixin, QuestionsMixin, PlanMixin, App):
         self.permissions = TuiPermissions(self)
         self.executor = ToolExecutor(self.permissions, None, self.cwd, process_manager=self.process_manager)
         self.conn.tool_executor = self.executor
-        self.conn._log = self.slog  # share session logger with connection
+        self.conn._slog = self.slog
+        self.conn._session_writer = self.session_writer
+        self.conn._on_disconnect = lambda: self._on_ws_disconnect()
+        self.conn._on_reconnect = lambda: self._on_ws_reconnect()
 
         self.conn.on('chat:history', self._on_history)
         self.conn.on('chat:delta', self._on_delta)
@@ -531,6 +534,20 @@ class AcornApp(WSEventsMixin, QuestionsMixin, PlanMixin, App):
             pass
 
     # ── Actions ────────────────────────────────────────────────────
+
+    def _on_ws_disconnect(self):
+        """Called when WebSocket disconnects."""
+        t = self.theme_data
+        self._log(Text('  ⚠ Connection lost — reconnecting...', style=t['warning']))
+        self._scroll_bottom()
+        self.sm.force(self._AppState.DISCONNECTED)
+
+    def _on_ws_reconnect(self):
+        """Called when WebSocket reconnects."""
+        t = self.theme_data
+        self._log(Text('  ✓ Reconnected', style=t['success']))
+        self._scroll_bottom()
+        self.sm.force(self._AppState.IDLE)
 
     def action_toggle_plan(self):
         self.plan_mode = not self.plan_mode

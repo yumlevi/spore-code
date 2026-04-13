@@ -1,4 +1,4 @@
-"""WebSocket client — auth, connection, message routing."""
+"""WebSocket client — auth, connection, message routing, reconnect."""
 
 import asyncio
 import json
@@ -13,20 +13,12 @@ class AuthError(Exception):
 
 
 def _build_base_url(host: str, port: int) -> str:
-    """Build base HTTP URL from host + port. Handles:
-    - Plain IP/hostname: 192.168.1.78 → http://192.168.1.78:18810
-    - Full URL: https://acorn.example.com → https://acorn.example.com
-    - URL with path: https://proxy.example.com/acorn → https://proxy.example.com/acorn
-    """
     if '://' in host:
-        # Full URL provided — use as-is, strip trailing slash
         return host.rstrip('/')
-    # Plain host — build URL with port
     return f'http://{host}:{port}'
 
 
 def _build_ws_url(base_url: str) -> str:
-    """Convert HTTP base URL to WebSocket URL."""
     if base_url.startswith('https://'):
         return 'wss://' + base_url[8:]
     elif base_url.startswith('http://'):
@@ -45,8 +37,19 @@ class Connection:
         self.tool_executor = None
         self._handlers = {}
         self._receive_task = None
+        self._heartbeat_task = None
+        self._outbox = []        # messages queued during disconnect
+        self._reconnecting = False
+        self._username = None
+        self._key = None
+        self._slog = None        # session logger
+        self._on_disconnect = None  # callback
+        self._on_reconnect = None   # callback
+        self.connected = False
 
     async def authenticate(self, username: str, key: str) -> str:
+        self._username = username
+        self._key = key
         url = f'{self.base_url}/api/acorn/auth'
         payload = json.dumps({'username': username, 'key': key}).encode()
         req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'}, method='POST')
@@ -67,20 +70,39 @@ class Connection:
     async def connect(self, token: str):
         url = f'{self.ws_base}/ws?token={token}'
         self.ws = await websockets.connect(url, ping_interval=20, ping_timeout=10, max_size=10 * 1024 * 1024)
+        self.connected = True
         self._receive_task = asyncio.create_task(self._receive_loop())
+        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
     async def close(self):
+        self.connected = False
+        if self._heartbeat_task:
+            self._heartbeat_task.cancel()
         if self._receive_task:
             self._receive_task.cancel()
         if self.ws:
-            await self.ws.close()
+            try:
+                await self.ws.close()
+            except Exception:
+                pass
 
     def on(self, msg_type: str, handler):
         self._handlers[msg_type] = handler
 
     async def send(self, data: str):
-        if self.ws:
-            await self.ws.send(data)
+        """Send a message. If disconnected, queue it for reconnect."""
+        if self.ws and self.connected:
+            try:
+                await self.ws.send(data)
+                return
+            except (websockets.ConnectionClosed, Exception):
+                pass
+        # Queue for later
+        self._outbox.append(data)
+        if self._slog:
+            self._slog.debug('ws', f'queued message ({len(self._outbox)} in outbox)')
+        if not self._reconnecting:
+            asyncio.create_task(self._reconnect())
 
     async def _receive_loop(self):
         try:
@@ -91,12 +113,10 @@ class Connection:
                     continue
                 msg_type = msg.get('type', '')
 
-                # Handle tool requests from server
                 if msg_type == 'tool:request' and self.tool_executor:
                     asyncio.create_task(self._handle_tool_request(msg))
                     continue
 
-                # Route to registered handlers
                 handler = self._handlers.get(msg_type)
                 if handler:
                     try:
@@ -104,9 +124,104 @@ class Connection:
                     except Exception:
                         pass
         except websockets.ConnectionClosed:
-            pass
+            if self._slog:
+                self._slog.warn('ws', 'connection closed')
+            self.connected = False
+            if self._on_disconnect:
+                try:
+                    self._on_disconnect()
+                except Exception:
+                    pass
+            if not self._reconnecting:
+                asyncio.create_task(self._reconnect())
         except asyncio.CancelledError:
             pass
+
+    async def _heartbeat_loop(self):
+        """Periodic ping to detect dead connections early."""
+        while self.connected:
+            try:
+                await asyncio.sleep(25)
+                if self.ws and self.connected:
+                    pong = await self.ws.ping()
+                    await asyncio.wait_for(pong, timeout=10)
+            except (asyncio.TimeoutError, websockets.ConnectionClosed, Exception):
+                if self._slog:
+                    self._slog.warn('ws', 'heartbeat failed — reconnecting')
+                self.connected = False
+                if not self._reconnecting:
+                    asyncio.create_task(self._reconnect())
+                break
+            except asyncio.CancelledError:
+                break
+
+    async def _reconnect(self):
+        """Reconnect with exponential backoff. Flushes outbox on success."""
+        if self._reconnecting:
+            return
+        self._reconnecting = True
+        backoff = [1, 2, 4, 8, 15, 30, 30, 30]
+
+        if self._slog:
+            self._slog.info('ws', f'reconnecting... ({len(self._outbox)} queued)')
+
+        for attempt, delay in enumerate(backoff):
+            try:
+                # Re-authenticate (token may have expired)
+                if self._username and self._key:
+                    token = await asyncio.get_event_loop().run_in_executor(
+                        None, lambda: self._sync_auth(self._username, self._key)
+                    )
+                    self.token = token
+
+                # Reconnect WebSocket
+                url = f'{self.ws_base}/ws?token={self.token}'
+                self.ws = await websockets.connect(url, ping_interval=20, ping_timeout=10, max_size=10 * 1024 * 1024)
+                self.connected = True
+
+                # Restart receive + heartbeat loops
+                self._receive_task = asyncio.create_task(self._receive_loop())
+                self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+
+                # Flush outbox
+                flushed = 0
+                while self._outbox:
+                    msg = self._outbox.pop(0)
+                    try:
+                        await self.ws.send(msg)
+                        flushed += 1
+                    except Exception:
+                        self._outbox.insert(0, msg)
+                        break
+
+                if self._slog:
+                    self._slog.info('ws', f'reconnected (attempt {attempt+1}, flushed {flushed} messages)')
+
+                self._reconnecting = False
+                if self._on_reconnect:
+                    try:
+                        self._on_reconnect()
+                    except Exception:
+                        pass
+                return
+
+            except Exception as e:
+                if self._slog:
+                    self._slog.debug('ws', f'reconnect attempt {attempt+1} failed: {e}')
+                await asyncio.sleep(delay)
+
+        if self._slog:
+            self._slog.error('ws', 'all reconnect attempts failed')
+        self._reconnecting = False
+
+    def _sync_auth(self, username, key):
+        """Synchronous auth for use in executor."""
+        url = f'{self.base_url}/api/acorn/auth'
+        payload = json.dumps({'username': username, 'key': key}).encode()
+        req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'}, method='POST')
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+            return data['token']
 
     async def _handle_tool_request(self, msg: dict):
         tool_id = msg.get('id', '')
@@ -114,17 +229,19 @@ class Connection:
         tool_input = msg.get('input', {})
         import time as _time
         start = _time.time()
-        log = getattr(self, '_log', None)
-        if log:
-            log.tool_request(tool_name, tool_input)
+        if self._slog:
+            self._slog.tool_request(tool_name, tool_input)
         try:
             result = await self.tool_executor.execute(tool_name, tool_input)
             ms = int((_time.time() - start) * 1000)
             local = result is not None
-            if log:
-                log.tool_result(tool_name, result, local=local, duration_ms=ms)
+            if self._slog:
+                self._slog.tool_result(tool_name, result, local=local, duration_ms=ms)
+            # Also persist to session writer
+            if hasattr(self, '_session_writer') and self._session_writer:
+                self._session_writer.write_tool(tool_name, tool_input, result, local, ms)
             await self.send(json.dumps({'type': 'tool:result', 'id': tool_id, 'result': result}))
         except Exception as e:
-            if log:
-                log.exception('tool', e)
+            if self._slog:
+                self._slog.exception('tool', e)
             await self.send(json.dumps({'type': 'tool:result', 'id': tool_id, 'result': {'error': str(e)}}))
