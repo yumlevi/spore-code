@@ -388,7 +388,18 @@ class AcornApp(App):
             event.stop()
             return
 
-        # Default: refocus input on typing
+        # If question selector is active, auto-focus it so keys work immediately
+        if hasattr(self, 'questions_handler') and self.questions_handler.state.active:
+            if not self.questions_handler.state.open_ended and not self.questions_handler.state.noting:
+                try:
+                    sel = self.query_one('#question-selector', FocusableStatic)
+                    if not sel.has_focus and sel.display:
+                        sel.focus()
+                except NoMatches:
+                    pass
+                return
+
+        # Default: refocus input on typing (skip navigation keys)
         if event.key in ('up', 'down', 'left', 'right', 'escape', 'tab', 'ctrl+p', 'ctrl+c'):
             return
         try:
