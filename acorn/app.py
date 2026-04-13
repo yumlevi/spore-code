@@ -90,6 +90,7 @@ class AcornApp(WSEventsMixin, QuestionsMixin, PlanMixin, App):
     BINDINGS = [
         Binding('ctrl+c', 'quit_check', 'Quit', show=False),
         Binding('ctrl+p', 'toggle_plan', 'Plan Mode', show=True, priority=True),
+        Binding('ctrl+b', 'show_bg', 'Bg Procs', show=True, priority=True),
         Binding('escape', 'stop_generation', 'Stop', show=False),
     ]
 
@@ -475,11 +476,13 @@ class AcornApp(WSEventsMixin, QuestionsMixin, PlanMixin, App):
         line2.append(' Enter', style=f'bold {t["accent"]}')
         line2.append(' send ', style=t.get('muted', 'dim'))
         line2.append(' Ctrl+J', style=f'bold {t["accent"]}')
-        line2.append(' newline ', style=t.get('muted', 'dim'))
+        line2.append(' nl ', style=t.get('muted', 'dim'))
         line2.append(' Ctrl+P', style=f'bold {t["accent"]}')
-        line2.append(' mode ', style=t.get('muted', 'dim'))
+        line2.append(' plan ', style=t.get('muted', 'dim'))
+        line2.append(' Ctrl+B', style=f'bold {t["accent"]}')
+        line2.append(' bg ', style=t.get('muted', 'dim'))
         line2.append(' Ctrl+C', style=f'bold {t["accent"]}')
-        line2.append(' stop/quit', style=t.get('muted', 'dim'))
+        line2.append(' stop', style=t.get('muted', 'dim'))
 
         # Line 3: session info + animated status
         SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
@@ -582,6 +585,35 @@ class AcornApp(WSEventsMixin, QuestionsMixin, PlanMixin, App):
         self._log(Text('  ✓ Reconnected', style=t['success']))
         self._scroll_bottom()
         self.sm.force(self._AppState.IDLE)
+
+    def action_show_bg(self):
+        """Show background process output inline."""
+        t = self.theme_data
+        procs = self.process_manager.list_all()
+        if not procs:
+            self._log(Text('  No background processes', style=t['muted']))
+            self._scroll_bottom()
+            return
+        for bp in procs:
+            status_text = '● running' if bp.running else f'✓ done (exit {bp.exit_code})'
+            status_style = t['success'] if bp.running else t['muted']
+            if bp.exit_code and bp.exit_code != 0:
+                status_style = t['error']
+            header = Text()
+            header.append(f'#{bp.id} ', style=f'bold {t["accent"]}')
+            header.append(bp.command[:60], style=t['fg'])
+            header.append(f'  {status_text}', style=status_style)
+            header.append(f'  {bp.elapsed}', style=t['muted'])
+            self._log(header)
+            # Show last 10 lines of output
+            if bp.output:
+                output_lines = list(bp.output)[-10:]
+                for line in output_lines:
+                    self._log(Text(f'    {line[:120]}', style=t['muted']))
+                if len(bp.output) > 10:
+                    self._log(Text(f'    ... ({len(bp.output) - 10} more lines)', style=t['muted']))
+            self._log(Text(''))
+        self._scroll_bottom()
 
     def action_toggle_plan(self):
         self.plan_mode = not self.plan_mode
@@ -884,6 +916,8 @@ class AcornApp(WSEventsMixin, QuestionsMixin, PlanMixin, App):
             help_table.add_row('', '')
             help_table.add_row('Ctrl+C', 'Stop generation (×2 to quit)')
             help_table.add_row('Ctrl+P', 'Toggle plan/execute')
+            help_table.add_row('Ctrl+B', 'Show background processes')
+            help_table.add_row('Ctrl+J', 'Insert newline')
             help_table.add_row('Esc', 'Stop generation')
             self._log(Panel(help_table, title='Commands', border_style=t['accent'], style=f'on {t["bg_panel"]}'))
         else:

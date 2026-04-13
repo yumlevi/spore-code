@@ -377,7 +377,9 @@ async def async_main(host, port, user, key, theme_name='dark', message=None, con
 
 
 def main():
+    from acorn import __version__
     parser = argparse.ArgumentParser(prog='acorn', description='CLI coding assistant connected to Anima')
+    parser.add_argument('-v', '--version', action='version', version=f'acorn {__version__}')
     parser.add_argument('message', nargs='*', help='One-shot message (omit for REPL mode)')
     parser.add_argument('--host', help='Anima server host')
     parser.add_argument('--port', type=int, help='Anima web port')

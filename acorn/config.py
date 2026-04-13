@@ -19,10 +19,41 @@ def _parse_toml(path):
     return tomllib.loads(path.read_text())
 
 
+VALID_KEYS = {
+    'connection': {'host', 'port', 'user', 'key'},
+    'display': {'theme', 'show_thinking', 'show_tools', 'show_usage'},
+}
+
+
+def _validate_config(cfg: dict):
+    """Warn about unknown keys in config — catches typos."""
+    import difflib
+    warnings = []
+    for section, keys in cfg.items():
+        if section not in VALID_KEYS:
+            close = difflib.get_close_matches(section, VALID_KEYS.keys(), n=1)
+            hint = f' (did you mean "{close[0]}"?)' if close else ''
+            warnings.append(f'Unknown section [{section}]{hint}')
+            continue
+        if isinstance(keys, dict):
+            for key in keys:
+                if key not in VALID_KEYS[section]:
+                    close = difflib.get_close_matches(key, VALID_KEYS[section], n=1)
+                    hint = f' (did you mean "{close[0]}"?)' if close else ''
+                    warnings.append(f'Unknown key [{section}].{key}{hint}')
+    if warnings:
+        import sys
+        for w in warnings:
+            print(f'⚠ Config: {w}', file=sys.stderr)
+
+
 def load_config() -> "dict | None":
     if not GLOBAL_CONFIG.exists():
         return None
-    return _parse_toml(GLOBAL_CONFIG)
+    cfg = _parse_toml(GLOBAL_CONFIG)
+    if cfg:
+        _validate_config(cfg)
+    return cfg
 
 
 def save_config(cfg: dict):
