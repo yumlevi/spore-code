@@ -654,6 +654,8 @@ class AcornApp(App):
 
         if cmd in ('/quit', '/exit'):
             self.exit()
+        elif cmd == '/stop':
+            self.action_quit_check() if self.generating else self._log(Text('  Nothing to stop', style=t['muted']))
         elif cmd == '/clear':
             from acorn.protocol import clear_message
             await self.conn.send(clear_message(self.session_id))
@@ -724,8 +726,11 @@ class AcornApp(App):
             from acorn.commands.registry import get_command
             handler = get_command(cmd)
             if handler:
-                await handler(args, app=self, conn=self.conn, session_id=self.session_id,
-                              user=self.user, renderer=None, executor=self.executor, state={})
+                try:
+                    await handler(args, app=self, conn=self.conn, session_id=self.session_id,
+                                  user=self.user, renderer=None, executor=self.executor, state={})
+                except (AttributeError, TypeError) as e:
+                    self._log(Text(f'  Command error: {e}', style=t['error']))
             else:
                 self._log(Text(f'  Unknown: {cmd}', style='red'))
         self._scroll_bottom()
