@@ -479,7 +479,7 @@ class AcornApp(App):
             line3.append(f'  {frame} {activity}', style=t['thinking'])
             if self._queued_message:
                 line3.append('  │  1 queued', style=t.get('warning', 'yellow'))
-        if not self.generating:
+        if not self.generating and hasattr(self, 'permissions'):
             perm_mode = getattr(self.permissions, 'mode', 'ask')
             mode_icons = {'auto': '⚡', 'ask': '🔒', 'locked': '🚫'}
             line3.append(f'  │  {mode_icons.get(perm_mode, "")} {perm_mode}', style=t.get('muted', 'dim'))
