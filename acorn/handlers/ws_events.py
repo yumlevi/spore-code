@@ -253,6 +253,18 @@ class WSEventsHandler:
         else:
             b.slog.debug('ws', f'remote-approve for {tool_id} but no pending prompt')
 
+    async def on_plan_mode(self, msg):
+        """Handle remote plan mode toggle from companion app."""
+        b = self.bridge
+        t = b.theme
+        enabled = msg.get('enabled', False)
+        b.plan_mode = enabled
+        mode = 'plan' if enabled else 'execute'
+        b.log(b.themed_text(f'  Mode → {mode} (set from mobile)', style=t['accent']))
+        b.scroll_bottom()
+        b.update_footer()
+        b.update_header()
+
     async def on_perm_query(self, msg):
         """Respond to perm mode query from server (when observer joins)."""
         b = self.bridge
