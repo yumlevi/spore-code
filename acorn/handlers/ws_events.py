@@ -106,6 +106,10 @@ class WSEventsHandler:
             b.set_activity(f'{tool} {detail[:40]}')
             self.stream.tool_lines.append(('tool_start', f'⚙ {tool} {detail}'))
             self._display_tool_line()
+        elif status in ('interjected', 'interjection'):
+            b.set_activity('interjecting...')
+        elif status == 'waiting':
+            b.set_activity('waiting...')
         elif status == 'tool_exec_done':
             b.set_activity('')
             parts = []
@@ -197,13 +201,6 @@ class WSEventsHandler:
 
         self.reset_stream()
 
-        # Send queued message
-        chat = b.get_chat_handler()
-        if chat and chat.state.queued_message:
-            queued = chat.state.queued_message
-            chat.state.queued_message = None
-            asyncio.create_task(chat.send_message(queued))
-
     async def on_error(self, msg):
         b = self.bridge
         b.generating = False
@@ -234,10 +231,20 @@ class WSEventsHandler:
         tool_id = msg.get('id', '')
         allowed = msg.get('allowed', False)
 
-        # Resolve the pending permission prompt if one is active
-        event = b.get_permission_attr('_permission_event')
+        # Resolve the pending PromptProvider prompt if one is active.
+        # PromptProvider uses _prompt_event / _prompt_result on the app.
+        event = b.get_permission_attr('_prompt_event')
         if event and not event.is_set():
-            b.set_permission_attr('_permission_result', allowed)
+            # Build a result that matches what PromptProvider expects
+            if allowed:
+                # Index 0 = "Allow" (works for both dangerous and non-dangerous)
+                b.set_permission_attr('_prompt_result', {'index': 0, 'value': 'allow'})
+            else:
+                # Last option is always "Deny"
+                opts = b.get_permission_attr('_prompt_options', [])
+                deny_idx = len(opts) - 1 if opts else 2
+                b.set_permission_attr('_prompt_result', {'index': deny_idx, 'value': 'deny'})
+
             label = '✓ Allowed (mobile)' if allowed else '✗ Denied (mobile)'
             style = t['success'] if allowed else t.get('warning', 'yellow')
             b.log(b.themed_text(f'  {label}', style=style))

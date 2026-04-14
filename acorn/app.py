@@ -786,6 +786,10 @@ class AcornApp(App):
             self._current_activity = ''
             if hasattr(self, 'chat_handler'):
                 self.chat_handler.state.queued_message = None
+            # Flush partial stream content so it doesn't bleed into next response
+            if hasattr(self, 'ws_handler'):
+                self.ws_handler.flush_stream_buffer()
+                self.ws_handler.reset_stream()
             self._log(Text('  ⏹ Stopped', style='dim'))
             self._update_header()
             self._update_footer()

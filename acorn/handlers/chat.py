@@ -49,20 +49,34 @@ class ChatHandler:
             ph.handle_decision(text)
             return
 
-        # Queued while generating
+        # Interjection while generating — send immediately, server injects into running loop
         if b.generating:
             t = b.theme
-            self.state.queued_message = text
             b.log(b.themed_panel(
-                f'{text}\n[queued — will send when current response finishes]',
-                title=f'[bold]{b.user}[/bold] [dim](queued)[/dim]',
-                border_style=t.get('muted', 'dim'),
+                text,
+                title=f'[bold]{b.user}[/bold] [dim](interjecting)[/dim]',
+                border_style=t.get('accent2', 'yellow'),
             ))
             b.scroll_bottom()
-            b.update_footer()
+            await self.send_interjection(text)
             return
 
         await self.send_message(text)
+
+    async def send_interjection(self, text):
+        """Send an interjection while the agent is running. Stays in generating state."""
+        b = self.bridge
+        b.slog.info('interjection', f'interjecting with {len(text)} chars')
+        b.session_writer.write_user(text)
+
+        ctx = b.ctx_manager.get_context()
+        content = (ctx + '\n\n' + text) if ctx else text
+
+        if b.plan_mode:
+            content = PLAN_PREFIX + content
+
+        self.state.queued_message = None  # clear any stale queue
+        await b.conn.send(chat_message(b.session_id, content, b.user))
 
     async def send_message(self, text):
         """Send a message to the agent."""
