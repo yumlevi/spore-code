@@ -237,6 +237,9 @@ def gather_context(cwd: str) -> str:
     project = os.path.basename(git_root or cwd)
     parts = [f'[Acorn Context — {project}]']
     parts.append(f'CWD: {cwd}')
+    parts.append(f'[SCOPE: You are working on the "{project}" project at {cwd}. '
+                 f'Focus only on this project. Do NOT reference, continue, or plan work from other projects '
+                 f'unless the user explicitly asks about them.]')
 
     if git_root:
         branch = _git('branch --show-current', git_root)
