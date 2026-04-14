@@ -290,6 +290,7 @@ class AcornApp(App):
         self.conn.on('chat:user-message', self.ws_handler.on_user_message)
         self.conn.on('tool:remote-approve', self.ws_handler.on_remote_approve)
         self.conn.on('perm:set-mode', self.ws_handler.on_perm_mode)
+        self.conn.on('perm:query', self.ws_handler.on_perm_query)
 
         self.query_one('#user-input', MessageInput).focus()
 

@@ -253,6 +253,19 @@ class WSEventsHandler:
         else:
             b.slog.debug('ws', f'remote-approve for {tool_id} but no pending prompt')
 
+    async def on_perm_query(self, msg):
+        """Respond to perm mode query from server (when observer joins)."""
+        b = self.bridge
+        import json, asyncio
+        mode = b.permissions.mode if hasattr(b, 'permissions') else 'auto'
+        try:
+            asyncio.ensure_future(b.conn.send(json.dumps({
+                'type': 'perm:current-mode',
+                'mode': mode,
+            })))
+        except Exception:
+            pass
+
     async def on_perm_mode(self, msg):
         """Handle remote permission mode change from companion app."""
         b = self.bridge
