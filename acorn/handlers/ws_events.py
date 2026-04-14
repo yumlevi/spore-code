@@ -217,3 +217,12 @@ class WSEventsHandler:
 
     async def on_tool(self, msg):
         pass
+
+    async def on_user_message(self, msg):
+        """Handle user message from another client (e.g. companion app)."""
+        b = self.bridge
+        text = msg.get('text', '')
+        user = msg.get('userName', 'remote')
+        if text:
+            b.log_user_panel(text, username=f'{user} (mobile)')
+            b.scroll_bottom()

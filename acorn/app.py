@@ -287,6 +287,7 @@ class AcornApp(App):
         self.conn.on('code:view', self.ws_handler.on_code_view)
         self.conn.on('code:diff', self.ws_handler.on_code_diff)
         self.conn.on('chat:start', self.ws_handler.on_start)
+        self.conn.on('chat:user-message', self.ws_handler.on_user_message)
 
         self.query_one('#user-input', MessageInput).focus()
 
