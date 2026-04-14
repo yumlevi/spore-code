@@ -226,3 +226,34 @@ class WSEventsHandler:
         if text:
             b.log_user_panel(text, username=f'{user} (mobile)')
             b.scroll_bottom()
+
+    async def on_remote_approve(self, msg):
+        """Handle remote tool approval from companion app."""
+        b = self.bridge
+        t = b.theme
+        tool_id = msg.get('id', '')
+        allowed = msg.get('allowed', False)
+
+        # Resolve the pending permission prompt if one is active
+        event = b.get_permission_attr('_permission_event')
+        if event and not event.is_set():
+            b.set_permission_attr('_permission_result', allowed)
+            label = '✓ Allowed (mobile)' if allowed else '✗ Denied (mobile)'
+            style = t['success'] if allowed else t.get('warning', 'yellow')
+            b.log(b.themed_text(f'  {label}', style=style))
+            b.scroll_bottom()
+            event.set()
+        else:
+            b.slog.debug('ws', f'remote-approve for {tool_id} but no pending prompt')
+
+    async def on_perm_mode(self, msg):
+        """Handle remote permission mode change from companion app."""
+        b = self.bridge
+        t = b.theme
+        mode = msg.get('mode', '')
+        if mode in ('ask', 'auto', 'locked', 'yolo'):
+            b.permissions.mode = mode
+            descs = {'auto': 'auto-approve', 'ask': 'ask for each', 'locked': 'deny all', 'yolo': 'approve everything'}
+            b.log(b.themed_text(f'  Mode → {mode}: {descs[mode]} (set from mobile)', style=t['accent']))
+            b.scroll_bottom()
+            b.update_footer()
