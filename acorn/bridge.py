@@ -213,3 +213,14 @@ class AppBridge:
 
     def set_timer(self, delay, callback):
         return self._app.set_timer(delay, callback)
+
+    # ── Broadcast to observers ────────────────────────────────────
+
+    def broadcast(self, msg_type: str, **kwargs):
+        """Send a message to all session observers (companion app)."""
+        import json, asyncio
+        try:
+            payload = {'type': msg_type, **kwargs}
+            asyncio.ensure_future(self.conn.send(json.dumps(payload)))
+        except Exception:
+            pass

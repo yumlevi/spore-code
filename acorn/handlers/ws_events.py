@@ -297,6 +297,22 @@ class WSEventsHandler:
             b.scroll_bottom()
             ph.handle_decision('3')
 
+    async def on_interactive_resolved(self, msg):
+        """Handle interactive:resolved from companion app — dismiss matching CLI UI."""
+        kind = msg.get('kind', '')
+        if kind == 'questions':
+            self._dismiss_cli_selector()
+            b = self.bridge
+            b.log(b.themed_text('  Questions answered from mobile', style=b.theme['muted']))
+            b.scroll_bottom()
+        elif kind == 'tool-approval':
+            # Mobile approved a tool — resolve pending prompt if any
+            b = self.bridge
+            prompt_event = b.get_permission_attr('_prompt_event')
+            if prompt_event and not prompt_event.is_set():
+                b.set_permission_attr('_prompt_result', {'index': 0, 'value': 'allow'})
+                prompt_event.set()
+
     async def on_plan_mode(self, msg):
         """Handle remote plan mode toggle from companion app."""
         b = self.bridge

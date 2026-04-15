@@ -205,4 +205,10 @@ class TuiPermissions:
             self.app._log(Text(f'  ✗ Denied', style=t.get('warning', 'yellow')))
         self.app._scroll_bottom()
 
+        # Broadcast to companion app so approval cards dismiss
+        try:
+            self.app.bridge.broadcast('interactive:resolved', kind='tool-approval', allowed=allowed)
+        except Exception:
+            pass
+
         return allowed

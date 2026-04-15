@@ -301,3 +301,5 @@ class QuestionsHandler:
         asyncio.create_task(
             b.conn.send(chat_message(b.session_id, formatted, b.user, cwd=b.cwd))
         )
+        # Broadcast so mobile dismisses its question sheet
+        b.broadcast('interactive:resolved', kind='questions')
