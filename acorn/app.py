@@ -687,11 +687,7 @@ class AcornApp(App):
 
     def _broadcast_perm_mode(self, mode):
         """Broadcast permission mode change to companion app observers."""
-        import json
-        try:
-            asyncio.ensure_future(self.conn.send(json.dumps({'type': 'perm:set-mode', 'mode': mode})))
-        except Exception:
-            pass
+        self.bridge.broadcast('perm:set-mode', mode=mode)
 
     def _restart(self):
         """Replace current process with a fresh acorn invocation."""
