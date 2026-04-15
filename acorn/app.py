@@ -10,7 +10,7 @@ if not os.environ.get("COLORTERM") and not os.environ.get("ACORN_NO_TRUECOLOR"):
     os.environ["COLORTERM"] = "truecolor"
 
 from textual.app import App, ComposeResult
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Static, Input, RichLog, TextArea
 from textual.binding import Binding
 from textual.css.query import NoMatches
@@ -99,6 +99,7 @@ class AcornApp(App):
         Binding('ctrl+c', 'quit_check', 'Quit', show=False),
         Binding('ctrl+p', 'toggle_plan', 'Plan Mode', show=True, priority=True),
         Binding('ctrl+b', 'show_bg', 'Bg Procs', show=True, priority=True),
+        Binding('ctrl+o', 'toggle_output_log', 'Output', show=True, priority=True),
         Binding('escape', 'stop_generation', 'Stop', show=False),
     ]
 
@@ -203,6 +204,19 @@ class AcornApp(App):
     #user-input.hidden {
         display: none;
     }
+    #output-log {
+        height: 1fr;
+        padding: 0 1;
+        background: $background;
+        color: $foreground;
+        border-left: solid $accent;
+    }
+    #output-log.hidden {
+        display: none;
+    }
+    #main-split {
+        height: 1fr;
+    }
     """
 
 
@@ -246,7 +260,9 @@ class AcornApp(App):
 
     def compose(self) -> ComposeResult:
         yield Static('', id='header-bar')
-        yield SelectableLog(id='transcript', wrap=True, highlight=True, markup=True)
+        with Horizontal(id='main-split'):
+            yield SelectableLog(id='transcript', wrap=True, highlight=True, markup=True)
+            yield SelectableLog(id='output-log', wrap=True, highlight=True, markup=True, classes='hidden')
         with Vertical(id='bottom-area'):
             yield Static('', id='autocomplete', classes='hidden')
             yield Static('', id='paste-indicator', classes='hidden')
@@ -276,10 +292,12 @@ class AcornApp(App):
         self.conn._session_writer = self.session_writer
         self.conn._on_disconnect = lambda: self._on_ws_disconnect()
         self.conn._on_reconnect = lambda: self._on_ws_reconnect()
+        self.conn._on_tool_output = lambda name, inp, result, ms: self._on_tool_output(name, inp, result, ms)
 
         # Wire WebSocket events to handler methods
         self.conn.on('chat:history', self.ws_handler.on_history)
         self.conn.on('chat:delta', self.ws_handler.on_delta)
+        self.conn.on('chat:thinking', self.ws_handler.on_thinking_delta)
         self.conn.on('chat:status', self.ws_handler.on_status)
         self.conn.on('chat:done', self.ws_handler.on_done)
         self.conn.on('chat:error', self.ws_handler.on_error)
@@ -510,6 +528,8 @@ class AcornApp(App):
         line2.append(' plan ', style=t.get('muted', 'dim'))
         line2.append(' Ctrl+B', style=f'bold {t["accent"]}')
         line2.append(' bg ', style=t.get('muted', 'dim'))
+        line2.append(' Ctrl+O', style=f'bold {t["accent"]}')
+        line2.append(' output ', style=t.get('muted', 'dim'))
         line2.append(' Ctrl+C', style=f'bold {t["accent"]}')
         line2.append(' stop', style=t.get('muted', 'dim'))
 
@@ -776,6 +796,71 @@ class AcornApp(App):
                     self._log(Text(f'    ... ({len(bp.output) - 10} more lines)', style=t['muted']))
             self._log(Text(''))
         self._scroll_bottom()
+
+    def action_toggle_output_log(self):
+        """Toggle the output/detail log panel (Ctrl+O)."""
+        try:
+            log_widget = self.query_one('#output-log', SelectableLog)
+            if log_widget.has_class('hidden'):
+                log_widget.remove_class('hidden')
+                log_widget.scroll_end(animate=False)
+            else:
+                log_widget.add_class('hidden')
+        except NoMatches:
+            pass
+
+    def _log_output(self, renderable):
+        """Write to the output log panel (hidden by default, toggled with Ctrl+O)."""
+        try:
+            self.query_one('#output-log', SelectableLog).write(renderable)
+        except NoMatches:
+            pass
+
+    def _on_tool_output(self, tool_name, tool_input, result, duration_ms):
+        """Called when a local tool execution completes — logs details to output panel."""
+        t = self.theme_data
+        if result is None:
+            return  # server fallback, nothing to log locally
+
+        header = Text()
+        header.append(f'⚙ {tool_name}', style=f'bold {t["accent"]}')
+        header.append(f'  {duration_ms}ms', style=t.get('muted', 'dim'))
+
+        if tool_name == 'exec':
+            cmd = (tool_input.get('command', '') or '')[:120]
+            header.append(f'  $ {cmd}', style=t['fg'])
+            self._log_output(header)
+            output = ''
+            if isinstance(result, dict):
+                output = result.get('output', result.get('error', ''))
+            if output:
+                for line in str(output).splitlines()[:50]:
+                    self._log_output(Text(f'  {line}', style=t.get('muted', 'dim')))
+                total_lines = str(output).count('\n') + 1
+                if total_lines > 50:
+                    self._log_output(Text(f'  ... ({total_lines - 50} more lines)', style=t.get('muted', 'dim')))
+            exit_code = result.get('exitCode') if isinstance(result, dict) else None
+            if exit_code is not None and exit_code != 0:
+                self._log_output(Text(f'  exit {exit_code}', style=t.get('error', 'red')))
+        elif tool_name in ('read_file', 'write_file', 'edit_file'):
+            path = tool_input.get('path', '')
+            header.append(f'  {path}', style=t['fg'])
+            self._log_output(header)
+        elif tool_name in ('glob', 'grep'):
+            pattern = tool_input.get('pattern', '')
+            header.append(f'  {pattern}', style=t['fg'])
+            self._log_output(header)
+            if isinstance(result, dict):
+                matches = result.get('matches', result.get('files', []))
+                if isinstance(matches, list):
+                    for m in matches[:15]:
+                        self._log_output(Text(f'  {m}', style=t.get('muted', 'dim')))
+                    if len(matches) > 15:
+                        self._log_output(Text(f'  ... ({len(matches) - 15} more)', style=t.get('muted', 'dim')))
+        else:
+            self._log_output(header)
+
+        self._log_output(Text(''))
 
     def action_toggle_plan(self):
         self.plan_mode = not self.plan_mode

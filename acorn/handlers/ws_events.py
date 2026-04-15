@@ -6,6 +6,7 @@ from rich.text import Text
 from rich.panel import Panel
 from rich.markdown import Markdown
 from rich.rule import Rule
+from rich.syntax import Syntax
 
 from acorn.questions import parse_questions
 
@@ -97,15 +98,24 @@ class WSEventsHandler:
             b.set_activity('thinking...')
             self.stream.tool_lines.append(('thinking', '● Thinking...'))
             self._display_tool_line()
+            self._thinking_buffer = ''
         elif status == 'thinking_done':
             b.set_activity('')
             self.stream.tool_lines = [(k, v) for k, v in self.stream.tool_lines if k != 'thinking']
+            if getattr(self, '_thinking_buffer', ''):
+                b.log_output(Text(f'● thinking', style=t.get('thinking', 'dim italic')))
+                for line in self._thinking_buffer.splitlines()[-30:]:
+                    b.log_output(Text(f'  {line}', style=t.get('muted', 'dim')))
+                b.log_output(Text(''))
+                self._thinking_buffer = ''
         elif status == 'tool_exec_start':
             tool = msg.get('tool', '')
             detail = msg.get('detail', '')[:80]
             b.set_activity(f'{tool} {detail[:40]}')
             self.stream.tool_lines.append(('tool_start', f'⚙ {tool} {detail}'))
             self._display_tool_line()
+            self._current_tool_name = tool
+            self._current_tool_detail = detail
         elif status in ('interjected', 'interjection'):
             b.set_activity('interjecting...')
         elif status == 'waiting':
@@ -134,18 +144,49 @@ class WSEventsHandler:
         b.log(Text(f'  {last_text}', style=style_map.get(last_type, 'dim')))
         b.scroll_bottom()
 
+    async def on_thinking_delta(self, msg):
+        text = msg.get('text', '')
+        if text:
+            if not hasattr(self, '_thinking_buffer'):
+                self._thinking_buffer = ''
+            self._thinking_buffer += text
+
     async def on_code_view(self, msg):
-        t = self.bridge.theme
+        b = self.bridge
+        t = b.theme
         path = msg.get('path', '')
-        lines = msg.get('content', '').count('\n') + 1
+        content = msg.get('content', '')
+        lines = content.count('\n') + 1
         label = 'new' if msg.get('isNew') else 'read'
         self.stream.tool_lines.append(('read', f'📄 {label} {path} ({lines} lines)'))
         self._display_tool_line()
+        # Log to output panel
+        lang = msg.get('language', 'text')
+        b.log_output(Text(f'📄 {label} {path}', style=f'bold {t["accent"]}'))
+        preview = content[:3000] if len(content) > 3000 else content
+        try:
+            b.log_output(Syntax(preview, lang, theme='monokai', line_numbers=True, word_wrap=True))
+        except Exception:
+            b.log_output(Text(preview, style=t.get('muted', 'dim')))
+        if len(content) > 3000:
+            b.log_output(Text(f'  ... ({lines} lines total, truncated in output log)', style=t.get('muted', 'dim')))
+        b.log_output(Text(''))
 
     async def on_code_diff(self, msg):
+        b = self.bridge
+        t = b.theme
         path = msg.get('path', '')
         self.stream.tool_lines.append(('edit', f'✏️  edit {path}'))
         self._display_tool_line()
+        # Log diff to output panel
+        old_text = msg.get('oldText', '')
+        new_text = msg.get('newText', '')
+        b.log_output(Text(f'✏️  edit {path}', style=f'bold {t["accent"]}'))
+        for line in old_text.splitlines()[:20]:
+            b.log_output(Text(f'  - {line}', style=t.get('error', 'red')))
+        for line in new_text.splitlines()[:20]:
+            b.log_output(Text(f'  + {line}', style=t.get('success', 'green')))
+        b.log_output(Text(''))
 
     async def on_done(self, msg):
         b = self.bridge

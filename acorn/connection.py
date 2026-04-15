@@ -45,6 +45,7 @@ class Connection:
         self._slog = None        # session logger
         self._on_disconnect = None  # callback
         self._on_reconnect = None   # callback
+        self._on_tool_output = None  # callback for output log
         self.connected = False
 
     async def authenticate(self, username: str, key: str) -> str:
@@ -172,6 +173,10 @@ class Connection:
         if self._slog:
             self._slog.info('ws', f'reconnecting... ({len(self._outbox)} queued)')
 
+        # Tear down old connection fully before opening a new one —
+        # prevents ghost WebSocket that echoes messages back to us
+        await self._teardown_old_ws()
+
         for attempt, delay in enumerate(backoff):
             try:
                 # Re-authenticate (token may have expired)
@@ -221,6 +226,22 @@ class Connection:
             self._slog.error('ws', 'all reconnect attempts failed')
         self._reconnecting = False
 
+    async def _teardown_old_ws(self):
+        """Close the old WebSocket and cancel its background tasks so the server
+        fires 'close' and removes the stale client from session tracking."""
+        if self._heartbeat_task:
+            self._heartbeat_task.cancel()
+            self._heartbeat_task = None
+        if self._receive_task:
+            self._receive_task.cancel()
+            self._receive_task = None
+        if self.ws:
+            try:
+                await self.ws.close()
+            except Exception:
+                pass
+            self.ws = None
+
     def _sync_auth(self, username, key):
         """Synchronous auth for use in executor."""
         url = f'{self.base_url}/api/acorn/auth'
@@ -247,6 +268,12 @@ class Connection:
             # Also persist to session writer
             if hasattr(self, '_session_writer') and self._session_writer:
                 self._session_writer.write_tool(tool_name, tool_input, result, local, ms)
+            # Notify output log callback if set
+            if self._on_tool_output:
+                try:
+                    self._on_tool_output(tool_name, tool_input, result, ms)
+                except Exception:
+                    pass
             await self.send(json.dumps({'type': 'tool:result', 'id': tool_id, 'result': result}))
         except Exception as e:
             if self._slog:

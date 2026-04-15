@@ -24,6 +24,10 @@ class AppBridge:
     def scroll_bottom(self):
         self._app._scroll_bottom()
 
+    def log_output(self, renderable):
+        """Write to the output detail log (toggled with Ctrl+O)."""
+        self._app._log_output(renderable)
+
     def themed_panel(self, content, title='', border_style=None, **kwargs):
         return self._app._themed_panel(content, title, border_style, **kwargs)
 
