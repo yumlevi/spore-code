@@ -887,7 +887,24 @@ class AcornApp(App):
         t = self.theme_data
         self.slog.command(cmd, args)
 
-        if cmd in ('/quit', '/exit'):
+        if cmd == '/logout':
+            from acorn.config import GLOBAL_CONFIG
+            import os
+            try:
+                if GLOBAL_CONFIG.exists():
+                    os.remove(GLOBAL_CONFIG)
+                    self._log(Text('  Config cleared. Restarting for setup...', style=t['accent']))
+                    self._scroll_bottom()
+                    import time
+                    time.sleep(0.5)
+                    self._restart()
+                else:
+                    self._log(Text('  No config found', style=t['muted']))
+            except Exception as e:
+                self._log(Text(f'  Logout failed: {e}', style=t['error']))
+            self._scroll_bottom()
+            return
+        elif cmd in ('/quit', '/exit'):
             self.slog.session_end(self._get_message_count(), __import__('time').time() - self._session_start)
             self.slog.close()
             self.session_writer.close()
@@ -1018,6 +1035,7 @@ class AcornApp(App):
             help_table.add_column(style='dim')
             help_table.add_row('/help', 'Show this help')
             help_table.add_row('/quit', 'Exit Acorn')
+            help_table.add_row('/logout', 'Clear config and re-enter credentials')
             help_table.add_row('/clear', 'Clear session')
             help_table.add_row('/plan', 'Toggle plan mode')
             help_table.add_row('/status', 'Connection info')

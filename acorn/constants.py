@@ -67,6 +67,7 @@ LOGO_MINI = ' 🌰 acorn'
 SLASH_COMMANDS = [
     ('/help', 'Show available commands'),
     ('/quit', 'Exit Acorn'),
+    ('/logout', 'Clear config and re-enter credentials'),
     ('/clear', 'Clear session history'),
     ('/stop', 'Stop current generation'),
     ('/plan', 'Toggle plan mode'),
