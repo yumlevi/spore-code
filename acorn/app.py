@@ -955,6 +955,25 @@ class AcornApp(App):
                 self._log(Text(f'  Unknown theme. Available: {", ".join(available)}', style='red'))
             else:
                 self._log(Text(f'  Current: {self.theme_data["name"]}  Available: {", ".join(available)}', style='dim'))
+        elif cmd == '/delegate':
+            from acorn.context import DELEGATION_POLICIES
+            valid = list(DELEGATION_POLICIES.keys())
+            if args in valid:
+                self.ctx_manager.delegation_mode = args
+                descs = {'default': 'research+bg ok, orchestration stays local', 'off': 'no delegation at all',
+                         'research': 'only parallel research', 'code': 'research + parallel writes', 'all': 'unrestricted'}
+                self._log(Text(f'  Delegation → {args}: {descs.get(args, "")}', style=t['accent']))
+                self._broadcast_perm_mode(self.permissions.mode)  # reuse broadcast to sync
+            elif args:
+                self._log(Text(f'  Unknown. Options: {", ".join(valid)}', style='red'))
+            else:
+                current = self.ctx_manager.delegation_mode
+                self._log(Text(f'  Current: {current}', style=t['accent']))
+                self._log(Text(f'  /delegate default   Research+bg ok, orchestration local', style=t['muted']))
+                self._log(Text(f'  /delegate off       No delegation at all', style=t['muted']))
+                self._log(Text(f'  /delegate research  Only parallel web research', style=t['muted']))
+                self._log(Text(f'  /delegate code      Research + parallel file writes', style=t['muted']))
+                self._log(Text(f'  /delegate all       Unrestricted (old behavior)', style=t['muted']))
         elif cmd == '/approve-all':
             self.permissions.mode = 'auto'
             self._log(Text('  ⚡ Auto mode — all non-dangerous tools auto-approved', style='yellow'))
@@ -1000,6 +1019,7 @@ class AcornApp(App):
             help_table.add_row('/mode [auto/ask/locked]', 'Tool approval mode')
             help_table.add_row('/approve-all', 'Shortcut for /mode auto')
             help_table.add_row('/approve-all-dangerous', 'YOLO — approve everything')
+            help_table.add_row('/delegate [mode]', 'Task delegation (default/off/research/code/all)')
             help_table.add_row('/update', 'Pull & install latest version')
             help_table.add_row('/update check', 'Check for updates without installing')
             help_table.add_row('/test [name]', 'Run UI tests')

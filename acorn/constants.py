@@ -88,4 +88,10 @@ SLASH_COMMANDS = [
     ('/sessions', 'List saved sessions for this project'),
     ('/update', 'Pull & install latest version'),
     ('/update check', 'Check for updates without installing'),
+    ('/delegate', 'Task delegation settings'),
+    ('/delegate default', 'Research+bg ok, orchestration local'),
+    ('/delegate off', 'No delegation at all'),
+    ('/delegate research', 'Only parallel web research'),
+    ('/delegate code', 'Research + parallel file writes'),
+    ('/delegate all', 'Unrestricted delegation'),
 ]

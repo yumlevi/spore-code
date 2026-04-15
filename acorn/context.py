@@ -280,6 +280,32 @@ def gather_context(cwd: str) -> str:
     return '\n\n'.join(parts)
 
 
+DELEGATION_POLICIES = {
+    'default': (
+        '[DELEGATION POLICY: You are the primary agent interacting with the user. Stay interactive.\n'
+        '- OK to delegate: parallel web research, parallel file writes, background tasks\n'
+        '- NOT OK to delegate: main task orchestration, user-facing decisions, sequential work\n'
+        '- When you delegate, tell the user what you\'re delegating and why.\n'
+        '- Always keep the conversation flowing — don\'t go silent while a sub-agent works.]'
+    ),
+    'off': (
+        '[DELEGATION POLICY: Do NOT use delegate_task at all. Do everything yourself inline.\n'
+        'No sub-agents. Execute all tools, writes, and research directly.]'
+    ),
+    'research': (
+        '[DELEGATION POLICY: You may ONLY delegate parallel web research (web_search, web_fetch).\n'
+        'Do NOT delegate code writing, file operations, or task orchestration.\n'
+        'Always tell the user when delegating research.]'
+    ),
+    'code': (
+        '[DELEGATION POLICY: You may delegate parallel file writes and parallel web research.\n'
+        'Do NOT delegate main task orchestration or user-facing decisions.\n'
+        'Always tell the user when delegating.]'
+    ),
+    'all': '',  # no restriction
+}
+
+
 class ContextManager:
     """Manages context enrichment — full on first message, deltas after."""
 
@@ -289,6 +315,7 @@ class ContextManager:
         self._sent = False
         self._last_branch = None
         self._last_status = None
+        self.delegation_mode = 'default'
 
     def get_context(self) -> str:
         """Get context to prepend to a message. Full on first call, delta after."""
@@ -296,10 +323,15 @@ class ContextManager:
             self._sent = True
             self._full_context = gather_context(self.cwd)
             self._snapshot()
-            return self._full_context
+            ctx = self._full_context
+        else:
+            ctx = self._compute_delta()
 
-        delta = self._compute_delta()
-        return delta
+        # Append delegation policy
+        policy = DELEGATION_POLICIES.get(self.delegation_mode, '')
+        if policy:
+            ctx = (ctx + '\n\n' + policy) if ctx else policy
+        return ctx
 
     def reset(self):
         """Force full context on next message (e.g. after /clear)."""
