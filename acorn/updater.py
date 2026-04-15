@@ -35,13 +35,22 @@ def check_for_updates():
     """
     repo = get_repo_dir()
 
+    # Check if we even have a remote configured
+    remote_url = _git(['remote', 'get-url', 'origin'], repo)
+    if not remote_url:
+        return None
+
     # Get current branch
     branch = _git(['rev-parse', '--abbrev-ref', 'HEAD'], repo)
     if not branch:
         return None
 
     # Fetch latest from remote (quiet, no tags)
+    # Try multiple approaches — Windows may need credential helper
     fetch = _git(['fetch', 'origin', branch, '--quiet'], repo)
+    if fetch is None:
+        # Retry without branch spec (some git versions are picky)
+        fetch = _git(['fetch', 'origin', '--quiet'], repo)
     if fetch is None:
         return None
 
