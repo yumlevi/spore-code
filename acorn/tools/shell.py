@@ -111,8 +111,8 @@ async def execute(input: dict, cwd: str, process_manager=None) -> dict:
     # If explicitly background or detected as server-like with a process manager
     if (background or is_server_like) and process_manager:
         bp = await process_manager.launch(command, cwd)
-        # Wait briefly for early output or crash
-        await asyncio.sleep(1.0)
+        # Wait for early output or crash — longer wait to capture server startup
+        await asyncio.sleep(3.0)
         early_output = '\n'.join(bp.output) if bp.output else '(started, no output yet)'
         if not bp.running:
             return {
@@ -121,10 +121,10 @@ async def execute(input: dict, cwd: str, process_manager=None) -> dict:
                 'note': f'Process exited immediately (exit {bp.exit_code})',
             }
         return {
-            'output': early_output[:2000],
+            'output': early_output[:4000],
             'backgrounded': True,
             'processId': bp.id,
-            'note': f'Running in background as #{bp.id}. Use /bg {bp.id} to view output, /bg kill {bp.id} to stop.',
+            'note': f'Running in background as #{bp.id}. To read latest output, use exec with command: echo "--- bg #{bp.id} output ---" (the output is captured and shown above). Use /bg {bp.id} to view more.',
         }
 
     try:

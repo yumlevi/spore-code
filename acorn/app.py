@@ -726,7 +726,7 @@ class AcornApp(App):
 
     def _restart(self):
         """Replace current process with a fresh acorn invocation."""
-        import os, sys
+        import os, sys, platform, subprocess
         # Clean up before exec
         try:
             self.slog.close()
@@ -734,8 +734,12 @@ class AcornApp(App):
         except Exception:
             pass
         self.exit()
-        # os.execv replaces the process — everything after this is dead code
-        os.execv(sys.executable, [sys.executable] + sys.argv)
+        if platform.system() == 'Windows':
+            # os.execv doesn't work on Windows — spawn new process and exit
+            subprocess.Popen([sys.executable] + sys.argv)
+            sys.exit(0)
+        else:
+            os.execv(sys.executable, [sys.executable] + sys.argv)
 
     def _log(self, renderable):
         try:

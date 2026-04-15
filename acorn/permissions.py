@@ -34,8 +34,12 @@ def is_dangerous(tool_name: str, input: dict) -> bool:
         return any(r.search(cmd) for r in DANGEROUS_RE)
     if tool_name == 'write_file':
         path = input.get('path', '')
-        # Writing to system paths
+        # Writing to system paths (Unix)
         if path.startswith('/etc/') or path.startswith('/usr/') or path.startswith('/bin/'):
+            return True
+        # Writing to system paths (Windows)
+        lp = path.lower().replace('/', '\\')
+        if lp.startswith('c:\\windows') or lp.startswith('c:\\program files') or lp.startswith('c:\\programdata'):
             return True
     return False
 

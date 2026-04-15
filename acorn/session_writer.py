@@ -13,7 +13,7 @@ class SessionWriter:
 
     def __init__(self, session_id: str):
         SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
-        safe_id = session_id.replace(':', '_').replace('@', '_').replace('/', '_')[:80]
+        safe_id = session_id.replace(':', '_').replace('@', '_').replace('/', '_').replace('\\', '_')[:80]
         self.path = SESSIONS_DIR / f'{safe_id}.jsonl'
         self.session_id = session_id
         is_new = not self.path.exists()

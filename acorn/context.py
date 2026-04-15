@@ -68,10 +68,11 @@ def gather_environment() -> str:
         return _env_cache
 
     parts = []
+    is_win = platform.system() == 'Windows'
 
     # ── System ──
     parts.append(f'OS: {platform.system()} {platform.release()} ({platform.machine()})')
-    shell = os.environ.get('SHELL', '')
+    shell = os.environ.get('SHELL', '') or (os.environ.get('COMSPEC', '') if is_win else '')
     if shell:
         parts.append(f'Shell: {shell}')
 
@@ -79,10 +80,15 @@ def gather_environment() -> str:
     try:
         cpu_count = os.cpu_count() or 0
         parts.append(f'CPU: {cpu_count} cores')
-        # Try to get CPU model
-        cpu_model = _run_shell("cat /proc/cpuinfo 2>/dev/null | grep 'model name' | head -1 | cut -d: -f2")
+        cpu_model = platform.processor()
+        if not cpu_model or cpu_model == platform.machine():
+            cpu_model = _run_shell("cat /proc/cpuinfo 2>/dev/null | grep 'model name' | head -1 | cut -d: -f2")
         if not cpu_model:
             cpu_model = _run_shell("sysctl -n machdep.cpu.brand_string 2>/dev/null")
+        if is_win and not cpu_model:
+            cpu_model = _run_shell("wmic cpu get Name /value 2>nul")
+            if cpu_model:
+                cpu_model = cpu_model.replace('Name=', '').strip()
         if cpu_model:
             parts.append(f'CPU model: {cpu_model.strip()[:80]}')
     except Exception:
@@ -90,7 +96,15 @@ def gather_environment() -> str:
 
     # ── Memory ──
     try:
-        mem = _run_shell("free -h 2>/dev/null | grep Mem | awk '{print $2}'")
+        import shutil
+        mem = None
+        if is_win:
+            mem_raw = _run_shell('wmic ComputerSystem get TotalPhysicalMemory /value 2>nul')
+            if mem_raw:
+                mem_bytes = int(mem_raw.replace('TotalPhysicalMemory=', '').strip())
+                mem = f'{mem_bytes // (1024**3)}Gi'
+        if not mem:
+            mem = _run_shell("free -h 2>/dev/null | grep Mem | awk '{print $2}'")
         if not mem:
             mem = _run_shell("sysctl -n hw.memsize 2>/dev/null")
             if mem:
@@ -102,22 +116,32 @@ def gather_environment() -> str:
 
     # ── GPU / CUDA ──
     gpu_info = []
-    # NVIDIA
-    nvidia = _run_shell("nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader,nounits 2>/dev/null")
+    # NVIDIA (nvidia-smi works on both Linux and Windows)
+    nvidia = _run_shell("nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader,nounits 2>/dev/null" if not is_win else
+                        "nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader,nounits 2>nul")
     if nvidia:
         for line in nvidia.strip().split('\n'):
             gpu_info.append(f'  NVIDIA: {line.strip()}')
-        cuda_version = _run_shell("nvcc --version 2>/dev/null | grep release | awk '{print $5}' | tr -d ','")
+        cuda_version = _run_shell("nvcc --version 2>/dev/null | grep release | awk '{print $5}' | tr -d ','" if not is_win else
+                                  'nvcc --version 2>nul')
         if cuda_version:
-            gpu_info.append(f'  CUDA: {cuda_version}')
-        else:
-            cuda_version = _run_shell("nvidia-smi 2>/dev/null | grep 'CUDA Version' | awk '{print $9}'")
-            if cuda_version:
-                gpu_info.append(f'  CUDA (driver): {cuda_version}')
-    # ROCm / AMD
-    rocm = _run_shell("rocm-smi --showproductname 2>/dev/null | head -5")
-    if rocm and 'ERROR' not in rocm:
-        gpu_info.append(f'  AMD ROCm: {rocm.split(chr(10))[0][:60]}')
+            # Extract version from nvcc output
+            import re
+            m = re.search(r'release\s+(\S+)', cuda_version)
+            gpu_info.append(f'  CUDA: {m.group(1).rstrip(",") if m else cuda_version.strip()[:20]}')
+    # Windows fallback — wmic for GPU name
+    if is_win and not gpu_info:
+        wmic_gpu = _run_shell('wmic path win32_VideoController get Name /value 2>nul')
+        if wmic_gpu:
+            for line in wmic_gpu.strip().split('\n'):
+                name = line.replace('Name=', '').strip()
+                if name:
+                    gpu_info.append(f'  GPU: {name[:60]}')
+    # ROCm / AMD (Linux only)
+    if not is_win:
+        rocm = _run_shell("rocm-smi --showproductname 2>/dev/null | head -5")
+        if rocm and 'ERROR' not in rocm:
+            gpu_info.append(f'  AMD ROCm: {rocm.split(chr(10))[0][:60]}')
     # Apple Metal
     if platform.system() == 'Darwin':
         metal = _run_shell("system_profiler SPDisplaysDataType 2>/dev/null | grep 'Chipset Model'")
@@ -131,9 +155,10 @@ def gather_environment() -> str:
 
     # ── Disk ──
     try:
-        disk = _run_shell("df -h . 2>/dev/null | tail -1 | awk '{print $4 \" available of \" $2}'")
-        if disk:
-            parts.append(f'Disk: {disk}')
+        usage = shutil.disk_usage('.')
+        free_gb = usage.free // (1024**3)
+        total_gb = usage.total // (1024**3)
+        parts.append(f'Disk: {free_gb}Gi available of {total_gb}Gi')
     except Exception:
         pass
 
