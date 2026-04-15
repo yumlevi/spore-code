@@ -294,6 +294,7 @@ class AcornApp(App):
         self.conn.on('plan:set-mode', self.ws_handler.on_plan_mode)
         self.conn.on('plan:decision', self.ws_handler.on_plan_decision)
         self.conn.on('interactive:resolved', self.ws_handler.on_interactive_resolved)
+        self.conn.on('delegate:config', self.ws_handler.on_delegate_config)
 
         self.query_one('#user-input', MessageInput).focus()
 
@@ -958,22 +959,34 @@ class AcornApp(App):
         elif cmd == '/delegate':
             from acorn.context import DELEGATION_POLICIES
             valid = list(DELEGATION_POLICIES.keys())
-            if args in valid:
+            # /delegate workers 5 — set max concurrent sub-agents
+            if args.startswith('workers ') or args.startswith('workers='):
+                try:
+                    n = int(args.split()[-1] if ' ' in args else args.split('=')[-1])
+                    n = max(0, min(n, 20))
+                    self.ctx_manager.max_workers = n
+                    self._log(Text(f'  Max workers → {n}', style=t['accent']))
+                    self.bridge.broadcast('delegate:config', mode=self.ctx_manager.delegation_mode, workers=n)
+                except ValueError:
+                    self._log(Text(f'  Usage: /delegate workers <number>', style='red'))
+            elif args in valid:
                 self.ctx_manager.delegation_mode = args
                 descs = {'default': 'research+bg ok, orchestration stays local', 'off': 'no delegation at all',
                          'research': 'only parallel research', 'code': 'research + parallel writes', 'all': 'unrestricted'}
                 self._log(Text(f'  Delegation → {args}: {descs.get(args, "")}', style=t['accent']))
-                self._broadcast_perm_mode(self.permissions.mode)  # reuse broadcast to sync
+                self.bridge.broadcast('delegate:config', mode=args, workers=self.ctx_manager.max_workers)
             elif args:
-                self._log(Text(f'  Unknown. Options: {", ".join(valid)}', style='red'))
+                self._log(Text(f'  Unknown. Options: {", ".join(valid)}, workers <n>', style='red'))
             else:
-                current = self.ctx_manager.delegation_mode
-                self._log(Text(f'  Current: {current}', style=t['accent']))
-                self._log(Text(f'  /delegate default   Research+bg ok, orchestration local', style=t['muted']))
-                self._log(Text(f'  /delegate off       No delegation at all', style=t['muted']))
-                self._log(Text(f'  /delegate research  Only parallel web research', style=t['muted']))
-                self._log(Text(f'  /delegate code      Research + parallel file writes', style=t['muted']))
-                self._log(Text(f'  /delegate all       Unrestricted (old behavior)', style=t['muted']))
+                mode = self.ctx_manager.delegation_mode
+                workers = self.ctx_manager.max_workers
+                self._log(Text(f'  Mode: {mode}  Workers: {workers}', style=t['accent']))
+                self._log(Text(f'  /delegate default     Research+bg ok, orchestration local', style=t['muted']))
+                self._log(Text(f'  /delegate off         No delegation at all', style=t['muted']))
+                self._log(Text(f'  /delegate research    Only parallel web research', style=t['muted']))
+                self._log(Text(f'  /delegate code        Research + parallel file writes', style=t['muted']))
+                self._log(Text(f'  /delegate all         Unrestricted (old behavior)', style=t['muted']))
+                self._log(Text(f'  /delegate workers <n> Max concurrent sub-agents (0-20)', style=t['muted']))
         elif cmd == '/approve-all':
             self.permissions.mode = 'auto'
             self._log(Text('  ⚡ Auto mode — all non-dangerous tools auto-approved', style='yellow'))

@@ -316,6 +316,7 @@ class ContextManager:
         self._last_branch = None
         self._last_status = None
         self.delegation_mode = 'default'
+        self.max_workers = 3  # max concurrent sub-agents
 
     def get_context(self) -> str:
         """Get context to prepend to a message. Full on first call, delta after."""
@@ -329,6 +330,10 @@ class ContextManager:
 
         # Append delegation policy
         policy = DELEGATION_POLICIES.get(self.delegation_mode, '')
+        if policy:
+            policy += f'\n[MAX CONCURRENT SUB-AGENTS: {self.max_workers}. Do not spawn more than {self.max_workers} delegate_task calls at once.]'
+        elif self.delegation_mode == 'all' and self.max_workers < 99:
+            policy = f'[MAX CONCURRENT SUB-AGENTS: {self.max_workers}.]'
         if policy:
             ctx = (ctx + '\n\n' + policy) if ctx else policy
         return ctx

@@ -313,6 +313,24 @@ class WSEventsHandler:
                 b.set_permission_attr('_prompt_result', {'index': 0, 'value': 'allow'})
                 prompt_event.set()
 
+    async def on_delegate_config(self, msg):
+        """Handle delegation config change from companion app."""
+        b = self.bridge
+        t = b.theme
+        mode = msg.get('mode', '')
+        workers = msg.get('workers')
+        from acorn.context import DELEGATION_POLICIES
+        if mode and mode in DELEGATION_POLICIES:
+            b.ctx_manager.delegation_mode = mode
+            b.log(b.themed_text(f'  Delegation → {mode} (set from mobile)', style=t['accent']))
+        if workers is not None:
+            try:
+                b.ctx_manager.max_workers = max(0, min(int(workers), 20))
+                b.log(b.themed_text(f'  Max workers → {b.ctx_manager.max_workers} (set from mobile)', style=t['accent']))
+            except (ValueError, TypeError):
+                pass
+        b.scroll_bottom()
+
     async def on_plan_mode(self, msg):
         """Handle remote plan mode toggle from companion app."""
         b = self.bridge
@@ -341,6 +359,12 @@ class WSEventsHandler:
             asyncio.create_task(b.conn.send(json.dumps({
                 'type': 'plan:set-mode',
                 'enabled': b.plan_mode,
+            })))
+            # Delegation config
+            asyncio.create_task(b.conn.send(json.dumps({
+                'type': 'delegate:config',
+                'mode': b.ctx_manager.delegation_mode,
+                'workers': b.ctx_manager.max_workers,
             })))
             # Active plan approval
             ph = b.get_plan_handler()
