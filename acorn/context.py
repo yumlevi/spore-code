@@ -244,6 +244,10 @@ def gather_context(cwd: str) -> str:
                  f'are sandboxed to {cwd}. Paths outside {cwd} will be REJECTED by the tool executor. '
                  f'Do NOT use /workspace/ or any server-side path — those are inside the Anima container '
                  f'and will be lost on restart. Write everything to {cwd} on the user\'s machine.]')
+    parts.append('[WORK STYLE: Work incrementally — one or two tool calls per turn, not six. '
+                 'After each file write or command, briefly tell the user what you did and what\'s next. '
+                 'Do NOT batch many write_file calls in a single response — the user can\'t see progress '
+                 'and it takes too long to generate. Write one file, confirm, move to the next.]')
 
     if git_root:
         branch = _git('branch --show-current', git_root)
