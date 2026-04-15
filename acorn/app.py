@@ -95,6 +95,11 @@ from acorn.bridge import AppBridge
 class AcornApp(App):
     """Full-screen Acorn TUI."""
 
+    ENABLE_COMMAND_PALETTE = False
+    # Disable mouse support — Windows terminals leak mouse escape sequences
+    # as gibberish text input when mouse reporting is enabled
+    MOUSE_SUPPORT = False
+
     BINDINGS = [
         Binding('ctrl+c', 'quit_check', 'Quit', show=False),
         Binding('ctrl+p', 'toggle_plan', 'Plan Mode', show=True, priority=True),
@@ -425,8 +430,8 @@ class AcornApp(App):
                     pass
                 return
 
-        # Default: refocus input on typing (skip navigation keys)
-        if event.key in ('up', 'down', 'left', 'right', 'escape', 'tab', 'ctrl+p', 'ctrl+c'):
+        # Default: refocus input on typing (arrows and enter included)
+        if event.key in ('escape', 'tab', 'ctrl+p', 'ctrl+c', 'ctrl+o', 'ctrl+b'):
             return
         try:
             inp = self.query_one('#user-input', MessageInput)
