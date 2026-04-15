@@ -31,7 +31,7 @@ from acorn.tools.executor import ToolExecutor
 from acorn.themes import get_theme
 from acorn.questions import parse_questions, format_answers
 from acorn.background import ProcessManager
-from acorn.logging import SessionLogger, cleanup_old_logs
+from acorn.session_log import SessionLogger, cleanup_old_logs
 from acorn.prompt import PromptProvider
 from acorn.session_writer import SessionWriter, cleanup_old_sessions
 from acorn.constants import PLAN_PREFIX, PLAN_EXECUTE_MSG, LOGO_FULL, LOGO_MINI, SLASH_COMMANDS
