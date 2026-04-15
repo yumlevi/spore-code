@@ -90,11 +90,61 @@ def check_path_safety(command: str) -> str:
     return ''
 
 
+def _handle_bg_command(args: str, pm) -> dict:
+    """Handle /bg subcommands: list, read <id>, kill <id>."""
+    if not args or args == 'list':
+        procs = pm.list_all()
+        if not procs:
+            return {'output': 'No background processes'}
+        lines = []
+        for bp in procs:
+            status = 'running' if bp.running else f'exited ({bp.exit_code})'
+            lines.append(f'#{bp.id}  {status}  {bp.elapsed}  {bp.command[:80]}')
+        return {'output': '\n'.join(lines)}
+
+    parts = args.split(None, 1)
+    subcmd = parts[0]
+
+    if subcmd == 'kill' and len(parts) > 1:
+        try:
+            pid = int(parts[1])
+        except ValueError:
+            return {'error': f'Invalid process ID: {parts[1]}'}
+        if pm.kill(pid):
+            return {'output': f'Killed #{pid}'}
+        return {'error': f'Process #{pid} not found or already stopped'}
+
+    # Default: treat as process ID to read output
+    try:
+        pid = int(subcmd)
+    except ValueError:
+        return {'error': f'Usage: /bg [list | <id> | kill <id>]'}
+
+    bp = pm.get(pid)
+    if not bp:
+        return {'error': f'Process #{pid} not found'}
+
+    output_lines = list(bp.output)
+    status = 'running' if bp.running else f'exited ({bp.exit_code})'
+    header = f'#{bp.id} [{status}] {bp.elapsed} — {bp.command[:80]}'
+    if not output_lines:
+        return {'output': f'{header}\n(no output captured)'}
+    body = '\n'.join(output_lines[-100:])
+    if len(output_lines) > 100:
+        body = f'... ({len(output_lines) - 100} earlier lines)\n{body}'
+    return {'output': f'{header}\n{body}'}
+
+
 async def execute(input: dict, cwd: str, process_manager=None) -> dict:
     command = input.get('command', '')
     timeout_ms = min(input.get('timeout', 120000), 600000)
     timeout = timeout_ms / 1000
     background = input.get('background', False)
+
+    # Intercept background process commands — agent can read/list/kill bg processes
+    bg_match = re.match(r'^/bg\s*(.*)$', command.strip())
+    if bg_match and process_manager:
+        return _handle_bg_command(bg_match.group(1).strip(), process_manager)
 
     for pattern in DANGEROUS_PATTERNS:
         if pattern in command:
@@ -124,7 +174,7 @@ async def execute(input: dict, cwd: str, process_manager=None) -> dict:
             'output': early_output[:4000],
             'backgrounded': True,
             'processId': bp.id,
-            'note': f'Running in background as #{bp.id}. To read latest output, use exec with command: echo "--- bg #{bp.id} output ---" (the output is captured and shown above). Use /bg {bp.id} to view more.',
+            'note': f'Running in background as #{bp.id}. To read latest output: exec /bg {bp.id}. To kill: exec /bg kill {bp.id}. To list all: exec /bg list.',
         }
 
     try:
@@ -151,7 +201,7 @@ async def execute(input: dict, cwd: str, process_manager=None) -> dict:
                 'output': f'Command timed out after {timeout}s — moved to background as #{bp.id}',
                 'backgrounded': True,
                 'processId': bp.id,
-                'note': f'Use /bg {bp.id} to view output, /bg kill {bp.id} to stop.',
+                'note': f'To read latest output: exec /bg {bp.id}. To kill: exec /bg kill {bp.id}.',
             }
         try:
             proc.kill()
