@@ -40,20 +40,18 @@ def _git(args, cwd=None):
 
 
 def _pip(args, timeout=60):
-    """Run a pip command. Returns (success, output)."""
-    for cmd in (['pip'] + args, ['pip3'] + args):
-        try:
-            r = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=timeout,
-            )
-            output = (r.stdout + '\n' + r.stderr).strip()
-            if r.returncode == 0:
-                return True, output
-        except FileNotFoundError:
-            continue
-        except Exception as e:
-            return False, str(e)
-    return False, 'pip not found'
+    """Run a pip command using the same Python that's running acorn.
+    This ensures we install into the correct venv/environment."""
+    import sys
+    try:
+        r = subprocess.run(
+            [sys.executable, '-m', 'pip'] + args,
+            capture_output=True, text=True, timeout=timeout,
+        )
+        output = (r.stdout + '\n' + r.stderr).strip()
+        return r.returncode == 0, output
+    except Exception as e:
+        return False, str(e)
 
 
 def _fetch_github_json(path):
