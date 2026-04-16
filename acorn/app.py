@@ -622,10 +622,8 @@ class AcornApp(App):
                 result = await loop.run_in_executor(pool, check_for_updates)
             if result and result['available']:
                 t = self.theme_data
-                n = result['behind']
                 self._log(Text(
-                    f'  ⬆ Update available — {n} new commit{"s" if n != 1 else ""} '
-                    f'({result["local"]} → {result["remote"]}). Type /update to install.',
+                    f'  ⬆ Update available ({result["local"]} → {result["remote"]}). Type /update to install.',
                     style=f'bold {t.get("warning", "yellow")}',
                 ))
                 self._scroll_bottom()
@@ -654,7 +652,7 @@ class AcornApp(App):
                 self._log(Text(f'  Could not check for updates{err}', style=t.get('muted', 'dim')))
             elif result['available']:
                 via = result.get('method', 'git')
-                self._log(Text(f'  ⬆ {result["behind"]} new commit(s) available ({result["local"]} → {result["remote"]}) [{via}]', style=t['accent']))
+                self._log(Text(f'  ⬆ Update available ({result["local"]} → {result["remote"]})', style=t['accent']))
                 for h, msg in result['commits'][:10]:
                     self._log(Text(f'    {h} {msg}', style=t['fg']))
                 self._log(Text(f'  Type /update to install', style=t['muted']))
@@ -684,7 +682,7 @@ class AcornApp(App):
             return
 
         method = info.get('method', 'git')
-        self._log(Text(f'  ⬆ Updating ({info["behind"]} commit(s))...', style=t['accent']))
+        self._log(Text(f'  ⬆ Updating ({info["local"]} → {info["remote"]})...', style=t['accent']))
         for h, msg in info['commits'][:10]:
             self._log(Text(f'    {h} {msg}', style=t['fg']))
         self._scroll_bottom()
