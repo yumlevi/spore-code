@@ -46,6 +46,14 @@ class QuestionsHandler:
         self.bridge.log(Text(''))
         self._show_current()
 
+        # Broadcast to companion so mobile shows the question sheet
+        if not test_mode:
+            self.bridge.broadcast('state:questions', questions=[
+                {'text': q.get('text', ''), 'options': q.get('options'),
+                 'multi': q.get('multi', False), 'index': q.get('index', 0)}
+                for q in questions
+            ])
+
     def _show_current(self):
         s = self.state
         b = self.bridge
