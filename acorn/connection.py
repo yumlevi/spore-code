@@ -261,12 +261,9 @@ class Connection:
         if self._slog:
             self._slog.tool_request(tool_name, tool_input)
         try:
-            line_cb = self._on_tool_line if tool_name == 'exec' else None
-            try:
-                result = await self.tool_executor.execute(tool_name, tool_input, on_output=line_cb)
-            except TypeError:
-                # Fallback if executor doesn't support on_output yet (version mismatch)
-                result = await self.tool_executor.execute(tool_name, tool_input)
+            # Set streaming callback on executor (avoids kwarg mismatch across versions)
+            self.tool_executor._on_output = self._on_tool_line if tool_name == 'exec' else None
+            result = await self.tool_executor.execute(tool_name, tool_input)
             ms = int((_time.time() - start) * 1000)
             local = result is not None
             if self._slog:

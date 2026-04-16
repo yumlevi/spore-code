@@ -31,7 +31,7 @@ class ToolExecutor:
         import os
         self._log_dir = os.path.join(cwd, '.acorn', 'logs')
 
-    async def execute(self, name: str, input: dict, on_output=None) -> "dict | None":
+    async def execute(self, name: str, input: dict) -> "dict | None":
         """Execute a tool locally. Returns None to signal server-side fallback."""
 
         # Enforce delegation restrictions — intercept delegate_task before server handles it
@@ -67,7 +67,7 @@ class ToolExecutor:
         elif name == 'edit_file':
             return file_ops.edit_file(input, self.cwd)
         elif name == 'exec':
-            return await shell.execute(input, self.cwd, process_manager=self.process_manager, log_dir=self._log_dir, on_output=on_output)
+            return await shell.execute(input, self.cwd, process_manager=self.process_manager, log_dir=self._log_dir, on_output=getattr(self, '_on_output', None))
         elif name == 'glob':
             return search.glob_search(input, self.cwd)
         elif name == 'grep':
