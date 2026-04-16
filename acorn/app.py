@@ -824,15 +824,15 @@ class AcornApp(App):
     def action_scroll_up(self):
         try:
             transcript = self.query_one('#transcript', SelectableLog)
-            transcript.scroll_up(animate=False)
-        except NoMatches:
+            transcript.scroll_relative(y=-transcript.size.height, animate=False)
+        except (NoMatches, Exception):
             pass
 
     def action_scroll_down(self):
         try:
             transcript = self.query_one('#transcript', SelectableLog)
-            transcript.scroll_down(animate=False)
-        except NoMatches:
+            transcript.scroll_relative(y=transcript.size.height, animate=False)
+        except (NoMatches, Exception):
             pass
 
     def action_toggle_output_log(self):
