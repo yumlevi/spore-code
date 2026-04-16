@@ -161,13 +161,23 @@ def _check_git():
             'behind': len(commits), 'commits': commits, 'method': 'git'}
 
 
+def _parse_version(v):
+    """Parse '0.2.1' into a tuple (0, 2, 1) for comparison."""
+    try:
+        return tuple(int(x) for x in v.split('.'))
+    except (ValueError, AttributeError):
+        return (0,)
+
+
 def _fetch_remote_version():
     """Fetch the version string from pyproject.toml on GitHub main branch."""
     import urllib.request
+    import time as _time
     global _last_error
-    url = f'https://raw.githubusercontent.com/{GITHUB_REPO}/main/pyproject.toml'
+    # Cache-bust with timestamp to avoid stale raw.githubusercontent.com responses
+    url = f'https://raw.githubusercontent.com/{GITHUB_REPO}/main/pyproject.toml?t={int(_time.time())}'
     try:
-        req = urllib.request.Request(url)
+        req = urllib.request.Request(url, headers={'Cache-Control': 'no-cache'})
         with urllib.request.urlopen(req, timeout=10) as resp:
             content = resp.read().decode()
             m = re.search(r'version\s*=\s*"(.+?)"', content)
@@ -193,7 +203,8 @@ def _check_github_api():
         remote_commits = [(c['sha'][:7], (c.get('commit', {}).get('message', '') or '').split('\n')[0])
                           for c in data]
 
-    if local_version == remote_version:
+    # Only report update if remote is actually newer (not just different)
+    if _parse_version(remote_version) <= _parse_version(local_version):
         return {'available': False, 'local': f'v{local_version}',
                 'remote': f'v{remote_version}',
                 'behind': 0, 'commits': [], 'method': 'pip'}
