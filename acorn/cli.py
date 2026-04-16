@@ -65,7 +65,7 @@ async def _pick_session(sessions, renderer):
             else:
                 lines.append(('', f'    {s["time_ago"]:12s} {s["message_count"]:3d} msgs  {s["preview"][:50]}  '))
             lines.append(('', '\n'))
-        lines.append(('dim', '\n  ↑↓ select · Enter resume · Esc latest\n'))
+        lines.append(('fg:ansigray', '\n  ↑↓ select · Enter resume · Esc latest\n'))
         return lines
 
     kb = KeyBindings()
