@@ -224,6 +224,9 @@ class AppBridge:
         """Send a message to all session observers (companion app)."""
         import json, asyncio
         try:
+            # Include sessionId so server knows which session to target
+            if 'sessionId' not in kwargs and hasattr(self._app, 'session_id'):
+                kwargs['sessionId'] = self._app.session_id
             payload = json.dumps({'type': msg_type, **kwargs})
             conn = self._app.conn
             if conn and conn.connected:
