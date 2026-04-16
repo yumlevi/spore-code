@@ -69,7 +69,15 @@ def _fetch_github_json(path):
 
 
 def get_current_version():
-    """Get current version from pyproject.toml."""
+    """Get current version from __init__.py, pyproject.toml, or package metadata."""
+    # First: __init__.py (always available, even in pip installs)
+    try:
+        from acorn import __version__
+        if __version__ and __version__ != '?':
+            return __version__
+    except Exception:
+        pass
+    # Fallback: pyproject.toml (available in git clones)
     repo = get_repo_dir()
     try:
         with open(os.path.join(repo, 'pyproject.toml')) as f:
