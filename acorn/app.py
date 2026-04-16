@@ -106,6 +106,8 @@ class AcornApp(App):
         Binding('ctrl+b', 'show_bg', 'Bg Procs', show=True, priority=True),
         Binding('ctrl+o', 'toggle_output_log', 'Output', show=True, priority=True),
         Binding('escape', 'stop_generation', 'Stop', show=False),
+        Binding('pageup', 'scroll_up', 'Scroll Up', show=False, priority=True),
+        Binding('pagedown', 'scroll_down', 'Scroll Down', show=False, priority=True),
     ]
 
     CSS = """
@@ -432,7 +434,10 @@ class AcornApp(App):
                 return
 
         # Default: refocus input on typing (arrows and enter included)
-        if event.key in ('escape', 'tab', 'ctrl+p', 'ctrl+c', 'ctrl+o', 'ctrl+b'):
+        # Skip scroll keys so Page Up/Down work for transcript scrolling
+        if event.key in ('escape', 'tab', 'ctrl+p', 'ctrl+c', 'ctrl+o', 'ctrl+b',
+                          'pageup', 'pagedown', 'home', 'end',
+                          'shift+up', 'shift+down', 'shift+pageup', 'shift+pagedown'):
             return
         try:
             inp = self.query_one('#user-input', MessageInput)
@@ -815,6 +820,20 @@ class AcornApp(App):
                     self._log(Text(f'    ... ({len(bp.output) - 10} more lines)', style=t['muted']))
             self._log(Text(''))
         self._scroll_bottom()
+
+    def action_scroll_up(self):
+        try:
+            transcript = self.query_one('#transcript', SelectableLog)
+            transcript.scroll_up(animate=False)
+        except NoMatches:
+            pass
+
+    def action_scroll_down(self):
+        try:
+            transcript = self.query_one('#transcript', SelectableLog)
+            transcript.scroll_down(animate=False)
+        except NoMatches:
+            pass
 
     def action_toggle_output_log(self):
         """Toggle the output/detail log panel (Ctrl+O)."""
