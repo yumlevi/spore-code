@@ -196,18 +196,26 @@ def _check_github_api():
     if not remote_version:
         return None
 
-    # Also fetch recent commits for display
-    data = _fetch_github_json('commits?per_page=10&sha=main')
-    remote_commits = []
-    if data and isinstance(data, list):
-        remote_commits = [(c['sha'][:7], (c.get('commit', {}).get('message', '') or '').split('\n')[0])
-                          for c in data]
-
     # Only report update if remote is actually newer (not just different)
     if _parse_version(remote_version) <= _parse_version(local_version):
         return {'available': False, 'local': f'v{local_version}',
                 'remote': f'v{remote_version}',
                 'behind': 0, 'commits': [], 'method': 'pip'}
+
+    # Fetch commits between versions — find the version bump commit
+    data = _fetch_github_json('commits?per_page=20&sha=main')
+    remote_commits = []
+    if data and isinstance(data, list):
+        for c in data:
+            msg = (c.get('commit', {}).get('message', '') or '').split('\n')[0]
+            sha = c['sha'][:7]
+            # Stop at the commit that bumped to our current version
+            if f'v{local_version}' in msg or f'{local_version}' in msg:
+                break
+            # Skip version bump commits themselves
+            if msg.startswith('Bump version'):
+                continue
+            remote_commits.append((sha, msg))
 
     return {'available': True, 'local': f'v{local_version}',
             'remote': f'v{remote_version}',

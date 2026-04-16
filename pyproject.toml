@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "acorn-cli"
-version = "0.2.4"
+version = "0.2.5"
 description = "CLI coding assistant that connects to Anima AI agent"
 requires-python = ">=3.9"
 dependencies = [
