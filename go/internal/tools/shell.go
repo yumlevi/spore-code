@@ -9,9 +9,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/yumlevi/acorn-cli/go/internal/bg"
 )
 
 // dangerousPatterns — exact substrings we refuse to run. Mirror
@@ -71,12 +74,21 @@ func checkPathSafety(cmd string) string {
 }
 
 // Exec implements the exec tool. Input: command, timeout (ms), background.
+// pm: optional background manager. If provided and the command is marked
+// background OR matches a known-server-like pattern, launch detached and
+// return a process handle instead of waiting.
 // on: optional per-line output callback (used by the UI to stream exec
 // output live during the call).
-func Exec(input map[string]any, cwd string, logDir string, on func(line string)) any {
+func Exec(input map[string]any, cwd string, logDir string, pm *bg.Manager, on func(line string)) any {
 	command := asString(input["command"], "")
 	if command == "" {
 		return map[string]string{"error": "command is required"}
+	}
+
+	// Intercept /bg subcommands embedded in exec (agent does this to read
+	// background process output via the tool layer).
+	if strings.HasPrefix(strings.TrimSpace(command), "/bg") {
+		return handleBgSubcommand(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(command), "/bg")), pm)
 	}
 
 	for _, p := range dangerousPatterns {
@@ -87,9 +99,32 @@ func Exec(input map[string]any, cwd string, logDir string, on func(line string))
 	if err := checkPathSafety(command); err != "" {
 		return map[string]string{"error": err}
 	}
-	if asBool(input["background"], false) || isServerLike(command) {
+	if pm != nil && (asBool(input["background"], false) || isServerLike(command)) {
+		p, err := pm.Launch(command, cwd)
+		if err != nil {
+			return map[string]string{"error": "background launch failed: " + err.Error()}
+		}
+		// Brief wait for early-crash detection.
+		time.Sleep(2 * time.Second)
+		early := strings.Join(p.Output(), "\n")
+		if !p.Running {
+			return map[string]any{
+				"output":   early,
+				"exitCode": p.ExitCode,
+				"note":     fmt.Sprintf("Process exited (exit %d)", p.ExitCode),
+				"logFile":  p.LogPath,
+			}
+		}
+		if len(early) > 4000 {
+			early = early[:4000]
+		}
 		return map[string]any{
-			"error": "Background process support not implemented in the Go port yet — rerun with background: false or shape the command to exit (e.g. `timeout 5 npm start`).",
+			"output":      early,
+			"backgrounded": true,
+			"processId":   p.ID,
+			"logFile":     p.LogPath,
+			"note": fmt.Sprintf("Running in background as #%d. Check output via `exec /bg %d`. Kill: `exec /bg kill %d`.",
+				p.ID, p.ID, p.ID),
 		}
 	}
 
@@ -249,4 +284,68 @@ func isServerLike(cmd string) bool {
 		}
 	}
 	return false
+}
+
+// handleBgSubcommand mirrors shell.py:_handle_bg_command — agent can send
+// `exec /bg` / `/bg list` / `/bg <id>` / `/bg kill <id>` to inspect or
+// manage background processes via the normal tool channel.
+func handleBgSubcommand(args string, pm *bg.Manager) any {
+	if pm == nil {
+		return map[string]string{"error": "Background manager not available"}
+	}
+	if args == "" || args == "list" {
+		procs := pm.List()
+		if len(procs) == 0 {
+			return map[string]string{"output": "No background processes"}
+		}
+		var lines []string
+		for _, p := range procs {
+			st := "running"
+			if !p.Running {
+				st = fmt.Sprintf("exited (%d)", p.ExitCode)
+			}
+			cmd := p.Command
+			if len(cmd) > 80 {
+				cmd = cmd[:80]
+			}
+			lines = append(lines, fmt.Sprintf("#%d  %s  %s  %s", p.ID, st, p.Elapsed(), cmd))
+		}
+		return map[string]any{"output": strings.Join(lines, "\n")}
+	}
+	parts := strings.SplitN(args, " ", 2)
+	sub := parts[0]
+	if sub == "kill" && len(parts) > 1 {
+		id, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+		if err != nil {
+			return map[string]string{"error": "Invalid process ID: " + parts[1]}
+		}
+		if pm.Kill(id) {
+			return map[string]any{"output": fmt.Sprintf("Killed #%d", id)}
+		}
+		return map[string]string{"error": fmt.Sprintf("Process #%d not found or already stopped", id)}
+	}
+	// Default: treat as id to read last output.
+	id, err := strconv.Atoi(sub)
+	if err != nil {
+		return map[string]string{"error": "Invalid /bg subcommand: " + sub}
+	}
+	p := pm.Get(id)
+	if p == nil {
+		return map[string]string{"error": fmt.Sprintf("Process #%d not found", id)}
+	}
+	out := strings.Join(p.Output(), "\n")
+	if len(out) > 8000 {
+		out = out[len(out)-8000:]
+	}
+	st := "running"
+	if !p.Running {
+		st = fmt.Sprintf("exited (%d)", p.ExitCode)
+	}
+	return map[string]any{
+		"output":   out,
+		"running":  p.Running,
+		"logFile":  p.LogPath,
+		"status":   st,
+		"elapsed":  p.Elapsed(),
+	}
 }

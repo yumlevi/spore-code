@@ -148,6 +148,98 @@ var themeLight = Theme{
 	ToolbarHint:   "#a8a095",
 }
 
+var themeNeon = Theme{
+	Name:          "neon",
+	Fg:            "#e0d0f0",
+	BgPanel:       "#0d0520",
+	Muted:         "#6040a0",
+	Accent:        "#ff2d95",
+	Accent2:       "#00f0ff",
+	Separator:     "#2a1050",
+	UserPanel:     "#ff2d95",
+	BotPanel:      "#e0d0f0",
+	System:        "#6040a0",
+	Success:       "#00f0ff",
+	Warning:       "#ff2d95",
+	Error:         "#ff2d55",
+	ToolIcon:      "#00f0ff",
+	EditIcon:      "#ff2d95",
+	ReadIcon:      "#00f0ff",
+	Thinking:      "#6040a0",
+	ModeBarPlanBg: "#ff2d95",
+	ModeBarExecBg: "#00f0ff",
+	ToolbarHint:   "#4020a0",
+}
+
+var themeTerminal = Theme{
+	Name:          "terminal",
+	Fg:            "#33ff33",
+	BgPanel:       "#0a0a0a",
+	Muted:         "#1a6b1a",
+	Accent:        "#66ff66",
+	Accent2:       "#00cc00",
+	Separator:     "#1a3a1a",
+	UserPanel:     "#66ff66",
+	BotPanel:      "#33ff33",
+	System:        "#1a6b1a",
+	Success:       "#33ff33",
+	Warning:       "#ffcc00",
+	Error:         "#ff3333",
+	ToolIcon:      "#33ff33",
+	EditIcon:      "#ffcc00",
+	ReadIcon:      "#33ff33",
+	Thinking:      "#1a6b1a",
+	ModeBarPlanBg: "#00cc00",
+	ModeBarExecBg: "#33ff33",
+	ToolbarHint:   "#0f4a0f",
+}
+
+var themeArctic = Theme{
+	Name:          "arctic",
+	Fg:            "#0f172a",
+	BgPanel:       "#f0f4f9",
+	Muted:         "#5a6a80",
+	Accent:        "#2563eb",
+	Accent2:       "#4f46e5",
+	Separator:     "#b0bad0",
+	UserPanel:     "#2563eb",
+	BotPanel:      "#0f172a",
+	System:        "#5a6a80",
+	Success:       "#16a34a",
+	Warning:       "#d97706",
+	Error:         "#dc2626",
+	ToolIcon:      "#4f46e5",
+	EditIcon:      "#d97706",
+	ReadIcon:      "#0284c7",
+	Thinking:      "#5a6a80",
+	ModeBarPlanBg: "#4f46e5",
+	ModeBarExecBg: "#16a34a",
+	ToolbarHint:   "#8898b0",
+}
+
+var themeMidnight = Theme{
+	Name:          "midnight",
+	Fg:            "#c8cdd8",
+	BgPanel:       "#08090e",
+	Muted:         "#4a4f68",
+	Accent:        "#5b8af5",
+	Accent2:       "#8b6cf7",
+	Separator:     "#1e2133",
+	UserPanel:     "#5b8af5",
+	BotPanel:      "#e2e6f0",
+	System:        "#4a4f68",
+	Success:       "#4ade80",
+	Warning:       "#f59e0b",
+	Error:         "#f05858",
+	ToolIcon:      "#8b6cf7",
+	EditIcon:      "#f59e0b",
+	ReadIcon:      "#5b8af5",
+	Thinking:      "#4a4f68",
+	ModeBarPlanBg: "#8b6cf7",
+	ModeBarExecBg: "#4ade80",
+	ToolbarHint:   "#2a2d3a",
+}
+
 // themeForName returns the named theme, falling back to dark.
 func themeForName(name string) Theme {
 	switch name {
@@ -159,6 +251,14 @@ func themeForName(name string) Theme {
 		return themeOled
 	case "light":
 		return themeLight
+	case "neon":
+		return themeNeon
+	case "terminal":
+		return themeTerminal
+	case "arctic":
+		return themeArctic
+	case "midnight":
+		return themeMidnight
 	case "dark", "":
 		return themeDark
 	}
@@ -167,5 +267,5 @@ func themeForName(name string) Theme {
 
 // ThemeNames returns the list shown by /theme.
 func ThemeNames() []string {
-	return []string{"dark", "oak", "forest", "oled", "light"}
+	return []string{"dark", "midnight", "oak", "forest", "oled", "light", "neon", "terminal", "arctic"}
 }

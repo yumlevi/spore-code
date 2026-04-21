@@ -124,7 +124,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "ctrl+d":
+		if m.exec != nil && m.exec.BG != nil {
+			m.exec.BG.KillAll()
+		}
 		m.client.Close()
+		if m.dlog != nil {
+			m.dlog.Close()
+		}
+		if m.writer != nil {
+			m.writer.Close()
+		}
 		return m, tea.Quit
 
 	case "shift+tab":
@@ -209,7 +218,16 @@ func (m *Model) handleSlashCommand(text string) (tea.Model, tea.Cmd) {
 		_ = m.client.Send(map[string]any{"type": "chat:history-request", "sessionId": m.sess, "userName": m.cfg.Connection.User})
 		m.pushChat("system", "Resumed: "+m.sess)
 	case "/quit":
+		if m.exec != nil && m.exec.BG != nil {
+			m.exec.BG.KillAll()
+		}
 		m.client.Close()
+		if m.dlog != nil {
+			m.dlog.Close()
+		}
+		if m.writer != nil {
+			m.writer.Close()
+		}
 		return m, tea.Quit
 	case "/stop":
 		m.exec.AbortCurrent()
@@ -276,11 +294,67 @@ func (m *Model) handleSlashCommand(text string) (tea.Model, tea.Cmd) {
 		m.pushChat("system", sub)
 		return m, checkUpdateCmd(check)
 	case "/bg":
-		if len(parts) < 2 || parts[1] == "list" {
-			m.pushChat("system", "Background processes: (none — Go port doesn't have a process manager yet)")
+		if m.exec == nil || m.exec.BG == nil {
+			m.pushChat("system", "Background manager not available")
 			return m, nil
 		}
-		m.pushChat("system", "/bg run/kill not implemented in the Go port yet. Use a terminal multiplexer (tmux/screen) for now.")
+		if len(parts) < 2 || parts[1] == "list" {
+			procs := m.exec.BG.List()
+			if len(procs) == 0 {
+				m.pushChat("system", "No background processes")
+				return m, nil
+			}
+			var lines []string
+			for _, p := range procs {
+				st := "running"
+				if !p.Running {
+					st = fmt.Sprintf("exited (%d)", p.ExitCode)
+				}
+				cmd := p.Command
+				if len(cmd) > 80 {
+					cmd = cmd[:80]
+				}
+				lines = append(lines, fmt.Sprintf("  #%d  %s  %s  %s", p.ID, st, p.Elapsed(), cmd))
+			}
+			m.pushChat("system", strings.Join(lines, "\n"))
+			return m, nil
+		}
+		sub := parts[1]
+		if sub == "kill" && len(parts) >= 3 {
+			var id int
+			fmt.Sscanf(parts[2], "%d", &id)
+			if m.exec.BG.Kill(id) {
+				m.pushChat("system", fmt.Sprintf("Killed #%d", id))
+			} else {
+				m.pushChat("system", fmt.Sprintf("Process #%d not found or already stopped", id))
+			}
+			return m, nil
+		}
+		if sub == "run" && len(parts) >= 3 {
+			cmd := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(text, "/bg"), " run"))
+			if p, err := m.exec.BG.Launch(cmd, m.cwd); err != nil {
+				m.pushChat("system", "Launch failed: "+err.Error())
+			} else {
+				m.pushChat("system", fmt.Sprintf("Launched #%d — log: %s", p.ID, p.LogPath))
+			}
+			return m, nil
+		}
+		// /bg <id> — show output
+		var id int
+		if _, err := fmt.Sscanf(sub, "%d", &id); err == nil {
+			p := m.exec.BG.Get(id)
+			if p == nil {
+				m.pushChat("system", fmt.Sprintf("Process #%d not found", id))
+				return m, nil
+			}
+			out := strings.Join(p.Output(), "\n")
+			if len(out) > 4000 {
+				out = "…" + out[len(out)-4000:]
+			}
+			m.pushChat("system", fmt.Sprintf("#%d  %s\n%s", p.ID, p.Elapsed(), out))
+			return m, nil
+		}
+		m.pushChat("system", "Usage: /bg [list|<id>|run <command>|kill <id>]")
 	case "/sessions":
 		root := findGitRoot(m.cwd)
 		if root == "" {

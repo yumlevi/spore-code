@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/yumlevi/acorn-cli/go/internal/bg"
 )
 
 // Server-side tools: we must NOT claim these; signal fallback by returning
@@ -80,6 +82,7 @@ type Executor struct {
 	LogDir     string
 	Delegation DelegationMode
 	Hooks      Hooks
+	BG         *bg.Manager
 
 	// Track the one currently-running child for /stop handling. Go's
 	// context.CancelFunc replaces the Python _current_proc.kill() pattern.
@@ -93,6 +96,7 @@ func New(perms Permissions, cwd, logDir string) *Executor {
 		CWD:        cwd,
 		LogDir:     logDir,
 		Delegation: DelegateDefault,
+		BG:         bg.New(logDir),
 	}
 }
 
@@ -182,7 +186,7 @@ func (e *Executor) Execute(name string, inputRaw json.RawMessage) (result any, c
 	case "grep":
 		return Grep(input, e.CWD), true
 	case "exec":
-		return Exec(input, e.CWD, e.LogDir, e.Hooks.OnExecLine), true
+		return Exec(input, e.CWD, e.LogDir, e.BG, e.Hooks.OnExecLine), true
 	}
 	return nil, false
 }
