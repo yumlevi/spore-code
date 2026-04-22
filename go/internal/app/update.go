@@ -77,9 +77,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateKey(msg)
 
 	case connOpenMsg:
+		first := !m.connected
 		m.connected = true
 		m.connErr = ""
 		m.status = "connected"
+		if first {
+			m.pushChat("system", LogoFull)
+		}
 		m.pushChat("system", fmt.Sprintf("Connected to %s:%d as %s (session %s)",
 			m.cfg.Connection.Host, m.cfg.Connection.Port, m.cfg.Connection.User, m.sess))
 		_ = m.client.Send(map[string]any{
@@ -103,6 +107,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case wsFrameMsg:
 		cmd := m.handleFrame(msg.frame)
 		return m, tea.Batch(cmd, m.recvCmd())
+
+	case spinnerTickMsg:
+		m.spinnerFrame = (m.spinnerFrame + 1) % len(spinnerFrames)
+		// Keep ticking only while there's something to animate. Drops the
+		// tick once generation ends so we don't burn cycles redrawing.
+		if m.generating || m.thinking {
+			return m, spinnerTickCmd()
+		}
+		return m, nil
 
 	case toolHandledMsg:
 		return m, m.toolCmd()
@@ -130,6 +143,36 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Output log overlay — ctrl+o / esc closes; arrows scroll.
+	if m.outputLogOpen {
+		switch msg.String() {
+		case "ctrl+o", "esc", "q":
+			m.outputLogOpen = false
+			return m, nil
+		case "ctrl+c":
+			return m, tea.Quit
+		case "up":
+			m.outputLogVP.LineUp(1)
+			return m, nil
+		case "down":
+			m.outputLogVP.LineDown(1)
+			return m, nil
+		case "pgup":
+			m.outputLogVP.LineUp(m.outputLogVP.Height - 2)
+			return m, nil
+		case "pgdown", " ":
+			m.outputLogVP.LineDown(m.outputLogVP.Height - 2)
+			return m, nil
+		case "home", "g":
+			m.outputLogVP.GotoTop()
+			return m, nil
+		case "end", "G":
+			m.outputLogVP.GotoBottom()
+			return m, nil
+		}
+		return m, nil
+	}
+
 	// Expanded side-panel — ctrl+p / esc / q close; arrows scroll.
 	if m.panelExpand {
 		switch msg.String() {
@@ -236,7 +279,8 @@ func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.generating = true
 		m.status = "waiting…"
-		return m, m.sendChat(content)
+		m.thinkingTokens = 0
+		return m, tea.Batch(m.sendChat(content), spinnerTickCmd())
 
 	case "pgup":
 		m.viewport.LineUp(m.viewport.Height - 2)
@@ -246,6 +290,9 @@ func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "ctrl+p":
 		m.panelExpand = !m.panelExpand
+		return m, nil
+	case "ctrl+o":
+		m.outputLogOpen = !m.outputLogOpen
 		return m, nil
 	}
 
@@ -680,8 +727,20 @@ func (m *Model) handleStatus(v proto.ChatStatus) {
 	switch v.Status {
 	case "thinking_start":
 		m.status = "thinking…"
+		m.thinking = true
+		m.thinkingTokens = 0
+	case "thinking", "thinking_token":
+		// Server may stream a per-token tick with the running count.
+		if v.Tokens > 0 {
+			m.thinkingTokens = v.Tokens
+		} else if v.Count > 0 {
+			m.thinkingTokens = v.Count
+		} else {
+			m.thinkingTokens++
+		}
 	case "thinking_done":
 		m.status = ""
+		m.thinking = false
 	case "tool_exec_start":
 		m.status = fmt.Sprintf("⚙ %s %s", v.Tool, v.Detail)
 	case "tool_exec_done":

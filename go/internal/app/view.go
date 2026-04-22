@@ -3,9 +3,75 @@ package app
 import (
 	"fmt"
 	"strings"
+	"sync"
 
+	"github.com/charmbracelet/bubbles/viewport"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 )
+
+// glamourCache memoizes one glamour renderer per (theme, width) pair.
+// Constructing a TermRenderer is expensive; reusing one across messages
+// keeps repaint latency down. Sync because View() can fire from goroutines.
+var (
+	glamourMu    sync.Mutex
+	glamourCache = map[string]*glamour.TermRenderer{}
+)
+
+// glamourRenderer returns a renderer for the given style + word width.
+// Falls back to nil on construction failure — callers must handle that.
+func glamourRenderer(style string, width int) *glamour.TermRenderer {
+	if width < 20 {
+		width = 20
+	}
+	key := fmt.Sprintf("%s|%d", style, width)
+	glamourMu.Lock()
+	defer glamourMu.Unlock()
+	if r, ok := glamourCache[key]; ok {
+		return r
+	}
+	r, err := glamour.NewTermRenderer(
+		glamour.WithStandardStyle(style),
+		glamour.WithWordWrap(width),
+	)
+	if err != nil {
+		// Try the always-available auto style.
+		r, err = glamour.NewTermRenderer(
+			glamour.WithAutoStyle(),
+			glamour.WithWordWrap(width),
+		)
+		if err != nil {
+			return nil
+		}
+	}
+	glamourCache[key] = r
+	return r
+}
+
+// glamourStyleForTheme picks a glamour style name compatible with the
+// theme's brightness. glamour ships "dark", "light", "notty", "auto" etc.
+func glamourStyleForTheme(t Theme) string {
+	switch t.Name {
+	case "light", "arctic":
+		return "light"
+	}
+	return "dark"
+}
+
+// renderMarkdown runs the text through glamour. Returns the original
+// text if rendering fails (so we never lose content). Trims the trailing
+// newline glamour adds.
+func renderMarkdown(text string, width int, t Theme) string {
+	r := glamourRenderer(glamourStyleForTheme(t), width)
+	if r == nil {
+		return text
+	}
+	out, err := r.Render(text)
+	if err != nil {
+		return text
+	}
+	return strings.TrimRight(out, "\n")
+}
 
 // Module-level styles referenced by modal files (theme-agnostic defaults;
 // modals draw full-screen overlays so only their accents vary by theme).
@@ -20,6 +86,10 @@ var (
 func (m *Model) View() string {
 	if m.width == 0 || m.height == 0 {
 		return "starting up…"
+	}
+
+	if m.outputLogOpen {
+		return m.renderOutputLog()
 	}
 
 	if m.panelExpand {
@@ -195,33 +265,66 @@ func (m *Model) codePanelWidth() int {
 
 func (m *Model) renderHeader() string {
 	mode := "EXEC"
-	modeBg := m.theme.ModeBarExecBg
+	modeBg := m.theme.ExecLabelBg
+	modeFg := m.theme.ExecLabelFg
 	if m.planMode {
 		mode = "PLAN"
-		modeBg = m.theme.ModeBarPlanBg
+		modeBg = m.theme.PlanLabelBg
+		modeFg = m.theme.PlanLabelFg
 	}
 	connIcon := "●"
 	if !m.connected {
 		connIcon = "○"
 	}
 
+	hdrBg := m.theme.BgHeader
 	logoBox := lipgloss.NewStyle().
 		Foreground(m.theme.Accent).Bold(true).
-		Background(m.theme.BgPanel).
+		Background(hdrBg).
 		Padding(0, 1).Render("🌰 acorn")
 
 	user := lipgloss.NewStyle().
-		Foreground(m.theme.Fg).Background(m.theme.BgPanel).
+		Foreground(m.theme.PromptUser).Background(hdrBg).Bold(true).
 		Padding(0, 1).
 		Render(connIcon + " " + m.cfg.Connection.User)
 
+	// project name + git branch — Python's prompt_user / prompt_project /
+	// prompt_branch trio. Project is the cwd basename.
+	proj := lipgloss.NewStyle().
+		Foreground(m.theme.PromptProject).Background(hdrBg).
+		Padding(0, 1).
+		Render(dirTag(m.cwd))
+	branch := ""
+	if br := gitBranch(m.cwd); br != "" {
+		branch = lipgloss.NewStyle().
+			Foreground(m.theme.PromptBranch).Background(hdrBg).
+			Padding(0, 1).
+			Render(" " + br)
+	}
+
 	sess := lipgloss.NewStyle().
-		Foreground(m.theme.Muted).Background(m.theme.BgPanel).Faint(true).
+		Foreground(m.theme.Muted).Background(hdrBg).Faint(true).
 		Padding(0, 1).
 		Render(short(m.sess))
 
+	// Activity spinner + thinking token count, only while a turn is live.
+	activity := ""
+	if m.generating || m.thinking {
+		spin := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
+		text := spin
+		if m.thinking && m.thinkingTokens > 0 {
+			text = fmt.Sprintf("%s thinking · %d tok", spin, m.thinkingTokens)
+		} else if m.thinking {
+			text = spin + " thinking"
+		}
+		activity = lipgloss.NewStyle().
+			Foreground(m.theme.Thinking).Background(hdrBg).
+			Padding(0, 1).
+			Render(text)
+	}
+
 	modeBar := lipgloss.NewStyle().Bold(true).
-		Foreground(lipgloss.Color("#ffffff")).
+		Foreground(modeFg).
 		Background(modeBg).Padding(0, 1).
 		Render(mode)
 
@@ -229,25 +332,25 @@ func (m *Model) renderHeader() string {
 	if m.perms != nil {
 		mp := string(m.perms.Mode())
 		permBadge = lipgloss.NewStyle().
-			Foreground(m.theme.Muted).Background(m.theme.BgPanel).
+			Foreground(m.theme.Muted).Background(hdrBg).
 			Padding(0, 1).
 			Render("perm:" + mp)
 	}
 
-	left := logoBox + user + sess
-	right := permBadge + modeBar
+	left := logoBox + user + proj + branch + sess
+	right := activity + permBadge + modeBar
 	pad := m.width - lipgloss.Width(left) - lipgloss.Width(right)
 	if pad < 0 {
 		pad = 0
 	}
-	fill := lipgloss.NewStyle().Background(m.theme.BgPanel).Render(strings.Repeat(" ", pad))
+	fill := lipgloss.NewStyle().Background(hdrBg).Render(strings.Repeat(" ", pad))
 	return left + fill + right
 }
 
 func (m *Model) renderFooter() string {
 	status := m.status
 	if status == "" {
-		status = "enter send · alt+enter newline · shift+tab mode · pgup/pgdn scroll · ctrl+p panels · ctrl+c quit"
+		status = "enter send · alt+enter newline · shift+tab mode · pgup/pgdn scroll · ctrl+p panels · ctrl+o output · ctrl+c quit"
 	}
 	return lipgloss.NewStyle().
 		Foreground(m.theme.Muted).
@@ -366,7 +469,12 @@ func renderMessage(c chatMsg, width int, t Theme) string {
 		trail = lipgloss.NewStyle().Foreground(t.Accent).Blink(true).Render("▌")
 	}
 
-	content := wrapForPanel(c.Text, innerW)
+	var content string
+	if c.Role == "assistant" && !c.Streaming && c.Text != "" {
+		content = renderMarkdown(c.Text, innerW, t)
+	} else {
+		content = wrapForPanel(c.Text, innerW)
+	}
 
 	header := head
 	if trail != "" {
@@ -411,6 +519,40 @@ func short(s string) string {
 		return s
 	}
 	return "…" + s[len(s)-38:]
+}
+
+// renderOutputLog draws a full-screen overlay of the captured tool
+// stdout/stderr lines for this session. Toggled with Ctrl+O.
+func (m *Model) renderOutputLog() string {
+	if !m.outputLogInit {
+		m.outputLogVP = viewport.New(m.width-2, m.height-3)
+		m.outputLogInit = true
+	}
+	m.outputLogVP.Width = m.width - 2
+	m.outputLogVP.Height = m.height - 3
+
+	body := strings.Join(m.outputLog, "\n")
+	if body == "" {
+		body = lipgloss.NewStyle().Foreground(m.theme.Muted).Italic(true).
+			Render("(no captured output yet — tool stdout/stderr will appear here)")
+	}
+	m.outputLogVP.SetContent(body)
+	m.outputLogVP.GotoBottom()
+
+	header := lipgloss.NewStyle().
+		Foreground(m.theme.Banner).Bold(true).
+		Background(m.theme.BgHeader).
+		Padding(0, 1).Width(m.width).
+		Render("📜 Output log — " + fmt.Sprintf("%d lines", len(m.outputLog)))
+	footer := lipgloss.NewStyle().
+		Foreground(m.theme.Muted).
+		Background(m.theme.BgPanel).
+		Padding(0, 1).Width(m.width).
+		Render("ctrl+o close · ↑/↓ scroll · g/G top/bottom")
+
+	scroll := scrollbar(&m.outputLogVP, m.outputLogVP.Height, m.theme)
+	body2 := lipgloss.JoinHorizontal(lipgloss.Top, m.outputLogVP.View(), scroll)
+	return lipgloss.JoinVertical(lipgloss.Left, header, body2, footer)
 }
 
 // Unused helpers kept for potential future use.

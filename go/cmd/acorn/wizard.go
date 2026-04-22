@@ -14,6 +14,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
+
+	"github.com/yumlevi/acorn-cli/go/internal/app"
 	"github.com/yumlevi/acorn-cli/go/internal/config"
 )
 
@@ -81,10 +84,28 @@ func runSetupWizard() (*config.Config, error) {
 	}
 	fmt.Println()
 
-	// 5. Theme
-	themes := []string{"dark", "midnight", "oak", "forest", "oled", "light", "neon", "terminal", "arctic"}
+	// 5. Theme — show every theme with its icon and a swatch row so the
+	// user can preview the palette before picking. Mirrors the Textual
+	// wizard's theme step in acorn/setup.py.
 	fmt.Println("5. Choose a theme")
-	fmt.Println("   Available: " + strings.Join(themes, ", "))
+	all := app.AllThemes()
+	for _, t := range all {
+		swatch := lipgloss.JoinHorizontal(lipgloss.Top,
+			swatchCell(t.Accent),
+			swatchCell(t.Accent2),
+			swatchCell(t.Success),
+			swatchCell(t.Warning),
+			swatchCell(t.Error),
+			swatchCell(t.Muted),
+		)
+		name := t.Name
+		if t.Icon != "" {
+			name = t.Icon + " " + name
+		}
+		// Pad the name column so swatches line up.
+		fmt.Printf("   %-14s %s\n", name, swatch)
+	}
+	themes := app.ThemeNames()
 	theme := prompt(rd, "   Theme", "dark")
 	if !contains(themes, theme) {
 		theme = "dark"
@@ -130,6 +151,11 @@ func confirm(rd *bufio.Reader, label string, def bool) bool {
 		return def
 	}
 	return line == "y" || line == "yes"
+}
+
+// swatchCell renders one colored block for the wizard theme picker.
+func swatchCell(c lipgloss.Color) string {
+	return lipgloss.NewStyle().Background(c).Render("  ")
 }
 
 func contains(xs []string, s string) bool {

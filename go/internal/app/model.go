@@ -107,6 +107,18 @@ type Model struct {
 	cmdHistory  []string
 	histIdx     int    // -1 = not browsing; 0..len-1 = position
 	histDraft   string // saved in-progress text when user starts browsing
+
+	// Activity indicators for the header.
+	thinkingTokens int  // running token count during a thinking turn
+	spinnerFrame   int  // index into spinnerFrames for animated activity dot
+	thinking       bool // true between thinking_start and thinking_done
+
+	// Output log — captured tool stdout/stderr lines for the current
+	// session. Toggled with Ctrl+O. Bounded to ~500 entries.
+	outputLog     []string
+	outputLogOpen bool
+	outputLogVP   viewport.Model
+	outputLogInit bool
 }
 
 // SetProgram stores the reference so off-thread code can deliver messages.
@@ -146,10 +158,16 @@ func New(cfg *config.Config, cwd, sess string, planMode bool) *Model {
 	m.dlog = sessionlog.OpenDebug(cfg.GlobalDir, sess, cfg.Connection.User, cwd)
 	m.exec.Hooks.OnExecLine = func(line string) {
 		// Keep a low-noise preview in the status bar.
-		if len(line) > 120 {
-			line = line[:120] + "…"
+		preview := line
+		if len(preview) > 120 {
+			preview = preview[:120] + "…"
 		}
-		m.status = "⚙ " + line
+		m.status = "⚙ " + preview
+		// Append the full line to the output log buffer (Ctrl+O panel).
+		m.outputLog = append(m.outputLog, line)
+		if len(m.outputLog) > 500 {
+			m.outputLog = m.outputLog[len(m.outputLog)-500:]
+		}
 	}
 	m.exec.Hooks.OnToolDone = func(name string, input map[string]any, result any, ms int) {
 		if m.writer != nil {
@@ -253,6 +271,15 @@ type connClosedMsg struct{}
 type wsFrameMsg struct{ frame conn.Frame }
 type toolHandledMsg struct{ name string }
 type permDecisionMsg struct{ allowed bool }
+type spinnerTickMsg struct{}
+
+// spinnerFrames cycles a Braille animation while we're generating.
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+// spinnerTickCmd schedules another spinner tick. ~10 fps is plenty.
+func spinnerTickCmd() tea.Cmd {
+	return tea.Tick(100*time.Millisecond, func(time.Time) tea.Msg { return spinnerTickMsg{} })
+}
 
 // ── message log helpers ──────────────────────────────────────────────
 func (m *Model) pushChat(role, text string) {
