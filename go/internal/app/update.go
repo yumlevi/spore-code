@@ -165,6 +165,20 @@ func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Up/Down command history. Only intercept when the textarea wouldn't
+	// move the caret naturally — empty buffer or cursor already at the
+	// first/last line. Keeps multi-line edits responsive.
+	switch msg.String() {
+	case "up":
+		if m.handleHistoryNav(-1) {
+			return m, nil
+		}
+	case "down":
+		if m.handleHistoryNav(+1) {
+			return m, nil
+		}
+	}
+
 	switch msg.String() {
 	case "ctrl+c", "ctrl+d":
 		if m.exec != nil && m.exec.BG != nil {
@@ -202,6 +216,14 @@ func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.handleSlashCommand(text)
 		}
 		m.input.Reset()
+		// Record the send in command history before context-prefixing.
+		// Skip identical-to-last to avoid noisy duplicates from re-sends.
+		if n := len(m.cmdHistory); n == 0 || m.cmdHistory[n-1] != text {
+			m.cmdHistory = append(m.cmdHistory, text)
+			appendHistory(m.cfg.GlobalDir, text)
+		}
+		m.histIdx = -1
+		m.histDraft = ""
 		m.pushChat("user", text)
 
 		content := text
@@ -233,6 +255,52 @@ func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// textarea. Cheap lookup over a ~15-item catalog.
 	m.refreshSuggest()
 	return m, cmd
+}
+
+// handleHistoryNav cycles through cmdHistory when the textarea wouldn't
+// otherwise consume the arrow key (empty input, or caret on edge line).
+// dir = -1 for Up, +1 for Down. Returns true if the event was consumed.
+func (m *Model) handleHistoryNav(dir int) bool {
+	if len(m.cmdHistory) == 0 {
+		return false
+	}
+	val := m.input.Value()
+	line := m.input.Line()
+	lc := m.input.LineCount()
+	emptyOrEdge := val == "" ||
+		(dir < 0 && line == 0) ||
+		(dir > 0 && line >= lc-1)
+	if !emptyOrEdge {
+		return false
+	}
+	if m.histIdx == -1 {
+		// First Up press: stash the in-progress draft and jump to newest.
+		if dir < 0 {
+			m.histDraft = val
+			m.histIdx = len(m.cmdHistory) - 1
+		} else {
+			// Down with no history browse in flight is a no-op so the
+			// textarea can keep handling the key.
+			return false
+		}
+	} else {
+		next := m.histIdx + dir
+		if next < 0 {
+			// Past the oldest — stay put.
+			return true
+		}
+		if next >= len(m.cmdHistory) {
+			// Past the newest — restore the draft.
+			m.histIdx = -1
+			m.input.SetValue(m.histDraft)
+			m.input.CursorEnd()
+			return true
+		}
+		m.histIdx = next
+	}
+	m.input.SetValue(m.cmdHistory[m.histIdx])
+	m.input.CursorEnd()
+	return true
 }
 
 func (m *Model) handleSlashCommand(text string) (tea.Model, tea.Cmd) {

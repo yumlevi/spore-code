@@ -92,6 +92,21 @@ type Model struct {
 
 	// Slash-command autocomplete state.
 	suggest slashSuggest
+
+	// Streaming optimization. renderedHistory caches the lipgloss output
+	// for every message EXCEPT the one currently streaming, so chat:delta
+	// updates only re-render the tail. tailDirty marks the current
+	// streaming block as needing a re-render on next View().
+	renderedHistory string
+	historyDirty    bool
+	historyWidth    int // width the cache was rendered against
+
+	// Command history — Up/Down in input cycles through prior sends.
+	// Persisted to ~/.acorn/history (plain text, one entry per line) so
+	// it survives restarts. Mirrors prompt_toolkit's FileHistory.
+	cmdHistory  []string
+	histIdx     int    // -1 = not browsing; 0..len-1 = position
+	histDraft   string // saved in-progress text when user starts browsing
 }
 
 // SetProgram stores the reference so off-thread code can deliver messages.
@@ -123,6 +138,8 @@ func New(cfg *config.Config, cwd, sess string, planMode bool) *Model {
 	}
 	m.perms = newTUIPerms(m)
 	m.exec = tools.New(m.perms, cwd, filepath.Join(cwd, ".acorn", "logs"))
+	m.cmdHistory = loadHistory(cfg.GlobalDir)
+	m.histIdx = -1
 	if w, err := sessionlog.Open(cfg.GlobalDir, sess); err == nil {
 		m.writer = w
 	}
@@ -240,6 +257,7 @@ type permDecisionMsg struct{ allowed bool }
 // ── message log helpers ──────────────────────────────────────────────
 func (m *Model) pushChat(role, text string) {
 	m.messages = append(m.messages, chatMsg{Role: role, Text: text, Timestamp: time.Now()})
+	m.historyDirty = true
 	m.rerenderViewport()
 	if m.writer != nil {
 		switch role {
@@ -254,6 +272,7 @@ func (m *Model) pushChat(role, text string) {
 func (m *Model) startStream() {
 	m.messages = append(m.messages, chatMsg{Role: "assistant", Text: "", Timestamp: time.Now(), Streaming: true})
 	m.currentStream = &m.messages[len(m.messages)-1]
+	m.historyDirty = true
 }
 
 func (m *Model) appendDelta(t string) {
@@ -261,6 +280,9 @@ func (m *Model) appendDelta(t string) {
 		m.startStream()
 	}
 	m.currentStream.Text += t
+	// Don't mark historyDirty — only the streaming tail needs re-render,
+	// not the cached prefix. rerenderViewport now skips the expensive
+	// full rebuild when only the tail changed.
 	m.rerenderViewport()
 }
 
@@ -273,6 +295,9 @@ func (m *Model) endStream() {
 			m.writer.WriteAssistant(text, nil, 0)
 		}
 	}
+	// History changed — the just-finished assistant message goes from
+	// "streaming" to "done", which may render differently (no cursor).
+	m.historyDirty = true
 	m.rerenderViewport()
 }
 

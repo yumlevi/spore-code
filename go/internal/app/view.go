@@ -265,16 +265,62 @@ func (m *Model) layout() {
 	m.rerenderViewport()
 }
 
+// rerenderViewport composes the chat content for the viewport. It uses a
+// two-tier cache:
+//
+//   - renderedHistory: the rendered string for every COMPLETED message
+//     (everything except the currently-streaming assistant turn). This is
+//     cheap to keep around and is only rebuilt when historyDirty=true
+//     (new message added, message finished streaming, role changed).
+//
+//   - The streaming tail is rendered fresh on every call. For long
+//     conversations + fast deltas this drops the per-delta render cost
+//     from O(N messages) to O(1).
 func (m *Model) rerenderViewport() {
+	if m.historyWidth != m.viewport.Width {
+		// Width changed (resize, side-panel toggle, suggest dropdown) —
+		// invalidate the cache, every panel needs a re-wrap.
+		m.historyDirty = true
+		m.historyWidth = m.viewport.Width
+	}
+	if m.historyDirty {
+		m.renderedHistory = m.renderHistoryPrefix()
+		m.historyDirty = false
+	}
+
+	var content string
+	if m.currentStream != nil {
+		// Render just the streaming message and append.
+		tail := renderMessage(*m.currentStream, m.viewport.Width, m.theme)
+		if m.renderedHistory == "" {
+			content = tail
+		} else {
+			content = m.renderedHistory + "\n" + tail
+		}
+	} else {
+		content = m.renderedHistory
+	}
+	m.viewport.SetContent(content)
+	m.viewport.GotoBottom()
+}
+
+// renderHistoryPrefix renders every completed message — i.e. every
+// message that isn't the currently-streaming one. Called only when
+// historyDirty fires.
+func (m *Model) renderHistoryPrefix() string {
 	var b strings.Builder
 	for i, msg := range m.messages {
-		b.WriteString(renderMessage(msg, m.viewport.Width, m.theme))
-		if i < len(m.messages)-1 {
+		if msg.Streaming {
+			// Skip the streaming entry — rerenderViewport appends it fresh.
+			continue
+		}
+		if b.Len() > 0 {
 			b.WriteString("\n")
 		}
+		b.WriteString(renderMessage(msg, m.viewport.Width, m.theme))
+		_ = i
 	}
-	m.viewport.SetContent(b.String())
-	m.viewport.GotoBottom()
+	return b.String()
 }
 
 // renderMessage draws a single chat panel. Styled to match the Python Rich

@@ -59,6 +59,10 @@ func (m *Manager) Launch(command, cwd string) (*Process, error) {
 	}
 	cmd := exec.Command(shell, flag, command)
 	cmd.Dir = cwd
+	// Tie the child's lifetime to ours — Linux PDEATHSIG / Windows
+	// JobObject KillOnJobClose. So a kill -9 on acorn doesn't leak
+	// background processes.
+	applyChildLifetime(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
@@ -75,6 +79,8 @@ func (m *Manager) Launch(command, cwd string) (*Process, error) {
 		_ = logF.Close()
 		return nil, err
 	}
+	// Windows: assign to JobObject after start so it gets killed when we die.
+	_ = attachAndResume(cmd)
 
 	p := &Process{
 		ID:       id,

@@ -7,8 +7,8 @@ require (
 	github.com/charmbracelet/bubbles v0.18.0
 	github.com/charmbracelet/bubbletea v0.25.0
 	github.com/charmbracelet/lipgloss v0.9.1
-	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.1
+	golang.org/x/sys v0.13.0
 )
 
 require (
@@ -26,7 +26,6 @@ require (
 	github.com/rivo/uniseg v0.4.6 // indirect
 	golang.org/x/net v0.17.0 // indirect
 	golang.org/x/sync v0.1.0 // indirect
-	golang.org/x/sys v0.13.0 // indirect
 	golang.org/x/term v0.13.0 // indirect
 	golang.org/x/text v0.13.0 // indirect
 )

@@ -161,6 +161,9 @@ func Exec(input map[string]any, cwd string, logDir string, pm *bg.Manager, on fu
 	}
 	cmd := exec.CommandContext(ctx, shell, flag, command)
 	cmd.Dir = cwd
+	// Tie child to acorn's lifetime so a kill -9 on us also kills exec
+	// children (Linux PDEATHSIG / Windows JobObject).
+	bg.ApplyChildLifetime(cmd)
 	// Single StdoutPipe call — it sets cmd.Stdout internally to a pipe
 	// writer. We then reuse that same writer for Stderr so stdout+stderr
 	// interleave into the same reader. Calling StdoutPipe twice returns
@@ -175,6 +178,7 @@ func Exec(input map[string]any, cwd string, logDir string, pm *bg.Manager, on fu
 	if err := cmd.Start(); err != nil {
 		return map[string]string{"error": err.Error()}
 	}
+	_ = bg.AttachAndResume(cmd)
 
 	start := time.Now()
 
