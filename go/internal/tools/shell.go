@@ -161,12 +161,15 @@ func Exec(input map[string]any, cwd string, logDir string, pm *bg.Manager, on fu
 	}
 	cmd := exec.CommandContext(ctx, shell, flag, command)
 	cmd.Dir = cwd
+	// Single StdoutPipe call — it sets cmd.Stdout internally to a pipe
+	// writer. We then reuse that same writer for Stderr so stdout+stderr
+	// interleave into the same reader. Calling StdoutPipe twice returns
+	// an error on the second call and nils the reader; that was the
+	// "invalid memory address" panic users saw on the first exec.
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return map[string]string{"error": err.Error()}
 	}
-	cmd.Stderr = cmd.Stdout // merge
-	stdoutPipe, _ = cmd.StdoutPipe()
 	cmd.Stderr = cmd.Stdout
 
 	if err := cmd.Start(); err != nil {
@@ -185,13 +188,18 @@ func Exec(input map[string]any, cwd string, logDir string, pm *bg.Manager, on fu
 		totalBytes  int
 	)
 	go func() {
+		defer close(lineCh)
+		// Defensive — a nil pipe would panic on Scan. Shouldn't happen
+		// with the single StdoutPipe call above, but don't trust it.
+		if stdoutPipe == nil {
+			return
+		}
 		sc := bufio.NewScanner(stdoutPipe)
 		sc.Buffer(make([]byte, 0, 64<<10), 4<<20)
 		for sc.Scan() {
 			l := sc.Text()
 			lineCh <- l
 		}
-		close(lineCh)
 	}()
 	go func() { done <- cmd.Wait() }()
 
