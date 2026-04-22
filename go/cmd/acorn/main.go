@@ -43,9 +43,15 @@ func main() {
 	cfg, err := config.Load(cwd)
 	if err != nil {
 		if err == config.ErrNoGlobalConfig {
-			fail("no global config at ~/.acorn/config.toml — run the Python acorn once to create it, or write it manually (see go/README.md for the shape).", nil)
+			fmt.Fprintln(os.Stderr, "no global config at ~/.acorn/config.toml — running first-time setup")
+			fresh, werr := runSetupWizard()
+			if werr != nil {
+				fail("setup wizard failed:", werr)
+			}
+			cfg = fresh
+		} else {
+			fail("config load failed:", err)
 		}
-		fail("config load failed:", err)
 	}
 
 	if *host != "" {

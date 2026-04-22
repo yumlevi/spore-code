@@ -112,7 +112,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pushChat("system", "Update check failed: "+msg.Err)
 			return m, nil
 		}
-		m.pushChat("system", fmt.Sprintf("Latest release: %s — %s", msg.Version, msg.URL))
+		m.pushChat("system", fmt.Sprintf("Latest release: %s — %s\n(run /update install to replace this binary)", msg.Version, msg.URL))
+		return m, nil
+
+	case updateInstallResult:
+		if msg.Err != "" {
+			m.pushChat("system", "Update install failed: "+msg.Err)
+			return m, nil
+		}
+		m.pushChat("system", fmt.Sprintf("Installed %s at %s — restart acorn to use the new binary.", msg.Version, msg.Path))
 		return m, nil
 	}
 
@@ -286,13 +294,21 @@ func (m *Model) handleSlashCommand(text string) (tea.Model, tea.Cmd) {
 		m.perms.SetMode(PermYolo)
 		m.pushChat("system", "Perms → yolo")
 	case "/update":
-		check := len(parts) >= 2 && parts[1] == "check"
-		sub := "checking GitHub releases…"
-		if !check {
-			sub = "(dry run — Go port updates by re-downloading the binary; see go/README.md)"
+		switch {
+		case len(parts) >= 2 && parts[1] == "install":
+			tag := ""
+			if len(parts) >= 3 {
+				tag = parts[2]
+			}
+			m.pushChat("system", "Installing latest release… will replace the running binary in place.")
+			return m, installUpdateCmd(tag)
+		case len(parts) >= 2 && parts[1] == "check":
+			m.pushChat("system", "Checking GitHub releases…")
+			return m, checkUpdateCmd(true)
+		default:
+			m.pushChat("system", "Usage: /update check | /update install [version]")
+			return m, nil
 		}
-		m.pushChat("system", sub)
-		return m, checkUpdateCmd(check)
 	case "/bg":
 		if m.exec == nil || m.exec.BG == nil {
 			m.pushChat("system", "Background manager not available")
@@ -432,15 +448,11 @@ func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 	case "code:view":
 		var v proto.CodeView
 		_ = json.Unmarshal(f.Raw, &v)
-		label := "read"
-		if v.IsNew {
-			label = "new"
-		}
-		m.pushChat("system", fmt.Sprintf("📄 %s %s", label, v.Path))
+		m.pushCodeView(v.Path, v.Content, v.IsNew)
 	case "code:diff":
 		var v proto.CodeDiff
 		_ = json.Unmarshal(f.Raw, &v)
-		m.pushChat("system", fmt.Sprintf("✏️  edit %s", v.Path))
+		m.pushCodeDiff(v.Path, v.OldText, v.NewText)
 	case "ask_user":
 		var v proto.AskUser
 		_ = json.Unmarshal(f.Raw, &v)
@@ -537,6 +549,16 @@ func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 		// observer relays — outbound only here (we send these to observers)
 	case "conn:error":
 		// already surfaced via connErrorMsg path
+
+	default:
+		// Subagent activity — the server streams subagent:start / :line /
+		// :done / :error with a taskId. Route into the side panel.
+		if strings.HasPrefix(f.Type, "subagent:") {
+			verb := strings.TrimPrefix(f.Type, "subagent:")
+			var raw map[string]any
+			_ = json.Unmarshal(f.Raw, &raw)
+			m.handleSubagentFrame(verb, raw)
+		}
 	}
 	return nil
 }

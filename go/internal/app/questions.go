@@ -232,21 +232,55 @@ func (qm *questionModal) view(w, h int) string {
 
 // updateModal handles keystrokes while a modal is open.
 func (m *Model) updateModal(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Non-key messages still need to flow. The loop's frame reader must keep
+	// being re-armed while a modal is open, otherwise the server's delta/
+	// status frames would silently stop being read.
+	switch v := msg.(type) {
+	case wsFrameMsg:
+		cmd := m.handleFrame(v.frame)
+		return m, tea.Batch(cmd, m.recvCmd())
+	case toolHandledMsg:
+		return m, m.toolCmd()
+	case tea.WindowSizeMsg:
+		m.width, m.height = v.Width, v.Height
+		m.layout()
+		return m, nil
+	case connOpenMsg, connErrorMsg, connClosedMsg:
+		// surface as regular state changes even under modal
+	}
+
 	km, ok := msg.(tea.KeyMsg)
 	if !ok {
-		if wf, ok := msg.(wsFrameMsg); ok {
-			// Still process inbound frames — chat stream might continue
-			// while the modal is open.
-			cmd := m.handleFrame(wf.frame)
-			return m, tea.Batch(cmd, m.recvCmd())
-		}
 		return m, nil
 	}
+	// Universal Ctrl+C — always quits, even from inside a modal. Deny any
+	// pending permission prompt first so the tool goroutine unblocks.
+	if km.String() == "ctrl+c" {
+		if m.modal == modalPermission && m.perms != nil {
+			m.perms.resolvePerm(false, false)
+		}
+		if m.exec != nil && m.exec.BG != nil {
+			m.exec.BG.KillAll()
+		}
+		if m.client != nil {
+			m.client.Close()
+		}
+		if m.dlog != nil {
+			m.dlog.Close()
+		}
+		if m.writer != nil {
+			m.writer.Close()
+		}
+		return m, tea.Quit
+	}
+
 	switch m.modal {
 	case modalQuestion:
 		return m.updateQuestionModal(km)
 	case modalPlan:
 		return m.updatePlanModal(km)
+	case modalPermission:
+		return m.updatePermModal(km)
 	}
 	return m, nil
 }

@@ -82,6 +82,11 @@ type Model struct {
 	// Diagnostic log at ~/.acorn/logs/<ts>_<session>.log — matches Python's
 	// session_log.py output for parity across acorn variants.
 	dlog *sessionlog.DebugLogger
+
+	// Side panel state for code viewer + subagent activity.
+	codeViews []codeViewEntry
+	subagents *subagentPanel
+	showPanel bool // toggled with Tab
 }
 
 // SetProgram stores the reference so off-thread code can deliver messages.
@@ -131,6 +136,12 @@ func New(cfg *config.Config, cwd, sess string, planMode bool) *Model {
 		if m.dlog != nil {
 			m.dlog.Info("tool", name, "ms", ms)
 		}
+	}
+	m.exec.Hooks.OnCodeView = func(path, content string, isNew bool) {
+		m.pushCodeView(path, content, isNew)
+	}
+	m.exec.Hooks.OnCodeDiff = func(path, oldT, newT string) {
+		m.pushCodeDiff(path, oldT, newT)
 	}
 	return m
 }
