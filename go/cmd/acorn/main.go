@@ -115,7 +115,11 @@ func main() {
 		sess = app.ComputeSessionID(cfg.Connection.User, cwd)
 	}
 
-	m := app.New(cfg, cwd, sess, *planMode)
+	// isContinue is true when the user passed -c/--continue OR gave an
+	// explicit --session=<id>. In either case we should replay the local
+	// JSONL history on boot so prior turns show up immediately.
+	isContinue := *cont || *sessionID != ""
+	m := app.New(cfg, cwd, sess, *planMode, isContinue)
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	m.SetProgram(p)
 	if _, err := p.Run(); err != nil {

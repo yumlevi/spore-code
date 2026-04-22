@@ -367,12 +367,14 @@ func (m *Model) handleSlashCommand(text string) (tea.Model, tea.Cmd) {
 		m.pushChat("system", SlashHelp())
 	case "/clear":
 		m.messages = m.messages[:0]
+		m.historyDirty = true
 		m.rerenderViewport()
 		_ = m.client.Send(map[string]any{"type": "chat:clear", "sessionId": m.sess})
 	case "/new":
 		m.sess = ComputeSessionID(m.cfg.Connection.User, m.cwd)
 		m.messages = m.messages[:0]
 		m.contextSent = false
+		m.historyDirty = true
 		m.rerenderViewport()
 		m.pushChat("system", "New session: "+m.sess)
 	case "/resume":
@@ -382,7 +384,11 @@ func (m *Model) handleSlashCommand(text string) (tea.Model, tea.Cmd) {
 		}
 		m.sess = parts[1]
 		m.messages = m.messages[:0]
-		m.rerenderViewport()
+		m.historyDirty = true
+		// Load local JSONL history first so the user sees their previous
+		// turns even if the server doesn't know the session. Server's
+		// chat:history reply (if any) will append after.
+		m.loadLocalHistory()
 		_ = m.client.Send(map[string]any{"type": "chat:history-request", "sessionId": m.sess, "userName": m.cfg.Connection.User})
 		m.pushChat("system", "Resumed: "+m.sess)
 	case "/quit":
@@ -589,14 +595,29 @@ func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 	case "chat:history":
 		var v proto.ChatHistory
 		_ = json.Unmarshal(f.Raw, &v)
+		// If local JSONL already populated history, skip duplicate server
+		// entries (naive: match by (role, first 120 chars of text)). Keeps
+		// /resume from showing each prior turn twice.
+		seen := make(map[string]struct{}, len(m.messages))
+		for _, existing := range m.messages {
+			seen[historyKey(existing.Role, existing.Text)] = struct{}{}
+		}
+		added := 0
 		for _, h := range v.Messages {
 			role := h.Role
 			if role != "user" && role != "assistant" {
 				role = "system"
 			}
+			if _, dup := seen[historyKey(role, h.Text)]; dup {
+				continue
+			}
 			m.messages = append(m.messages, chatMsg{Role: role, Text: h.Text})
+			added++
 		}
-		m.rerenderViewport()
+		if added > 0 {
+			m.historyDirty = true
+			m.rerenderViewport()
+		}
 	case "chat:error":
 		var v proto.ChatError
 		_ = json.Unmarshal(f.Raw, &v)

@@ -128,7 +128,13 @@ func (m *Model) SetProgram(p *tea.Program) {
 }
 
 // New constructs the initial model.
-func New(cfg *config.Config, cwd, sess string, planMode bool) *Model {
+//
+// isContinue is set by `acorn -c` / `/resume`. When true, New loads the
+// local JSONL session history and seeds m.messages before the first
+// render, so the user sees prior turns instantly even if the server
+// doesn't know the session (fresh SPORE, different machine, etc.).
+// Matches acorn/app.py:_render_local_history.
+func New(cfg *config.Config, cwd, sess string, planMode, isContinue bool) *Model {
 	ta := textarea.New()
 	ta.Placeholder = "type a message · /help for commands · Shift+Tab toggles plan mode"
 	ta.SetHeight(3)
@@ -183,7 +189,58 @@ func New(cfg *config.Config, cwd, sess string, planMode bool) *Model {
 	m.exec.Hooks.OnCodeDiff = func(path, oldT, newT string) {
 		m.pushCodeDiff(path, oldT, newT)
 	}
+	if isContinue {
+		m.loadLocalHistory()
+		// Force context re-send on first message of the resumed session —
+		// the remote agent's context may have aged out. Same rationale as
+		// Python's ctx_manager.reset() call in _render_local_history.
+		m.contextSent = false
+	}
 	return m
+}
+
+// loadLocalHistory seeds m.messages from the per-session JSONL file.
+// Skips tool rows (too verbose for replay) and trailing empty entries.
+// Sets historyDirty so the cache rebuilds on next render.
+func (m *Model) loadLocalHistory() {
+	entries := sessionlog.LoadSession(m.cfg.GlobalDir, m.sess)
+	if len(entries) == 0 {
+		return
+	}
+	userN, asstN := 0, 0
+	for _, e := range entries {
+		text := e.Text
+		if text == "" {
+			continue
+		}
+		role := e.Role
+		switch role {
+		case "user":
+			userN++
+		case "assistant":
+			asstN++
+		case "tool":
+			continue
+		default:
+			role = "system"
+		}
+		m.messages = append(m.messages, chatMsg{Role: role, Text: text, Timestamp: time.Unix(int64(e.TS), 0)})
+	}
+	m.messages = append(m.messages, chatMsg{
+		Role: "system",
+		Text: fmt.Sprintf("── Local history replayed (%d sent, %d received) — context will be re-sent on next message ──", userN, asstN),
+		Timestamp: time.Now(),
+	})
+	m.historyDirty = true
+}
+
+// historyKey is a cheap dedupe key so the server's chat:history reply
+// doesn't add duplicates on top of the locally-loaded history.
+func historyKey(role, text string) string {
+	if len(text) > 120 {
+		text = text[:120]
+	}
+	return role + "|" + text
 }
 
 func (m *Model) Init() tea.Cmd {
