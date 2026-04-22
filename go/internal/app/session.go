@@ -19,6 +19,9 @@ func findGitRoot(cwd string) string {
 	return strings.TrimSpace(out)
 }
 
+// FindGitRoot is the exported form used by main.go for the -c picker.
+func FindGitRoot(cwd string) string { return findGitRoot(cwd) }
+
 // gitBranch returns the current git branch name, or "".
 func gitBranch(cwd string) string {
 	out, _ := execOutput(cwd, "git", "branch", "--show-current")

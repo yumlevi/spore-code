@@ -2,17 +2,20 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/yumlevi/acorn-cli/go/internal/app"
 	"github.com/yumlevi/acorn-cli/go/internal/config"
+	"github.com/yumlevi/acorn-cli/go/internal/sessionlog"
 )
 
 var version = "0.1.0"
@@ -75,10 +78,39 @@ func main() {
 	_ = os.MkdirAll(filepath.Join(cwd, ".acorn", "logs"), 0o755)
 
 	// Session resolution.
+	//
+	// Matches acorn/cli.py:async_main behaviour:
+	//   explicit --session=<id>   → use it
+	//   -c with 1 project session → auto-resume, print a line
+	//   -c with >1 project sessions → interactive picker
+	//   -c with 0 project sessions → fall back to ~/.acorn/last_session
+	//   otherwise                 → fresh session id
 	sess := *sessionID
 	if sess == "" && *cont {
-		if last, err := config.LoadLastSession(cfg.GlobalDir); err == nil && last.SessionID != "" {
-			sess = last.SessionID
+		projectRoot := app.FindGitRoot(cwd)
+		if projectRoot == "" {
+			projectRoot = cwd
+		}
+		list := sessionlog.ListProjectSessions(cfg.GlobalDir, cfg.Connection.User, projectRoot)
+		switch {
+		case len(list) == 1:
+			sess = list[0].SessionID
+			fmt.Printf("Resuming: %s  (%s)\n",
+				truncate(list[0].Preview, 60), list[0].TimeAgo)
+		case len(list) > 1:
+			picked, ok := pickSession(list)
+			if !ok {
+				fmt.Fprintln(os.Stderr, "cancelled")
+				os.Exit(1)
+			}
+			sess = picked
+		default:
+			if last, err := config.LoadLastSession(cfg.GlobalDir); err == nil && last.SessionID != "" {
+				sess = last.SessionID
+				fmt.Printf("Resuming last session: %s\n", last.SessionID)
+			} else {
+				fmt.Fprintln(os.Stderr, "no previous session found — starting fresh")
+			}
 		}
 	}
 	if sess == "" {
@@ -106,4 +138,48 @@ func fail(prefix string, err error) {
 		fmt.Fprintln(os.Stderr, prefix)
 	}
 	os.Exit(1)
+}
+
+// pickSession prompts the user to choose from a list of saved sessions
+// (printed before the TUI boots). Returns the picked session id, or
+// false if the user pressed Enter on an empty input to pick the newest.
+func pickSession(items []sessionlog.ProjectSession) (string, bool) {
+	fmt.Println()
+	fmt.Println("Select a session to resume (project-local):")
+	limit := 15
+	if limit > len(items) {
+		limit = len(items)
+	}
+	for i := 0; i < limit; i++ {
+		s := items[i]
+		fmt.Printf("  %2d. %-14s %3d msgs  %s\n",
+			i+1, s.TimeAgo, s.MessageCount, truncate(s.Preview, 60))
+	}
+	if len(items) > limit {
+		fmt.Printf("  … (%d more not shown)\n", len(items)-limit)
+	}
+	fmt.Printf("Enter number (1-%d, or blank for newest, q to abort): ", limit)
+
+	rd := bufio.NewReader(os.Stdin)
+	line, _ := rd.ReadString('\n')
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return items[0].SessionID, true
+	}
+	if line == "q" || line == "Q" {
+		return "", false
+	}
+	n, err := strconv.Atoi(line)
+	if err != nil || n < 1 || n > limit {
+		fmt.Fprintln(os.Stderr, "invalid choice — using newest")
+		return items[0].SessionID, true
+	}
+	return items[n-1].SessionID, true
+}
+
+func truncate(s string, n int) string {
+	if len(s) > n {
+		return s[:n] + "…"
+	}
+	return s
 }
