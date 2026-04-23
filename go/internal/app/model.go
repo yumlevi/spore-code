@@ -266,6 +266,7 @@ func (m *Model) Init() tea.Cmd {
 		m.recvCmd(),
 		m.toolCmd(),
 		textarea.Blink,
+		sizePollCmd(),
 	)
 }
 
@@ -329,6 +330,18 @@ type wsFrameMsg struct{ frame conn.Frame }
 type toolHandledMsg struct{ name string }
 type permDecisionMsg struct{ allowed bool }
 type spinnerTickMsg struct{}
+type sizePollMsg struct{}
+
+// sizePollCmd schedules the next terminal-size sanity check. We do this
+// because Bubble Tea v0.25's Windows build has NO SIGWINCH equivalent
+// (signals_windows.go's listenForResize is a no-op) — without polling,
+// resizing a Windows terminal mid-session never delivers a
+// WindowSizeMsg and the layout stays stuck at the startup dimensions.
+// Linux/macOS get SIGWINCH already, but the poll is cheap and guards
+// against terminals that don't propagate it (web TTYs, some muxers).
+func sizePollCmd() tea.Cmd {
+	return tea.Tick(500*time.Millisecond, func(time.Time) tea.Msg { return sizePollMsg{} })
+}
 
 // spinnerFrames cycles a Braille animation while we're generating.
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}

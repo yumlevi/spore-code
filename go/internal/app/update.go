@@ -3,9 +3,11 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"golang.org/x/term"
 
 	"github.com/yumlevi/acorn-cli/go/internal/conn"
 	"github.com/yumlevi/acorn-cli/go/internal/proto"
@@ -105,6 +107,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case wsFrameMsg:
 		cmd := m.handleFrame(msg.frame)
 		return m, tea.Batch(cmd, m.recvCmd())
+
+	case sizePollMsg:
+		// Belt-and-braces resize detection — Bubble Tea's Windows build
+		// doesn't have a SIGWINCH equivalent so without this the layout
+		// stays stuck at whatever size the terminal had on startup.
+		if w, h, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
+			if w != m.width || h != m.height {
+				mm, c := m.handleResize(w, h)
+				return mm, tea.Batch(c, sizePollCmd())
+			}
+		}
+		return m, sizePollCmd()
 
 	case spinnerTickMsg:
 		m.spinnerFrame = (m.spinnerFrame + 1) % len(spinnerFrames)

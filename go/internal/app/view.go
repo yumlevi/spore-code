@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // glamourCache memoizes one glamour renderer per (theme, width) pair.
@@ -337,14 +338,35 @@ func (m *Model) renderHeader() string {
 			Render("perm:" + mp)
 	}
 
-	left := logoBox + user + proj + branch + sess
-	right := activity + permBadge + modeBar
-	pad := m.width - lipgloss.Width(left) - lipgloss.Width(right)
-	if pad < 0 {
-		pad = 0
+	// Compose left + right, dropping optional pieces from the middle if
+	// the terminal is too narrow to fit everything. Order of importance:
+	// logo+user (always) > mode bar > perm badge > activity > sess > project/branch.
+	leftPieces := []string{logoBox, user, proj, branch, sess}
+	rightPieces := []string{activity, permBadge, modeBar}
+	for {
+		left := strings.Join(leftPieces, "")
+		right := strings.Join(rightPieces, "")
+		pad := m.width - lipgloss.Width(left) - lipgloss.Width(right)
+		if pad >= 0 {
+			fill := lipgloss.NewStyle().Background(hdrBg).Render(strings.Repeat(" ", pad))
+			return left + fill + right
+		}
+		// Drop the next-most-expendable piece. Removing the trailing
+		// branch/sess/project from left, then activity/perm from right.
+		switch {
+		case len(leftPieces) > 2 && leftPieces[len(leftPieces)-1] != "":
+			leftPieces = leftPieces[:len(leftPieces)-1]
+		case rightPieces[0] != "":
+			rightPieces[0] = "" // drop activity
+		case len(rightPieces) > 1 && rightPieces[1] != "":
+			rightPieces[1] = "" // drop perm badge
+		default:
+			// Final fallback — hard truncate the joined string with ANSI-safe
+			// trim. Better a clipped header than a wrapped one.
+			joined := strings.Join(leftPieces, "") + strings.Join(rightPieces, "")
+			return ansi.Truncate(joined, m.width, "")
+		}
 	}
-	fill := lipgloss.NewStyle().Background(hdrBg).Render(strings.Repeat(" ", pad))
-	return left + fill + right
 }
 
 func (m *Model) renderFooter() string {
@@ -352,11 +374,22 @@ func (m *Model) renderFooter() string {
 	if status == "" {
 		status = "enter send · alt+enter newline · shift+tab mode · pgup/pgdn scroll · ctrl+p panels · ctrl+o output · ctrl+c quit"
 	}
+	// Truncate first so lipgloss.Width(...) below doesn't overflow when
+	// the status string is wider than the terminal. Width() pads but
+	// doesn't clip — without this, narrow terminals see the footer wrap.
+	maxInner := m.width - 2 // account for the Padding(0,1)
+	if maxInner < 1 {
+		maxInner = 1
+	}
+	if lipgloss.Width(status) > maxInner {
+		status = ansi.Truncate(status, maxInner, "…")
+	}
 	return lipgloss.NewStyle().
 		Foreground(m.theme.Muted).
 		Background(m.theme.BgPanel).
 		Padding(0, 1).
 		Width(m.width).
+		MaxWidth(m.width).
 		Render(status)
 }
 

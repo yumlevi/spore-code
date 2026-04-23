@@ -1,11 +1,13 @@
 package app
 
 import (
+	"os"
 	"regexp"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"golang.org/x/term"
 
 	"github.com/yumlevi/acorn-cli/go/internal/proto"
 )
@@ -243,6 +245,14 @@ func (m *Model) updateModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.toolCmd()
 	case tea.WindowSizeMsg:
 		return m.handleResize(v.Width, v.Height)
+	case sizePollMsg:
+		if w, h, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
+			if w != m.width || h != m.height {
+				mm, c := m.handleResize(w, h)
+				return mm, tea.Batch(c, sizePollCmd())
+			}
+		}
+		return m, sizePollCmd()
 	case connOpenMsg, connErrorMsg, connClosedMsg:
 		// surface as regular state changes even under modal
 	}
