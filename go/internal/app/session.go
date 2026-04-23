@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // findGitRoot returns the git toplevel for cwd, or "" if not a git repo.
@@ -37,12 +36,23 @@ func projectName(cwd string) string {
 	return filepath.Base(root)
 }
 
-// ComputeSessionID mirrors acorn/session.py:compute_session_id.
+// ComputeSessionID returns a STABLE session id for a (user, cwd) pair:
 //
-//	cli:<user>@<project-name>-<pathhash>-<tshex>
+//	cli:<user>@<project-name>-<pathhash>
 //
-// The timestamp ensures every invocation gets a fresh session (Python
-// behaviour — resumes use -c / load_last_session to reuse).
+// Stable means every acorn invocation in the same project lands on the
+// same server-side session, picking up prior turns automatically. The
+// /new slash command is the explicit "start fresh" escape hatch.
+//
+// History — the Python port (and earlier Go versions) baked the launch
+// timestamp into the id so every run was fresh, relying on `-c` /
+// load_last_session for resume. For coding work that's the wrong
+// default: relaunching acorn in the same project created a new
+// server-side session every time, losing the agent's recollection
+// of the conversation you were still visibly reading in the UI.
+// Combined with SPORE's 60-minute idle-timeout sweep (now also
+// acorn-aware, see anima-new/src/agent/sessions.js), sessions were
+// getting silently reset under the user.
 func ComputeSessionID(user, cwd string) string {
 	root := findGitRoot(cwd)
 	if root == "" {
@@ -51,8 +61,7 @@ func ComputeSessionID(user, cwd string) string {
 	name := filepath.Base(root)
 	h := sha256.Sum256([]byte(root))
 	pathHash := hex.EncodeToString(h[:])[:8]
-	ts := fmt.Sprintf("%x", time.Now().Unix())
-	return fmt.Sprintf("cli:%s@%s-%s-%s", user, name, pathHash, ts)
+	return fmt.Sprintf("cli:%s@%s-%s", user, name, pathHash)
 }
 
 // execOutput runs a command and returns stdout. Convenience wrapper.
