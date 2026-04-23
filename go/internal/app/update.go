@@ -316,17 +316,34 @@ func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.pushChat("user", text)
 
 		content := text
-		if !m.contextSent {
-			content = GatherContext(m.cwd) + "\n\n" + content
-			m.contextSent = true
-		}
-		if m.planMode {
-			content = PlanPrefix + content
+		var projectCtx *proto.ProjectContext
+		if m.serverCaps.ProjectContext {
+			// New path: SPORE supports the projectContext sibling field.
+			// Send the structured metadata fresh on every turn so the
+			// server can route it into the system prompt — never glued
+			// onto the user message, never accumulating in messages[].
+			mode := "execute"
+			if m.planMode {
+				mode = "plan"
+			}
+			pc := BuildProjectContext(m.cwd, mode)
+			projectCtx = &pc
+		} else {
+			// Legacy fallback: SPORE didn't advertise projectContext
+			// support so we glue the prose blob onto the first message
+			// and prepend PlanPrefix in plan mode, exactly like before.
+			if !m.contextSent {
+				content = GatherContext(m.cwd) + "\n\n" + content
+				m.contextSent = true
+			}
+			if m.planMode {
+				content = PlanPrefix + content
+			}
 		}
 		m.generating = true
 		m.status = "waiting…"
 		m.thinkingTokens = 0
-		return m, tea.Batch(m.sendChat(content, text), spinnerTickCmd())
+		return m, tea.Batch(m.sendChat(content, text, projectCtx), spinnerTickCmd())
 
 	case "pgup":
 		m.viewport.LineUp(m.viewport.Height - 2)
@@ -770,6 +787,18 @@ func (m *Model) handleSlashCommand(text string) (tea.Model, tea.Cmd) {
 
 func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 	switch f.Type {
+	case "capabilities":
+		// SPORE advertises supported features after the WS upgrade.
+		// We use this to decide whether to send projectContext as a
+		// sibling field (new path) or fall back to gluing GatherContext
+		// onto the message content (old path).
+		var caps proto.ServerCapabilities
+		if err := json.Unmarshal(f.Raw, &caps); err == nil {
+			m.serverCaps = caps
+			if caps.ProjectContext && m.dlog != nil {
+				m.dlog.Info("caps", "projectContext supported by SPORE "+caps.SporeVersion)
+			}
+		}
 	case "chat:start":
 		// Don't pre-create the bubble — appendDelta starts one
 		// lazily on the first non-empty delta. If the agent goes

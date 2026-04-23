@@ -8,7 +8,131 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+
+	"github.com/yumlevi/acorn-cli/go/internal/proto"
 )
+
+// BuildProjectContext returns the structured project metadata that gets
+// sent on every chat:submit as a SIBLING to the message content. SPORE
+// routes this into the system prompt instead of the message history,
+// so the agent always knows the project state without paying for it
+// in messages[] tokens every turn.
+//
+// This replaces the prose-blob version (GatherContext) for SPORE
+// instances that advertise the projectContext capability. Old SPOREs
+// still get GatherContext glued onto content as a fallback.
+func BuildProjectContext(cwd, mode string) proto.ProjectContext {
+	gitRoot := findGitRoot(cwd)
+	project := filepath.Base(cwd)
+	root := cwd
+	if gitRoot != "" {
+		project = filepath.Base(gitRoot)
+		root = gitRoot
+	}
+	pc := proto.ProjectContext{
+		Cwd:     cwd,
+		Project: project,
+		Mode:    mode,
+		OS:      runtime.GOOS,
+		Arch:    runtime.GOARCH,
+	}
+	if gitRoot != "" {
+		pc.GitBranch = gitBranch(cwd)
+		pc.GitHash = gitOutput(gitRoot, "rev-parse", "--short", "HEAD")
+		if status := gitOutput(gitRoot, "status", "--short"); status != "" {
+			if len(status) > 1024 {
+				status = status[:1024] + "\n…"
+			}
+			pc.GitStatus = status
+		}
+	}
+	if pt := detectProjectType(gitRoot, cwd); pt != "" && pt != "Unknown" {
+		pc.ProjectType = pt
+	}
+	if data, err := os.ReadFile(filepath.Join(root, "ACORN.md")); err == nil {
+		s := string(data)
+		if len(s) > 4096 {
+			s = s[:4096]
+		}
+		pc.AcornMd = s
+	}
+	if tree := projectTreeList(root, 2, 100); len(tree) > 0 {
+		pc.Tree = tree
+	}
+	if tools := detectToolsList(); len(tools) > 0 {
+		pc.Tools = tools
+	}
+	return pc
+}
+
+// projectTreeList is projectTree's sibling for the structured-context
+// path — returns the tree as a slice of paths instead of an ASCII-art
+// string. Cheaper for SPORE to render however it wants and lets a
+// future graph-side cache key on the path set.
+func projectTreeList(root string, maxDepth, maxEntries int) []string {
+	skip := map[string]struct{}{
+		".git": {}, "node_modules": {}, ".venv": {}, "venv": {},
+		"__pycache__": {}, "dist": {}, "build": {}, ".acorn": {},
+		"target": {}, ".next": {}, ".cache": {},
+	}
+	var out []string
+	var walk func(dir, rel string, depth int) bool
+	walk = func(dir, rel string, depth int) bool {
+		if depth > maxDepth || len(out) >= maxEntries {
+			return false
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return true
+		}
+		sort.SliceStable(entries, func(i, j int) bool {
+			a, b := entries[i], entries[j]
+			if a.IsDir() != b.IsDir() {
+				return a.IsDir()
+			}
+			return a.Name() < b.Name()
+		})
+		for _, e := range entries {
+			if len(out) >= maxEntries {
+				return false
+			}
+			name := e.Name()
+			if strings.HasPrefix(name, ".") && name != ".env" && name != ".gitignore" {
+				continue
+			}
+			if _, drop := skip[name]; drop {
+				continue
+			}
+			path := name
+			if rel != "" {
+				path = rel + "/" + name
+			}
+			if e.IsDir() {
+				out = append(out, path+"/")
+				if !walk(filepath.Join(dir, name), path, depth+1) {
+					return false
+				}
+			} else {
+				out = append(out, path)
+			}
+		}
+		return true
+	}
+	walk(root, "", 1)
+	return out
+}
+
+// detectToolsList — like detectTools but returns a slice instead of CSV.
+func detectToolsList() []string {
+	tools := []string{"node", "python3", "go", "rustc", "cargo", "bun", "deno", "docker", "git"}
+	var present []string
+	for _, t := range tools {
+		if _, err := exec.LookPath(t); err == nil {
+			present = append(present, t)
+		}
+	}
+	return present
+}
 
 // GatherContext produces the first-message context block acorn/context.py
 // injects before the user's initial prompt. This is a near-verbatim port

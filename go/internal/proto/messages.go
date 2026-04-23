@@ -91,6 +91,44 @@ type HistoryMessage struct {
 // ChatBusy — server tells us the session is currently mid-turn (e.g. another tab started one).
 type ChatBusy struct{ Type string `json:"type"` }
 
+// ProjectContext is the structured "stuff the agent needs to know about
+// the user's project" that we send as a sibling field on every chat:submit.
+//
+// It exists because the previous design glued this metadata onto the user
+// message string, which caused SPORE to push it into messages[] and replay
+// it in every subsequent API call. By sending it as a separate field, SPORE
+// can route it into the system prompt (built fresh each turn, never
+// accumulates) instead of the message history. See plan/spore-context.
+//
+// Sent on every message — SPORE is responsible for diffing against the
+// previous turn's value and only re-rendering changed fields. Cheap on
+// the wire (a small struct), big savings in the conversation token cost.
+type ProjectContext struct {
+	Cwd         string   `json:"cwd"`
+	Project     string   `json:"project"`               // basename of git root or cwd
+	GitBranch   string   `json:"gitBranch,omitempty"`   // current branch name
+	GitStatus   string   `json:"gitStatus,omitempty"`   // git status --short, capped at 1KB
+	GitHash     string   `json:"gitHash,omitempty"`     // HEAD short hash, used as cache key
+	ProjectType string   `json:"projectType,omitempty"` // "Go", "Node.js", etc.
+	AcornMd     string   `json:"acornMd,omitempty"`     // ACORN.md contents, capped at 4KB
+	Tree        []string `json:"tree,omitempty"`        // depth-2 paths only, no contents
+	Tools       []string `json:"tools,omitempty"`       // ["node", "go", "git", ...]
+	Mode        string   `json:"mode,omitempty"`        // "plan" | "execute" — replaces PlanPrefix glue
+	OS          string   `json:"os,omitempty"`          // runtime.GOOS
+	Arch        string   `json:"arch,omitempty"`        // runtime.GOARCH
+}
+
+// ServerCapabilities — SPORE advertises feature support on connection.
+// Sent as a `capabilities` frame from server to client right after the
+// WS upgrade. acorn uses it to decide whether to send projectContext as
+// a sibling field (new path) or fall back to gluing GatherContext onto
+// the message content (old path).
+type ServerCapabilities struct {
+	Type           string `json:"type"`
+	ProjectContext bool   `json:"projectContext,omitempty"` // routes projectContext into system prompt
+	SporeVersion   string `json:"sporeVersion,omitempty"`
+}
+
 // ChatStopped / ChatCleared — /stop and /clear roundtrips.
 type ChatStopped struct{ Type string `json:"type"` }
 type ChatCleared struct{ Type string `json:"type"` }

@@ -393,7 +393,19 @@ func (m *Model) finishQuestions() (tea.Model, tea.Cmd) {
 	m.status = "waiting…"
 	// Dismiss mobile question sheet.
 	m.Broadcast("interactive:resolved", map[string]any{"kind": "questions"})
-	return m, m.sendChat(answerBody, answerBody)
+	// Question answers are user-typed content; project context still
+	// needs to flow with them (mode/cwd/etc may have changed since last
+	// turn). Re-build fresh per call when SPORE supports it.
+	var pc *proto.ProjectContext
+	if m.serverCaps.ProjectContext {
+		mode := "execute"
+		if m.planMode {
+			mode = "plan"
+		}
+		built := BuildProjectContext(m.cwd, mode)
+		pc = &built
+	}
+	return m, m.sendChat(answerBody, answerBody, pc)
 }
 
 // itoa avoids importing strconv for small ints in hot view paths.

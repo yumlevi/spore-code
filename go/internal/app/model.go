@@ -63,8 +63,14 @@ type Model struct {
 	width, height int
 
 	planMode     bool
-	contextSent  bool // gather_context only on first message
+	contextSent  bool // gather_context only on first message — only used in legacy fallback path
 	generating   bool
+
+	// serverCaps is what SPORE told us it supports on connect. We send
+	// projectContext as a sibling field on chat:submit when this is set,
+	// otherwise we fall back to gluing GatherContext onto the message
+	// content for backwards compatibility with old SPORE builds.
+	serverCaps proto.ServerCapabilities
 	status       string
 	theme        Theme
 
@@ -500,7 +506,13 @@ func (m *Model) Broadcast(msgType string, kv map[string]any) {
 // app, second tab) so they see what the user actually typed instead
 // of the full context-stuffed payload. Matches Python's
 // chat_message(..., display_text=display_text).
-func (m *Model) sendChat(content, displayText string) tea.Cmd {
+//
+// projectContext is the structured project metadata. Always sent when
+// SPORE advertised the capability — server routes it into the system
+// prompt so it never accumulates in messages[]. When the capability
+// isn't advertised, callers should glue GatherContext() onto content
+// instead and pass an empty ProjectContext here.
+func (m *Model) sendChat(content, displayText string, projectCtx *proto.ProjectContext) tea.Cmd {
 	return func() tea.Msg {
 		payload := map[string]any{
 			"type":      "chat",
@@ -511,6 +523,9 @@ func (m *Model) sendChat(content, displayText string) tea.Cmd {
 		}
 		if displayText != "" && displayText != content {
 			payload["displayText"] = displayText
+		}
+		if projectCtx != nil {
+			payload["projectContext"] = projectCtx
 		}
 		if err := m.client.Send(payload); err != nil {
 			return connErrorMsg{err: err.Error()}
