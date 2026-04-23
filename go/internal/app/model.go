@@ -189,32 +189,30 @@ func New(cfg *config.Config, cwd, sess string, planMode, isContinue bool) *Model
 		m.writer = w
 	}
 	m.dlog = sessionlog.OpenDebug(cfg.GlobalDir, sess, cfg.Connection.User, cwd)
+	// All four hooks fire from the tool-executor goroutine. Route
+	// every one through sendProgramMsg so the actual Model mutation
+	// happens on the main Update goroutine — concurrent slice appends
+	// were the real cause of the scrambled chat-bubble text seen on
+	// long multi-tool turns.
 	m.exec.Hooks.OnExecLine = func(line string) {
-		// Keep a low-noise preview in the status bar.
-		preview := line
-		if len(preview) > 120 {
-			preview = preview[:120] + "…"
-		}
-		m.status = "⚙ " + preview
-		// Append the full line to the output log buffer (Ctrl+O panel).
-		m.outputLog = append(m.outputLog, line)
-		if len(m.outputLog) > 500 {
-			m.outputLog = m.outputLog[len(m.outputLog)-500:]
+		if m.sendProgramMsg != nil {
+			m.sendProgramMsg(hookExecLineMsg{line: line})
 		}
 	}
 	m.exec.Hooks.OnToolDone = func(name string, input map[string]any, result any, ms int) {
-		if m.writer != nil {
-			m.writer.WriteTool(name, input, result, true, ms)
-		}
-		if m.dlog != nil {
-			m.dlog.Info("tool", name, "ms", ms)
+		if m.sendProgramMsg != nil {
+			m.sendProgramMsg(hookToolDoneMsg{name: name, input: input, result: result, ms: ms})
 		}
 	}
 	m.exec.Hooks.OnCodeView = func(path, content string, isNew bool) {
-		m.pushCodeView(path, content, isNew)
+		if m.sendProgramMsg != nil {
+			m.sendProgramMsg(hookCodeViewMsg{path: path, content: content, isNew: isNew})
+		}
 	}
 	m.exec.Hooks.OnCodeDiff = func(path, oldT, newT string) {
-		m.pushCodeDiff(path, oldT, newT)
+		if m.sendProgramMsg != nil {
+			m.sendProgramMsg(hookCodeDiffMsg{path: path, oldT: oldT, newT: newT})
+		}
 	}
 	if isContinue {
 		m.loadLocalHistory()
@@ -365,6 +363,26 @@ type toolHandledMsg struct{ name string }
 type permDecisionMsg struct{ allowed bool }
 type spinnerTickMsg struct{}
 type sizePollMsg struct{}
+
+// hookMsg variants — fired from the tool-executor goroutine via
+// sendProgramMsg so Model mutations stay on the main Update thread.
+// Without this, concurrent appends to m.messages (chat:delta on main)
+// and m.codeViews (OnCodeView from the tool goroutine) raced — the
+// visible symptom was scrambled / chunk-dropped chat bubble text on
+// long agent turns.
+type hookExecLineMsg struct{ line string }
+type hookCodeViewMsg struct {
+	path    string
+	content string
+	isNew   bool
+}
+type hookCodeDiffMsg struct{ path, oldT, newT string }
+type hookToolDoneMsg struct {
+	name   string
+	input  map[string]any
+	result any
+	ms     int
+}
 
 // sizePollCmd schedules the next terminal-size sanity check. We do this
 // because Bubble Tea v0.25's Windows build has NO SIGWINCH equivalent

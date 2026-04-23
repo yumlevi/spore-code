@@ -137,6 +137,35 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case toolHandledMsg:
 		return m, m.toolCmd()
 
+	case hookExecLineMsg:
+		preview := msg.line
+		if len(preview) > 120 {
+			preview = preview[:120] + "…"
+		}
+		m.status = "⚙ " + preview
+		m.outputLog = append(m.outputLog, msg.line)
+		if len(m.outputLog) > 500 {
+			m.outputLog = m.outputLog[len(m.outputLog)-500:]
+		}
+		return m, nil
+
+	case hookCodeViewMsg:
+		m.pushCodeView(msg.path, msg.content, msg.isNew)
+		return m, nil
+
+	case hookCodeDiffMsg:
+		m.pushCodeDiff(msg.path, msg.oldT, msg.newT)
+		return m, nil
+
+	case hookToolDoneMsg:
+		if m.writer != nil {
+			m.writer.WriteTool(msg.name, msg.input, msg.result, true, msg.ms)
+		}
+		if m.dlog != nil {
+			m.dlog.Info("tool", msg.name, "ms", msg.ms)
+		}
+		return m, nil
+
 	case updateCheckResult:
 		if msg.Err != "" {
 			m.pushChat("system", "Update check failed: "+msg.Err)
