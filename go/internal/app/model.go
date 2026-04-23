@@ -125,6 +125,12 @@ type Model struct {
 	// 1s actually exits.
 	lastCtrlC time.Time
 
+	// thinkingBuf accumulates chat:thinking text chunks for the
+	// current turn. On thinking_done we dump the last ~30 lines
+	// into the chat log as a 💭 'thinking' system entry — matches
+	// acorn/handlers/ws_events.py:on_status.
+	thinkingBuf string
+
 	// Output log — captured tool stdout/stderr lines for the current
 	// session. Toggled with Ctrl+O. Bounded to ~500 entries.
 	outputLog     []string

@@ -740,6 +740,7 @@ func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 		_ = json.Unmarshal(f.Raw, &v)
 		m.status = "thinking…"
 		if v.Text != "" {
+			m.thinkingBuf += v.Text
 			m.appendThinking(v.Text)
 		}
 	case "chat:status":
@@ -911,11 +912,16 @@ func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 func (m *Model) handleStatus(v proto.ChatStatus) {
 	switch v.Status {
 	case "thinking_start":
+		// Close out any open assistant bubble so the thinking marker —
+		// and whatever new bubble follows after thinking_done — render
+		// as separate panels in the transcript instead of getting
+		// glued onto the previous text.
+		m.endStream()
 		m.status = "thinking…"
 		m.thinking = true
 		m.thinkingTokens = 0
+		m.thinkingBuf = ""
 	case "thinking", "thinking_token":
-		// Server may stream a per-token tick with the running count.
 		if v.Tokens > 0 {
 			m.thinkingTokens = v.Tokens
 		} else if v.Count > 0 {
@@ -926,13 +932,50 @@ func (m *Model) handleStatus(v proto.ChatStatus) {
 	case "thinking_done":
 		m.status = ""
 		m.thinking = false
+		// Dump the buffered thinking into the chat log — Python's
+		// on_status thinking_done branch does the same. Tail-clip to
+		// 30 lines so a long reasoning block doesn't dominate.
+		if strings.TrimSpace(m.thinkingBuf) != "" {
+			lines := strings.Split(strings.TrimSpace(m.thinkingBuf), "\n")
+			if len(lines) > 30 {
+				lines = lines[len(lines)-30:]
+			}
+			m.pushChat("system", "💭 thinking\n  "+strings.Join(lines, "\n  "))
+		}
+		m.thinkingBuf = ""
 	case "tool_exec_start":
+		// Flush the in-flight assistant bubble so the user sees a
+		// clean break before the tool indicator. The next chat:delta
+		// will start a fresh bubble. Mirrors Python's
+		// flush_stream_buffer() call in on_status.
+		m.endStream()
 		m.status = fmt.Sprintf("⚙ %s %s", v.Tool, v.Detail)
 		if v.Tool != "" {
+			detail := v.Detail
+			if detail != "" {
+				m.pushChat("system", fmt.Sprintf("⚙ %s · %s", v.Tool, truncateForLog(detail, 120)))
+			} else {
+				m.pushChat("system", "⚙ "+v.Tool)
+			}
 			m.appendToolExec(v.Tool, v.Detail)
 		}
 	case "tool_exec_done":
 		m.status = fmt.Sprintf("✓ %s · %dms", v.Tool, v.DurationMs)
+		// Inline 'tool done' indicator — duration + result size if
+		// the server reported them. Same shape as Python's
+		// '✓ Nms · Nchars' line.
+		var parts []string
+		if v.DurationMs > 0 {
+			parts = append(parts, fmt.Sprintf("%dms", v.DurationMs))
+		}
+		if v.ResultChars > 0 {
+			parts = append(parts, fmt.Sprintf("%d chars", v.ResultChars))
+		}
+		tail := ""
+		if len(parts) > 0 {
+			tail = " · " + strings.Join(parts, " · ")
+		}
+		m.pushChat("system", fmt.Sprintf("  ✓ %s%s", v.Tool, tail))
 	case "interjected", "interjection":
 		m.status = "interjecting…"
 	case "waiting":
@@ -940,6 +983,16 @@ func (m *Model) handleStatus(v proto.ChatStatus) {
 	case "truncated":
 		m.pushChat("system", "[agent] response hit max_tokens — retrying with smaller output")
 	}
+}
+
+// truncateForLog clips an arbitrary string to n characters with an
+// ellipsis. Used for the '⚙ tool · detail' inline indicator so a
+// long shell command doesn't blow out the panel width.
+func truncateForLog(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n-1] + "…"
 }
 
 // postStreamChecks runs after chat:done to detect QUESTIONS: / PLAN_READY.
