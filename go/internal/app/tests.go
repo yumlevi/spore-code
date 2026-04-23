@@ -420,11 +420,17 @@ func testSandbox(m *Model) error {
 	}
 	for _, c := range checks {
 		r := c.fn()
-		mp, ok := r.(map[string]any)
-		if !ok {
+		// File ops return either map[string]any or map[string]string
+		// depending on the path — accept both.
+		var errMsg string
+		switch mp := r.(type) {
+		case map[string]any:
+			errMsg, _ = mp["error"].(string)
+		case map[string]string:
+			errMsg = mp["error"]
+		default:
 			return fmt.Errorf("%s: expected error map, got %T", c.op, r)
 		}
-		errMsg, _ := mp["error"].(string)
 		if errMsg == "" {
 			return fmt.Errorf("%s: expected error, got %v", c.op, r)
 		}

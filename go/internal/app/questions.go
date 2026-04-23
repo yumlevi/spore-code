@@ -177,7 +177,7 @@ func splitOptions(s string) []string {
 }
 
 // view renders the modal as a centred card.
-func (qm *questionModal) view(w, h int) string {
+func (qm *questionModal) view(w, h int, input string) string {
 	if qm.idx >= len(qm.questions) {
 		return ""
 	}
@@ -213,7 +213,26 @@ func (qm *questionModal) view(w, h int) string {
 			lines = append(lines, "", mutedStyle.Render(" ↑↓ select · enter confirm · esc cancel"))
 		}
 	} else {
-		lines = append(lines, mutedStyle.Render(" (open-ended — type in the input then press Enter)"))
+		// Open-ended — show the textarea contents inline so the user
+		// sees what they're typing (the global input bar is hidden by
+		// the full-screen modal). Cursor indicated by trailing ▌.
+		caption := "Your answer:"
+		display := input + "▌"
+		boxW := w - 14
+		if boxW < 30 {
+			boxW = w - 8
+		}
+		inputBox := borderStyle.Copy().
+			BorderForeground(lipgloss.Color("#5b8af5")).
+			Width(boxW).
+			Padding(0, 1).
+			Render(display)
+		lines = append(lines,
+			mutedStyle.Render(" "+caption),
+			inputBox,
+			"",
+			mutedStyle.Render(" type your answer · enter submit · esc cancel"),
+		)
 	}
 
 	inner := strings.Join(lines, "\n")
@@ -313,18 +332,22 @@ func (m *Model) updateQuestionModal(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "up":
 		if q.Options != nil {
 			qm.selected = (qm.selected - 1 + len(q.Options)) % len(q.Options)
+			return m, nil
 		}
-		return m, nil
+		// Open-ended: let textarea handle (multi-line cursor nav).
 	case "down":
 		if q.Options != nil {
 			qm.selected = (qm.selected + 1) % len(q.Options)
+			return m, nil
 		}
-		return m, nil
 	case " ", "space":
 		if q.Options != nil && q.Multi {
 			qm.checked[qm.selected] = !qm.checked[qm.selected]
+			return m, nil
 		}
-		return m, nil
+		// Open-ended: fall through so the space character actually
+		// reaches the textarea — otherwise the user can't type spaces
+		// in their answer.
 	case "enter":
 		if q.Options == nil {
 			// Open-ended — treat m.input contents as the answer.
@@ -348,6 +371,14 @@ func (m *Model) updateQuestionModal(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.finishQuestions()
 		}
 		return m, nil
+	}
+	// Open-ended fall-through: route the key into the textarea so the
+	// user can actually type their answer. Choice-based questions
+	// already returned above; only open-ended questions reach here.
+	if q.Options == nil {
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(km)
+		return m, cmd
 	}
 	return m, nil
 }

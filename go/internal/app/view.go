@@ -131,7 +131,7 @@ func (m *Model) View() string {
 
 	switch m.modal {
 	case modalQuestion:
-		return m.question.view(m.width, m.height)
+		return m.question.view(m.width, m.height, m.input.Value())
 	case modalPlan:
 		return m.planApproval.view(m.width, m.height)
 	case modalPermission:
