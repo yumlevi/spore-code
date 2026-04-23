@@ -88,8 +88,15 @@ func parseQuestionsBlock(text string) []question {
 	if text == "" {
 		return nil
 	}
-	// Split on the QUESTIONS: marker — only parse if it's explicit.
-	parts := regexp.MustCompile(`(?mi)(?:^|\n)\s*QUESTIONS?\s*:\s*\n`).Split(text, -1)
+	// Split on the QUESTIONS: marker. Accepts:
+	//   QUESTIONS:
+	//   **QUESTIONS:**         (markdown bold — agents love this)
+	//   *QUESTIONS:*           (markdown italic)
+	//   `QUESTIONS:`           (code spans)
+	// Leading/trailing whitespace and backticks are tolerated because
+	// real models don't reliably emit the bare literal no matter what
+	// the prompt says.
+	parts := regexp.MustCompile(`(?mi)(?:^|\n)\s*[*_` + "`" + `]{0,2}\s*QUESTIONS?\s*:\s*[*_` + "`" + `]{0,2}\s*\n`).Split(text, -1)
 	if len(parts) < 2 {
 		return nil
 	}
@@ -118,15 +125,15 @@ func parseQuestionsBlock(text string) []question {
 		var q question
 		if mm := multiRe.FindStringSubmatchIndex(raw); mm != nil {
 			opts := splitOptions(raw[mm[2]:mm[3]])
-			q.Text = strings.TrimRight(strings.TrimSpace(raw[:mm[0]]), "?") + "?"
+			q.Text = stripMarkdownDecor(strings.TrimRight(strings.TrimSpace(raw[:mm[0]]), "?") + "?")
 			q.Options = opts
 			q.Multi = true
 		} else if mm := singleRe.FindStringSubmatchIndex(raw); mm != nil {
 			opts := splitOptions(raw[mm[2]:mm[3]])
-			q.Text = strings.TrimRight(strings.TrimSpace(raw[:mm[0]]), "?") + "?"
+			q.Text = stripMarkdownDecor(strings.TrimRight(strings.TrimSpace(raw[:mm[0]]), "?") + "?")
 			q.Options = opts
 		} else {
-			q.Text = strings.TrimRight(raw, "?") + "?"
+			q.Text = stripMarkdownDecor(strings.TrimRight(raw, "?") + "?")
 		}
 		qs = append(qs, q)
 	}
@@ -134,6 +141,17 @@ func parseQuestionsBlock(text string) []question {
 		return nil
 	}
 	return qs
+}
+
+// stripMarkdownDecor strips the bold/italic/code markers that agents
+// love to sprinkle onto question text so they don't appear literally
+// in the picker modal. Only handles the common flavors — anything more
+// exotic falls through unchanged, which is fine (better to show the
+// raw chars than mangle the question).
+var _mdDecorRe = regexp.MustCompile("(\\*\\*|__|\\*|_|`)")
+
+func stripMarkdownDecor(s string) string {
+	return strings.TrimSpace(_mdDecorRe.ReplaceAllString(s, ""))
 }
 
 // splitOptions splits on " / " at top level (not inside parens) — matches
