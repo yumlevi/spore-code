@@ -77,6 +77,33 @@ All three are single-page, no build step, served from ` + "`/mnt/user/appdata/an
 	}
 }
 
+// Picker title should reuse the agent's actual ask, not the
+// generic "Which?". Real captured turn from the football case.
+func TestParseQuestionsBlock_inlineLeadQuestionText(t *testing.T) {
+	in := `"Football game website" branches hard. ...
+
+Which direction?
+
+1. Live Scores + Standings — Real-time match data, league tables, stats. Needs a football API.
+2. Fantasy Football Dashboard — Manage squad, track points, compare players. Static or API-backed.
+3. Retro Penalty-Kick / Arcade Game — Canvas-based mini-game, immediate fun, pure frontend.
+4. Team/Player Encyclopedia — Editorial static site, histories, iconic moments, stats.
+5. World Cup / Tournament Tracker — Bracket visualization, fixtures, countdowns.
+
+Any preference?
+`
+	qs := parseQuestionsBlock(in)
+	if len(qs) != 1 {
+		t.Fatalf("expected 1 synthesized question, got %d: %#v", len(qs), qs)
+	}
+	if qs[0].Text != "Which direction?" {
+		t.Errorf("expected lead 'Which direction?', got %q", qs[0].Text)
+	}
+	if len(qs[0].Options) != 5 {
+		t.Errorf("expected 5 options, got %d: %v", len(qs[0].Options), qs[0].Options)
+	}
+}
+
 // "Which direction?" + numbered options + "Any preference?" — the
 // other variant the user hit. No "Option N" prefix, no QUESTIONS:
 // marker, just a numbered list with a closing question.

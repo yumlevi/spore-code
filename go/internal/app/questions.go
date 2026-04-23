@@ -507,10 +507,52 @@ func detectInlineOptions(text string) []question {
 	if len(labels) < 2 {
 		return nil
 	}
+	// Pull the actual question text out of the lead-in. Strategy:
+	// scan back from the first option line, find the last short
+	// question-shaped line before it (ends in '?', ≤120 chars),
+	// fall back to the trailing pick prompt or a generic "Which?".
+	leadQuestion := extractInlineLead(text, optRe)
 	return []question{{
-		Text:    "Which?",
+		Text:    leadQuestion,
 		Options: labels,
 	}}
+}
+
+// extractInlineLead finds the most likely "ask" line for an
+// inline-options block. Walks back from the first numbered/Option
+// match looking for a recent line ending in '?'. If none, looks at
+// the tail of the message for the same shape. Generic "Which?" as
+// a last resort.
+func extractInlineLead(text string, optRe *regexp.Regexp) string {
+	loc := optRe.FindStringIndex(text)
+	if loc != nil && loc[0] > 0 {
+		head := text[:loc[0]]
+		// Last ?-ending line in the head, scanning backwards.
+		lines := strings.Split(head, "\n")
+		for i := len(lines) - 1; i >= 0; i-- {
+			ln := stripMarkdownDecor(strings.TrimSpace(lines[i]))
+			if ln == "" {
+				continue
+			}
+			if strings.HasSuffix(ln, "?") && len(ln) <= 120 {
+				return ln
+			}
+		}
+	}
+	// Tail-of-message scan — the agent's "Any preference?" / "Pick
+	// one?" closer is also a fine question title if the lead-in had
+	// none.
+	tail := text
+	if len(tail) > 200 {
+		tail = tail[len(tail)-200:]
+	}
+	for _, ln := range strings.Split(tail, "\n") {
+		ln = stripMarkdownDecor(strings.TrimSpace(ln))
+		if strings.HasSuffix(ln, "?") && len(ln) <= 80 {
+			return ln
+		}
+	}
+	return "Which?"
 }
 
 // shortLabel takes the verbose option description an agent might emit
