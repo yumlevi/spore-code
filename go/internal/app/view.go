@@ -209,40 +209,32 @@ func (m *Model) renderSidePanels() string {
 }
 
 // renderSidePanelsBounded does the actual sized render once the body
-// height is known.
+// height is known. Panels fill the chat column's full height: a single
+// active panel takes all of totalH; two panels split it evenly (with
+// the bottom one absorbing any odd remainder so totals match exactly).
 func (m *Model) renderSidePanelsBounded(totalH int) string {
 	cw := m.codePanelWidth()
 	if totalH <= 0 || cw == 0 {
 		return ""
 	}
-	// Count how many panels have content so we can split the available
-	// vertical space fairly.
 	showCode := len(m.codeViews) > 0
 	showSub := m.subagents != nil && len(m.subagents.Order) > 0
 	if !showCode && !showSub {
 		return ""
 	}
-	// Hard ceiling — no single panel wider/taller than ~45% of viewport
-	// height. Rest is kept for chat.
-	perMax := totalH * 45 / 100
-	if perMax < 6 {
-		perMax = 6
-	}
-	split := totalH
+	codeH, subH := totalH, totalH
 	if showCode && showSub {
-		split = totalH / 2
-	}
-	if split > perMax {
-		split = perMax
+		codeH = totalH / 2
+		subH = totalH - codeH
 	}
 	var panels []string
 	if showCode {
-		if p := m.renderCodePanel(cw, split); p != "" {
+		if p := m.renderCodePanel(cw, codeH); p != "" {
 			panels = append(panels, p)
 		}
 	}
 	if showSub {
-		if p := m.renderSubagentPanel(cw, split); p != "" {
+		if p := m.renderSubagentPanel(cw, subH); p != "" {
 			panels = append(panels, p)
 		}
 	}
