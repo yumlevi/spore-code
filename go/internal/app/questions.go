@@ -261,25 +261,25 @@ func (m *Model) updateModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	// Universal Ctrl+C — always quits, even from inside a modal. Deny any
-	// pending permission prompt first so the tool goroutine unblocks.
+	// Ctrl+C inside a modal: dismiss the modal first (and deny any
+	// pending permission prompt so the blocked tool goroutine unblocks).
+	// THEN route through the normal handleCtrlC double-tap logic so it
+	// behaves the same as outside modals.
 	if km.String() == "ctrl+c" {
 		if m.modal == modalPermission && m.perms != nil {
 			m.perms.resolvePerm(false, false)
 		}
-		if m.exec != nil && m.exec.BG != nil {
-			m.exec.BG.KillAll()
+		m.modal = modalNone
+		m.question = nil
+		m.planApproval = nil
+		m.permission = nil
+		return m.handleCtrlC()
+	}
+	if km.String() == "ctrl+d" {
+		if m.modal == modalPermission && m.perms != nil {
+			m.perms.resolvePerm(false, false)
 		}
-		if m.client != nil {
-			m.client.Close()
-		}
-		if m.dlog != nil {
-			m.dlog.Close()
-		}
-		if m.writer != nil {
-			m.writer.Close()
-		}
-		return m, tea.Quit
+		return m, m.shutdownCmd()
 	}
 
 	switch m.modal {

@@ -119,6 +119,12 @@ type Model struct {
 	spinnerFrame   int  // index into spinnerFrames for animated activity dot
 	thinking       bool // true between thinking_start and thinking_done
 
+	// Ctrl+C bookkeeping. Mirrors acorn/app.py:action_quit_check —
+	// while generating: first Ctrl+C stops the run; while idle: first
+	// Ctrl+C arms a "press again to quit" hint, second Ctrl+C within
+	// 1s actually exits.
+	lastCtrlC time.Time
+
 	// Output log — captured tool stdout/stderr lines for the current
 	// session. Toggled with Ctrl+O. Bounded to ~500 entries.
 	outputLog     []string

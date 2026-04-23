@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"golang.org/x/term"
@@ -238,18 +239,12 @@ func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.String() {
-	case "ctrl+c", "ctrl+d":
-		if m.exec != nil && m.exec.BG != nil {
-			m.exec.BG.KillAll()
-		}
-		m.client.Close()
-		if m.dlog != nil {
-			m.dlog.Close()
-		}
-		if m.writer != nil {
-			m.writer.Close()
-		}
-		return m, tea.Quit
+	case "ctrl+c":
+		return m.handleCtrlC()
+	case "ctrl+d":
+		// Ctrl+D is the unconditional "yes really quit" key — same as
+		// Python's process_manager.kill_all + exit. No double-tap.
+		return m, m.shutdownCmd()
 
 	case "shift+tab":
 		m.planMode = !m.planMode
@@ -383,6 +378,64 @@ func (m *Model) handleHistoryNav(dir int) bool {
 	m.input.SetValue(m.cmdHistory[m.histIdx])
 	m.input.CursorEnd()
 	return true
+}
+
+// handleCtrlC mirrors acorn/app.py:action_quit_check.
+//
+//   - generating: stop the in-flight turn (send chat:stop, abort any
+//     local exec, flush partial stream). Single tap, no quit.
+//   - idle, first tap: arm a 1s "press again to quit" window.
+//   - idle, second tap within 1s: shut down cleanly.
+//
+// Ctrl+D remains the no-prompt eject hatch.
+func (m *Model) handleCtrlC() (tea.Model, tea.Cmd) {
+	now := time.Now()
+	if m.generating || m.thinking {
+		// Tell the server to abort.
+		if m.client != nil {
+			_ = m.client.Send(map[string]any{"type": "chat:stop", "sessionId": m.sess})
+		}
+		// Cancel any in-flight local tool exec.
+		if m.exec != nil {
+			m.exec.AbortCurrent()
+		}
+		// End the streaming entry so it stops looking like it's still going.
+		if m.currentStream != nil {
+			m.endStream()
+		}
+		m.generating = false
+		m.thinking = false
+		m.thinkingTokens = 0
+		m.status = ""
+		m.pushChat("system", "⏹ Stopped")
+		m.lastCtrlC = now
+		return m, nil
+	}
+	// Idle path — double-tap to confirm.
+	if !m.lastCtrlC.IsZero() && now.Sub(m.lastCtrlC) < time.Second {
+		return m, m.shutdownCmd()
+	}
+	m.lastCtrlC = now
+	m.pushChat("system", "Press Ctrl+C again to quit")
+	return m, nil
+}
+
+// shutdownCmd is the actual exit sequence shared by ctrl+d, /quit, and
+// the second ctrl+c tap — kill BG procs, close the WS, flush logs.
+func (m *Model) shutdownCmd() tea.Cmd {
+	if m.exec != nil && m.exec.BG != nil {
+		m.exec.BG.KillAll()
+	}
+	if m.client != nil {
+		m.client.Close()
+	}
+	if m.dlog != nil {
+		m.dlog.Close()
+	}
+	if m.writer != nil {
+		m.writer.Close()
+	}
+	return tea.Quit
 }
 
 // handleMouse routes wheel events to whichever viewport currently has
