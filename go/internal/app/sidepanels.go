@@ -9,16 +9,22 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// codeViewEntry tracks a single file view/diff event.
+// codeViewEntry tracks a single file view/diff/thinking event in the
+// chronological activity feed shown by the right-column panel.
 type codeViewEntry struct {
-	Path    string
-	Content string // only for view (truncated preview)
-	OldText string
-	NewText string
-	Text    string // short label like "203 lines, 4124 bytes" or "+12/-3 lines"
-	IsDiff  bool
-	IsNew   bool
-	When    time.Time
+	Path     string
+	Content  string // full body (truncated) for code-view entries
+	OldText  string
+	NewText  string
+	Text     string // short label like "203 lines, 4124 bytes" or "+12/-3 lines"
+	Preview  string // a few-line peek shown under the header in the panel
+	IsDiff   bool
+	IsNew    bool
+	Thinking bool // true when this is an accumulated agent-reasoning entry
+	Tool     string
+	ExecCmd  string
+	ExecOut  []string
+	When     time.Time
 }
 
 // pushCodeView records a read_file / write_file hit.
@@ -27,82 +33,161 @@ func (m *Model) pushCodeView(path, content string, isNew bool) {
 	e := codeViewEntry{
 		Path:    path,
 		Content: truncateStr(content, 4000),
+		Preview: previewLines(content, 4, 120),
 		Text:    fmt.Sprintf("%d lines, %d bytes", lineCount, len(content)),
 		IsNew:   isNew,
 		When:    time.Now(),
 	}
-	m.codeViews = append(m.codeViews, e)
-	if len(m.codeViews) > 50 {
-		m.codeViews = m.codeViews[len(m.codeViews)-50:]
-	}
+	m.appendActivity(e)
 }
 
 // pushCodeDiff records an edit_file hit.
 func (m *Model) pushCodeDiff(path, oldT, newT string) {
 	added := strings.Count(newT, "\n")
 	removed := strings.Count(oldT, "\n")
-	m.codeViews = append(m.codeViews, codeViewEntry{
+	m.appendActivity(codeViewEntry{
 		Path:    path,
 		OldText: truncateStr(oldT, 2000),
 		NewText: truncateStr(newT, 2000),
+		Preview: diffPreview(oldT, newT, 4, 120),
 		Text:    fmt.Sprintf("+%d / -%d lines", added, removed),
 		IsDiff:  true,
 		When:    time.Now(),
 	})
-	if len(m.codeViews) > 50 {
-		m.codeViews = m.codeViews[len(m.codeViews)-50:]
+}
+
+// appendThinking accumulates a chat:thinking text chunk. Successive
+// chunks within the same thinking block are merged into one entry so
+// the panel doesn't churn one row per token.
+func (m *Model) appendThinking(text string) {
+	if strings.TrimSpace(text) == "" {
+		return
+	}
+	if n := len(m.codeViews); n > 0 && m.codeViews[n-1].Thinking {
+		last := &m.codeViews[n-1]
+		last.Content = truncateStr(last.Content+text, 4000)
+		last.Preview = previewLines(last.Content, 6, 120)
+		last.Text = fmt.Sprintf("%d chars", len(last.Content))
+		last.When = time.Now()
+		return
+	}
+	m.appendActivity(codeViewEntry{
+		Thinking: true,
+		Content:  truncateStr(text, 4000),
+		Preview:  previewLines(text, 6, 120),
+		Text:     fmt.Sprintf("%d chars", len(text)),
+		When:     time.Now(),
+	})
+}
+
+// appendToolExec records a server-side tool execution (status frame
+// arrives with name + detail) — gives the user a quick sense of what
+// the agent is doing besides reads/writes.
+func (m *Model) appendToolExec(tool, detail string) {
+	m.appendActivity(codeViewEntry{
+		Tool:    tool,
+		ExecCmd: detail,
+		Preview: trimTo(detail, 240),
+		Text:    "tool",
+		When:    time.Now(),
+	})
+}
+
+func (m *Model) appendActivity(e codeViewEntry) {
+	m.codeViews = append(m.codeViews, e)
+	if len(m.codeViews) > 100 {
+		m.codeViews = m.codeViews[len(m.codeViews)-100:]
 	}
 }
 
-// renderCodePanel returns the compact right-column code panel. Height is
-// hard-capped by maxH; extra entries scroll off the top.
+// previewLines returns up to maxLines from s, each clipped to maxW.
+// Skips empty leading lines so previews don't waste rows on blank
+// padding from the start of a file.
+func previewLines(s string, maxLines, maxW int) string {
+	lines := strings.Split(s, "\n")
+	out := make([]string, 0, maxLines)
+	for _, ln := range lines {
+		if len(out) == 0 && strings.TrimSpace(ln) == "" {
+			continue
+		}
+		if len(ln) > maxW {
+			ln = ln[:maxW-1] + "…"
+		}
+		out = append(out, ln)
+		if len(out) >= maxLines {
+			break
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+// diffPreview shows a few lines from the new text — for an edit it's
+// usually the just-written content. Stripped to the first non-blank
+// run so the panel surfaces the actually-interesting hunk.
+func diffPreview(oldT, newT string, maxLines, maxW int) string {
+	if newT == "" {
+		return previewLines(oldT, maxLines, maxW)
+	}
+	return previewLines(newT, maxLines, maxW)
+}
+
+// renderCodePanel returns the compact right-column activity panel:
+// thinking bursts + file reads/writes/edits, newest at the bottom,
+// each with a small content preview. Height is hard-capped by maxH;
+// older entries scroll off the top.
 func (m *Model) renderCodePanel(width, maxH int) string {
 	if len(m.codeViews) == 0 || width < 20 || maxH < 5 {
 		return ""
 	}
-	title := lipgloss.NewStyle().Bold(true).Foreground(m.theme.Accent).Render("Code activity")
+	title := lipgloss.NewStyle().Bold(true).Foreground(m.theme.Accent).Render("Activity")
 	bodyH := maxH - 4 // border(2) + padding(2)
 	if bodyH < 1 {
 		bodyH = 1
 	}
-	// Each entry is 2 lines (path+meta); fit as many as we can from the tail.
-	perEntry := 2
-	maxEntries := bodyH / perEntry
-	if maxEntries < 1 {
-		maxEntries = 1
+	innerW := width - 4 // border + padding
+	if innerW < 12 {
+		innerW = 12
 	}
-	start := len(m.codeViews) - maxEntries
-	if start < 0 {
-		start = 0
+
+	// Walk newest → oldest, accumulating rendered blocks until we've
+	// used up bodyH. Each block: 1 header line + N preview lines.
+	type block struct {
+		lines []string
 	}
-	var lines []string
-	for _, e := range m.codeViews[start:] {
-		icon := "📄"
-		if e.IsDiff {
-			icon = "✏️ "
-		} else if e.IsNew {
-			icon = "🆕"
+	var blocks []block
+	used := 0
+	for i := len(m.codeViews) - 1; i >= 0; i-- {
+		e := m.codeViews[i]
+		header := renderActivityHeader(e, m.theme, innerW)
+		preview := renderActivityPreview(e, m.theme, innerW)
+		need := 1 + len(preview) + 1 // +1 blank separator between blocks
+		if used+need > bodyH && len(blocks) > 0 {
+			break
 		}
-		path := e.Path
-		maxPathW := width - 4 - 4 // border+padding+icon
-		if maxPathW < 8 {
-			maxPathW = 8
-		}
-		if len(path) > maxPathW {
-			path = "…" + path[len(path)-maxPathW+1:]
-		}
-		ts := e.When.Format("15:04:05")
-		row1 := icon + " " + path
-		row2 := lipgloss.NewStyle().Foreground(m.theme.Muted).
-			Render("   " + ts + "  " + e.Text)
-		lines = append(lines, row1, row2)
+		b := block{lines: append([]string{header}, preview...)}
+		blocks = append(blocks, b)
+		used += need
 	}
+	// Reverse so oldest of the visible window renders first.
+	rendered := make([]string, 0, len(blocks))
+	for i := len(blocks) - 1; i >= 0; i-- {
+		if i != len(blocks)-1 {
+			rendered = append(rendered, "") // blank separator
+		}
+		rendered = append(rendered, blocks[i].lines...)
+	}
+	hidden := len(m.codeViews) - len(blocks)
 	more := ""
-	if start > 0 {
-		more = "\n" + lipgloss.NewStyle().Foreground(m.theme.Muted).Render(
-			"  "+itoa(start)+" older hidden — Ctrl+P to expand")
+	if hidden > 0 {
+		more = lipgloss.NewStyle().Foreground(m.theme.Muted).
+			Render(fmt.Sprintf("  %d older hidden — Ctrl+P to expand", hidden))
 	}
-	inner := title + "\n\n" + strings.Join(lines, "\n") + more
+	inner := title
+	if more != "" {
+		inner += "  " + more
+	}
+	inner += "\n\n" + strings.Join(rendered, "\n")
+
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(m.theme.Accent2).
@@ -110,6 +195,66 @@ func (m *Model) renderCodePanel(width, maxH int) string {
 		Width(width - 2).
 		Height(maxH - 2).
 		Render(inner)
+}
+
+// renderActivityHeader is the bold/colored top line for one entry —
+// icon, path/label, and meta.
+func renderActivityHeader(e codeViewEntry, t Theme, innerW int) string {
+	icon := "📄"
+	color := t.ReadIcon
+	label := e.Path
+	switch {
+	case e.Thinking:
+		icon = "💭"
+		color = t.Thinking
+		label = "thinking"
+	case e.Tool != "":
+		icon = "⚙"
+		color = t.ToolIcon
+		label = e.Tool
+	case e.IsDiff:
+		icon = "✏"
+		color = t.EditIcon
+	case e.IsNew:
+		icon = "🆕"
+		color = t.DiffAdd
+	}
+	maxLabel := innerW - 4 - 10 // icon + space + meta tail
+	if maxLabel < 6 {
+		maxLabel = 6
+	}
+	if len(label) > maxLabel {
+		label = "…" + label[len(label)-maxLabel+1:]
+	}
+	head := lipgloss.NewStyle().Bold(true).Foreground(color).Render(icon + " " + label)
+	meta := lipgloss.NewStyle().Foreground(t.Muted).Faint(true).
+		Render(" · " + e.When.Format("15:04:05") + "  " + e.Text)
+	return head + meta
+}
+
+// renderActivityPreview returns 0..N indented preview lines for an
+// entry. Empty if the entry has nothing worth previewing.
+func renderActivityPreview(e codeViewEntry, t Theme, innerW int) []string {
+	if e.Preview == "" {
+		return nil
+	}
+	style := lipgloss.NewStyle().Foreground(t.Muted)
+	if e.Thinking {
+		style = style.Italic(true)
+	}
+	indent := "   "
+	maxW := innerW - len(indent)
+	if maxW < 8 {
+		return nil
+	}
+	var out []string
+	for _, ln := range strings.Split(e.Preview, "\n") {
+		if len(ln) > maxW {
+			ln = ln[:maxW-1] + "…"
+		}
+		out = append(out, style.Render(indent+ln))
+	}
+	return out
 }
 
 // subagent panel — tracks subagent:* ws frames.

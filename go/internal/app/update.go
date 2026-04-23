@@ -108,6 +108,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd := m.handleFrame(msg.frame)
 		return m, tea.Batch(cmd, m.recvCmd())
 
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
+
 	case sizePollMsg:
 		// Belt-and-braces resize detection — Bubble Tea's Windows build
 		// doesn't have a SIGWINCH equivalent so without this the layout
@@ -362,6 +365,46 @@ func (m *Model) handleHistoryNav(dir int) bool {
 	return true
 }
 
+// handleMouse routes wheel events to whichever viewport currently has
+// the user's attention — the output-log overlay, the expanded panel,
+// or the chat viewport. Anything else is ignored.
+//
+// On Windows in particular this is the only working scroll input —
+// the conpty / terminal apps eat PgUp/PgDn before they reach
+// bubbletea, so without a mouse handler the chat scrollbar appears
+// fixed at "top" and never moves.
+func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	const wheelStep = 3
+
+	// Prefer the active overlay if any.
+	switch {
+	case m.outputLogOpen:
+		switch msg.Type {
+		case tea.MouseWheelUp:
+			m.outputLogVP.LineUp(wheelStep)
+		case tea.MouseWheelDown:
+			m.outputLogVP.LineDown(wheelStep)
+		}
+		return m, nil
+	case m.panelExpand:
+		switch msg.Type {
+		case tea.MouseWheelUp:
+			m.panelView.LineUp(wheelStep)
+		case tea.MouseWheelDown:
+			m.panelView.LineDown(wheelStep)
+		}
+		return m, nil
+	}
+
+	switch msg.Type {
+	case tea.MouseWheelUp:
+		m.viewport.LineUp(wheelStep)
+	case tea.MouseWheelDown:
+		m.viewport.LineDown(wheelStep)
+	}
+	return m, nil
+}
+
 // handleResize is the single source of truth for terminal-size changes.
 // Every cached/lazy widget that depends on dimensions is force-reset
 // here so the next View() rebuilds at the new size, and a ClearScreen
@@ -614,7 +657,12 @@ func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 		m.status = ""
 		m.postStreamChecks()
 	case "chat:thinking":
+		var v proto.ChatThinking
+		_ = json.Unmarshal(f.Raw, &v)
 		m.status = "thinking…"
+		if v.Text != "" {
+			m.appendThinking(v.Text)
+		}
 	case "chat:status":
 		var v proto.ChatStatus
 		_ = json.Unmarshal(f.Raw, &v)
@@ -801,6 +849,9 @@ func (m *Model) handleStatus(v proto.ChatStatus) {
 		m.thinking = false
 	case "tool_exec_start":
 		m.status = fmt.Sprintf("⚙ %s %s", v.Tool, v.Detail)
+		if v.Tool != "" {
+			m.appendToolExec(v.Tool, v.Detail)
+		}
 	case "tool_exec_done":
 		m.status = fmt.Sprintf("✓ %s · %dms", v.Tool, v.DurationMs)
 	case "interjected", "interjection":
