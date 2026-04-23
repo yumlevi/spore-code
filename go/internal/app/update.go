@@ -932,16 +932,9 @@ func (m *Model) handleStatus(v proto.ChatStatus) {
 	case "thinking_done":
 		m.status = ""
 		m.thinking = false
-		// Dump the buffered thinking into the chat log — Python's
-		// on_status thinking_done branch does the same. Tail-clip to
-		// 30 lines so a long reasoning block doesn't dominate.
-		if strings.TrimSpace(m.thinkingBuf) != "" {
-			lines := strings.Split(strings.TrimSpace(m.thinkingBuf), "\n")
-			if len(lines) > 30 {
-				lines = lines[len(lines)-30:]
-			}
-			m.pushChat("system", "💭 thinking\n  "+strings.Join(lines, "\n  "))
-		}
+		// Don't dump the thought into the main transcript — the
+		// activity panel already shows the live 💭 entry. Keeping
+		// the chat clean was an explicit user ask.
 		m.thinkingBuf = ""
 	case "tool_exec_start":
 		// Flush the in-flight assistant bubble so the user sees a
