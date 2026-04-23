@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"os"
 	"regexp"
 	"strings"
@@ -102,6 +103,15 @@ func parseQuestionsBlock(text string) []question {
 	}
 	body := parts[len(parts)-1]
 
+	// JSON-first path — preferred format per plan-mode prompt.
+	// We try to find a ```json …``` fence or a bare JSON array inside
+	// the body. If present and parseable, use that. Everything else
+	// falls through to the prose path below so old-style responses
+	// and edge cases still work.
+	if qs := parseQuestionsJSON(body); len(qs) > 0 {
+		return qs
+	}
+
 	// Take the first segment that has numbered items.
 	blank := regexp.MustCompile(`\n\s*\n`)
 	var seg string
@@ -152,6 +162,127 @@ var _mdDecorRe = regexp.MustCompile("(\\*\\*|__|\\*|_|`)")
 
 func stripMarkdownDecor(s string) string {
 	return strings.TrimSpace(_mdDecorRe.ReplaceAllString(s, ""))
+}
+
+// parseQuestionsJSON tries to parse a JSON array of question objects
+// from the body after the QUESTIONS: marker. Accepts either a
+// ```json …``` fence or a bare [ … ] array. Returns nil on any parse
+// failure so the prose path can take over. Shape:
+//
+//	[
+//	  {"text": "...", "type": "single", "options": ["A", "B"]},
+//	  {"text": "...", "type": "multi",  "options": ["X", "Y"]},
+//	  {"text": "...", "type": "open"}
+//	]
+//
+// Forgiving defaults: `type` missing → inferred from `options` (single
+// if present, open if not). `options` missing or empty on a non-open
+// question → treat as open. Unknown types fall back to single-select
+// when options exist, open otherwise.
+func parseQuestionsJSON(body string) []question {
+	raw := extractJSONArray(body)
+	if raw == "" {
+		return nil
+	}
+	type jq struct {
+		Text    string   `json:"text"`
+		Type    string   `json:"type"`
+		Options []string `json:"options"`
+	}
+	var items []jq
+	if err := json.Unmarshal([]byte(raw), &items); err != nil {
+		return nil
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	var qs []question
+	for _, it := range items {
+		text := strings.TrimSpace(stripMarkdownDecor(it.Text))
+		if text == "" {
+			continue
+		}
+		// Ensure question mark suffix for visual parity with the prose
+		// path (prose parser always ends questions with '?').
+		if !strings.HasSuffix(text, "?") {
+			text += "?"
+		}
+		q := question{Text: text}
+		t := strings.ToLower(strings.TrimSpace(it.Type))
+		hasOpts := len(it.Options) > 0
+		switch {
+		case t == "multi" || t == "multiple" || t == "multi-select":
+			if hasOpts {
+				q.Options = it.Options
+				q.Multi = true
+			}
+		case t == "single" || t == "single-select" || t == "choice":
+			if hasOpts {
+				q.Options = it.Options
+			}
+		case t == "open" || t == "open-ended" || t == "text":
+			// leave Options nil → open-ended
+		default:
+			// Type unspecified or unknown — infer from options presence.
+			if hasOpts {
+				q.Options = it.Options
+			}
+		}
+		qs = append(qs, q)
+	}
+	if len(qs) == 0 {
+		return nil
+	}
+	return qs
+}
+
+// extractJSONArray pulls a JSON array string out of `body`. Prefers a
+// fenced code block (```json … ``` or just ``` … ``` containing a
+// […]), falls back to the first balanced […] run. Returns "" if no
+// candidate found.
+func extractJSONArray(body string) string {
+	// Try ```json fence first.
+	if m := regexp.MustCompile("(?is)```(?:json)?\\s*(\\[.*?\\])\\s*```").FindStringSubmatch(body); len(m) == 2 {
+		return strings.TrimSpace(m[1])
+	}
+	// Fall back to balanced-bracket scan. Find the first '[' and walk
+	// forward tracking string state + bracket depth.
+	start := strings.Index(body, "[")
+	if start < 0 {
+		return ""
+	}
+	depth := 0
+	inStr := false
+	esc := false
+	for i := start; i < len(body); i++ {
+		c := body[i]
+		if inStr {
+			if esc {
+				esc = false
+				continue
+			}
+			if c == '\\' {
+				esc = true
+				continue
+			}
+			if c == '"' {
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '[':
+			depth++
+		case ']':
+			depth--
+			if depth == 0 {
+				return strings.TrimSpace(body[start : i+1])
+			}
+		}
+	}
+	return ""
 }
 
 // splitOptions splits on " / " at top level (not inside parens) — matches
