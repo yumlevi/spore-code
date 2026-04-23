@@ -417,9 +417,9 @@ func (m *Model) rerenderViewport() {
 	}
 
 	var content string
-	if m.currentStream != nil {
+	if msg := m.streamMsg(); msg != nil {
 		// Render just the streaming message and append.
-		tail := renderMessage(*m.currentStream, m.viewport.Width, m.theme)
+		tail := renderMessage(*msg, m.viewport.Width, m.theme)
 		if m.renderedHistory == "" {
 			content = tail
 		} else {

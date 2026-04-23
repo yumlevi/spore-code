@@ -57,7 +57,7 @@ func (m *Model) currentState() AppState {
 		}
 		return StatePlanReview
 	}
-	if m.currentStream != nil {
+	if m.currentStreamIdx >= 0 {
 		return StateStreaming
 	}
 	if m.generating {

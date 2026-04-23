@@ -50,8 +50,15 @@ type Model struct {
 	connErr   string
 
 	messages      []chatMsg
-	currentStream *chatMsg
-	viewport      viewport.Model
+	// currentStreamIdx is the index in m.messages of the chatMsg
+	// currently receiving chat:delta chunks, or -1 if no stream is
+	// open. Indexing — rather than keeping a *chatMsg pointer — is
+	// load-bearing: pushChat for ⚙/✓ tool indicators may grow
+	// m.messages past its capacity, reallocating the backing array
+	// and invalidating any held pointers. With an index we just
+	// re-resolve &m.messages[idx] on every access.
+	currentStreamIdx int
+	viewport         viewport.Model
 	input         textarea.Model
 	width, height int
 
@@ -177,6 +184,7 @@ func New(cfg *config.Config, cwd, sess string, planMode, isContinue bool) *Model
 	m.cmdHistory = loadHistory(cfg.GlobalDir)
 	m.histIdx = -1
 	m.followBottom = true
+	m.currentStreamIdx = -1
 	if w, err := sessionlog.Open(cfg.GlobalDir, sess); err == nil {
 		m.writer = w
 	}
@@ -396,46 +404,54 @@ func (m *Model) pushChat(role, text string) {
 	}
 }
 
+// streamMsg returns a pointer to the live streaming chatMsg, or nil
+// if no stream is open. ALWAYS resolve through this — never cache the
+// pointer across any m.messages mutation, because append may
+// reallocate the backing array.
+func (m *Model) streamMsg() *chatMsg {
+	if m.currentStreamIdx < 0 || m.currentStreamIdx >= len(m.messages) {
+		return nil
+	}
+	return &m.messages[m.currentStreamIdx]
+}
+
 func (m *Model) startStream() {
 	m.messages = append(m.messages, chatMsg{Role: "assistant", Text: "", Timestamp: time.Now(), Streaming: true})
-	m.currentStream = &m.messages[len(m.messages)-1]
+	m.currentStreamIdx = len(m.messages) - 1
 	m.historyDirty = true
 }
 
 func (m *Model) appendDelta(t string) {
-	if m.currentStream == nil {
+	if m.currentStreamIdx < 0 {
 		m.startStream()
 	}
-	m.currentStream.Text += t
-	// Don't mark historyDirty — only the streaming tail needs re-render,
-	// not the cached prefix. rerenderViewport now skips the expensive
-	// full rebuild when only the tail changed.
+	// Re-resolve every call — the pointer would be stale if anything
+	// else appended to m.messages since startStream.
+	if msg := m.streamMsg(); msg != nil {
+		msg.Text += t
+	}
 	m.rerenderViewport()
 }
 
 func (m *Model) endStream() {
-	if m.currentStream != nil {
-		text := strings.TrimSpace(m.currentStream.Text)
+	msg := m.streamMsg()
+	if msg != nil {
+		text := strings.TrimSpace(msg.Text)
 		// Empty bubble (agent went straight to a tool with no text) —
 		// drop the entry instead of leaving an empty bordered box in
 		// the transcript. The tool indicator that follows is enough
 		// to mark "the agent did something here."
 		if text == "" {
-			// Find and remove the message we were streaming into.
-			for i := range m.messages {
-				if &m.messages[i] == m.currentStream {
-					m.messages = append(m.messages[:i], m.messages[i+1:]...)
-					break
-				}
-			}
+			idx := m.currentStreamIdx
+			m.messages = append(m.messages[:idx], m.messages[idx+1:]...)
 		} else {
-			m.currentStream.Streaming = false
+			msg.Streaming = false
 			if m.writer != nil {
 				m.writer.WriteAssistant(text, nil, 0)
 			}
 		}
-		m.currentStream = nil
 	}
+	m.currentStreamIdx = -1
 	// History changed — the just-finished assistant message goes from
 	// "streaming" to "done", which may render differently (no cursor).
 	m.historyDirty = true

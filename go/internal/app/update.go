@@ -401,7 +401,7 @@ func (m *Model) handleCtrlC() (tea.Model, tea.Cmd) {
 			m.exec.AbortCurrent()
 		}
 		// End the streaming entry so it stops looking like it's still going.
-		if m.currentStream != nil {
+		if m.currentStreamIdx >= 0 {
 			m.endStream()
 		}
 		m.generating = false
@@ -1005,7 +1005,7 @@ func truncateForLog(s string, n int) string {
 
 // postStreamChecks runs after chat:done to detect QUESTIONS: / PLAN_READY.
 func (m *Model) postStreamChecks() {
-	if m.currentStream != nil || len(m.messages) == 0 {
+	if m.currentStreamIdx >= 0 || len(m.messages) == 0 {
 		return
 	}
 	last := m.messages[len(m.messages)-1]
