@@ -25,6 +25,14 @@ type codeViewEntry struct {
 	ExecCmd  string
 	ExecOut  []string
 	When     time.Time
+
+	// Memo for the rendered preview lines. Keyed by inner column width
+	// so a resize invalidates. Stops appendThinking from re-running
+	// wordWrap on every single chat:thinking token.
+	cachedW       int
+	cachedThinkV  int // bumped when Content changes so we know to re-wrap
+	cachedPreview []string
+	dirtyVer      int
 }
 
 // pushCodeView records a read_file / write_file hit.
@@ -58,7 +66,8 @@ func (m *Model) pushCodeDiff(path, oldT, newT string) {
 
 // appendThinking accumulates a chat:thinking text chunk. Successive
 // chunks within the same thinking block are merged into one entry so
-// the panel doesn't churn one row per token.
+// the panel doesn't churn one row per token. Bumps dirtyVer so the
+// per-entry preview cache re-renders on next View().
 func (m *Model) appendThinking(text string) {
 	if strings.TrimSpace(text) == "" {
 		return
@@ -66,15 +75,14 @@ func (m *Model) appendThinking(text string) {
 	if n := len(m.codeViews); n > 0 && m.codeViews[n-1].Thinking {
 		last := &m.codeViews[n-1]
 		last.Content = truncateStr(last.Content+text, 4000)
-		last.Preview = previewLines(last.Content, 6, 120)
 		last.Text = fmt.Sprintf("%d chars", len(last.Content))
 		last.When = time.Now()
+		last.dirtyVer++
 		return
 	}
 	m.appendActivity(codeViewEntry{
 		Thinking: true,
 		Content:  truncateStr(text, 4000),
-		Preview:  previewLines(text, 6, 120),
 		Text:     fmt.Sprintf("%d chars", len(text)),
 		When:     time.Now(),
 	})
@@ -140,53 +148,70 @@ func (m *Model) renderCodePanel(width, maxH int) string {
 		return ""
 	}
 	title := lipgloss.NewStyle().Bold(true).Foreground(m.theme.Accent).Render("Activity")
-	bodyH := maxH - 4 // border(2) + padding(2)
+	// Total inner-content budget = panel height minus the rounded
+	// border (2 lines top+bottom). Padding is (0, 1) so it adds no
+	// vertical lines. The title and trailing blank consume 2 lines of
+	// that budget; whatever's left is the entries window.
+	innerH := maxH - 2
+	if innerH < 3 {
+		innerH = 3
+	}
+	bodyH := innerH - 2 // title + blank
 	if bodyH < 1 {
 		bodyH = 1
 	}
-	innerW := width - 4 // border + padding
+	innerW := width - 4 // border + horizontal padding
 	if innerW < 12 {
 		innerW = 12
 	}
 
 	// Walk newest → oldest, accumulating rendered blocks until we've
-	// used up bodyH. Each block: 1 header line + N preview lines.
-	type block struct {
-		lines []string
-	}
+	// used up bodyH. Each block: 1 header line + N preview lines + 1
+	// blank separator (the separator is only counted between blocks,
+	// so we subtract the trailing one when computing fit).
+	type block struct{ lines []string }
 	var blocks []block
 	used := 0
 	for i := len(m.codeViews) - 1; i >= 0; i-- {
-		e := m.codeViews[i]
-		header := renderActivityHeader(e, m.theme, innerW)
+		e := &m.codeViews[i]
+		header := renderActivityHeader(*e, m.theme, innerW)
 		preview := renderActivityPreview(e, m.theme, innerW)
-		need := 1 + len(preview) + 1 // +1 blank separator between blocks
-		if used+need > bodyH && len(blocks) > 0 {
+		blockH := 1 + len(preview)
+		sep := 0
+		if len(blocks) > 0 {
+			sep = 1
+		}
+		if used+sep+blockH > bodyH && len(blocks) > 0 {
 			break
 		}
-		b := block{lines: append([]string{header}, preview...)}
-		blocks = append(blocks, b)
-		used += need
+		blocks = append(blocks, block{lines: append([]string{header}, preview...)})
+		used += sep + blockH
 	}
+
 	// Reverse so oldest of the visible window renders first.
-	rendered := make([]string, 0, len(blocks))
+	rendered := make([]string, 0)
 	for i := len(blocks) - 1; i >= 0; i-- {
 		if i != len(blocks)-1 {
-			rendered = append(rendered, "") // blank separator
+			rendered = append(rendered, "")
 		}
 		rendered = append(rendered, blocks[i].lines...)
 	}
 	hidden := len(m.codeViews) - len(blocks)
-	more := ""
+	titleRow := title
 	if hidden > 0 {
-		more = lipgloss.NewStyle().Foreground(m.theme.Muted).
-			Render(fmt.Sprintf("  %d older hidden — Ctrl+P to expand", hidden))
+		titleRow += "  " + lipgloss.NewStyle().Foreground(m.theme.Muted).
+			Render(fmt.Sprintf("(%d older — Ctrl+P)", hidden))
 	}
-	inner := title
-	if more != "" {
-		inner += "  " + more
+	bodyText := strings.Join(rendered, "\n")
+	bodyLines := strings.Split(bodyText, "\n")
+	// HARD truncate to bodyH so a too-tall block can never push the
+	// panel past maxH. Without this the lipgloss Height() acts as a
+	// MIN — overflow leaks through and makes the chat column flicker
+	// up/down each frame as JoinHorizontal pads to the taller side.
+	if len(bodyLines) > bodyH {
+		bodyLines = bodyLines[len(bodyLines)-bodyH:]
 	}
-	inner += "\n\n" + strings.Join(rendered, "\n")
+	inner := titleRow + "\n\n" + strings.Join(bodyLines, "\n")
 
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -194,6 +219,7 @@ func (m *Model) renderCodePanel(width, maxH int) string {
 		Padding(0, 1).
 		Width(width - 2).
 		Height(maxH - 2).
+		MaxHeight(maxH).
 		Render(inner)
 }
 
@@ -235,9 +261,12 @@ func renderActivityHeader(e codeViewEntry, t Theme, innerW int) string {
 // renderActivityPreview returns 0..N indented preview lines for an
 // entry. For thinking entries the full accumulated thought is soft-
 // wrapped to the column width so long sentences read naturally across
-// multiple rows — truncating them to a single clipped line (which is
-// what the old code did) made the panel nearly useless for reasoning.
-func renderActivityPreview(e codeViewEntry, t Theme, innerW int) []string {
+// multiple rows. Cached per-entry so streaming thinking doesn't re-run
+// wordWrap on every chat:thinking token.
+func renderActivityPreview(e *codeViewEntry, t Theme, innerW int) []string {
+	if e.cachedW == innerW && e.cachedThinkV == e.dirtyVer && e.cachedPreview != nil {
+		return e.cachedPreview
+	}
 	style := lipgloss.NewStyle().Foreground(t.Muted)
 	indent := "   "
 	maxW := innerW - len(indent)
@@ -249,19 +278,17 @@ func renderActivityPreview(e codeViewEntry, t Theme, innerW int) []string {
 	var maxLines int
 	if e.Thinking {
 		if strings.TrimSpace(e.Content) == "" {
+			e.cachedW, e.cachedThinkV, e.cachedPreview = innerW, e.dirtyVer, []string{}
 			return nil
 		}
 		style = style.Italic(true)
-		// Word-wrap the full thought; take the tail so the most recent
-		// reasoning is what the user sees when the thought outgrows the
-		// visible rows.
 		rawLines = wordWrap(e.Content, maxW)
 		maxLines = 12
 	} else {
 		if e.Preview == "" {
+			e.cachedW, e.cachedThinkV, e.cachedPreview = innerW, e.dirtyVer, []string{}
 			return nil
 		}
-		// File previews are already per-line; just hard-clip each.
 		for _, ln := range strings.Split(e.Preview, "\n") {
 			if len(ln) > maxW {
 				ln = ln[:maxW-1] + "…"
@@ -277,6 +304,7 @@ func renderActivityPreview(e codeViewEntry, t Theme, innerW int) []string {
 	for _, ln := range rawLines {
 		out = append(out, style.Render(indent+ln))
 	}
+	e.cachedW, e.cachedThinkV, e.cachedPreview = innerW, e.dirtyVer, out
 	return out
 }
 
@@ -431,12 +459,20 @@ func (m *Model) renderSubagentPanel(width, maxH int) string {
 			"  "+itoa(start)+" older hidden — Ctrl+P to expand")
 	}
 	inner := title + "\n\n" + strings.Join(lines, "\n") + more
+	// Hard-clip to bodyH so a too-tall inner can never push the panel
+	// past maxH and force the chat column to flicker up/down.
+	innerLines := strings.Split(inner, "\n")
+	if len(innerLines) > maxH-2 {
+		innerLines = innerLines[len(innerLines)-(maxH-2):]
+		inner = strings.Join(innerLines, "\n")
+	}
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(m.theme.Accent2).
 		Padding(0, 1).
 		Width(width - 2).
 		Height(maxH - 2).
+		MaxHeight(maxH).
 		Render(inner)
 }
 
