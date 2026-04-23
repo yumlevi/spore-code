@@ -27,16 +27,59 @@ make install        # ~/.local/bin/acorn
 make release        # cross-compile linux/darwin/windows × amd64/arm64 into dist/
 ```
 
-## Install (prebuilt binary)
+## Install
+
+One-liner installers detect your OS+arch, download the matching release
+binary, verify it (ELF/Mach-O/PE magic check), atomic-rename into place,
+and handle PATH setup. Re-running upgrades in place.
+
+**Linux / macOS** (bash / zsh / fish):
 
 ```sh
-# Linux/mac
-curl -sSL https://github.com/yumlevi/acorn-cli/releases/latest/download/acorn-$(uname -s | tr A-Z a-z)-$(uname -m) \
-  -o ~/.local/bin/acorn && chmod +x ~/.local/bin/acorn
-
-# Windows PowerShell
-iwr https://github.com/yumlevi/acorn-cli/releases/latest/download/acorn-windows-amd64.exe -OutFile acorn.exe
+curl -fsSL https://raw.githubusercontent.com/yumlevi/acorn-cli/go-rewrite/go/install.sh | sh
 ```
+
+**Windows** (PowerShell 5.1+):
+
+```powershell
+irm https://raw.githubusercontent.com/yumlevi/acorn-cli/go-rewrite/go/install.ps1 | iex
+```
+
+Both scripts respect overrides via env vars:
+
+| Env var          | Default                                            | Notes |
+|------------------|----------------------------------------------------|-------|
+| `ACORN_VERSION`  | `latest`                                           | Pin a tag like `v0.1.4` |
+| `ACORN_DIR`      | `~/.local/bin` (Unix), `~/.acorn/bin` (Windows)    | Install to a different directory; `ACORN_DIR=/usr/local/bin sudo …` for system-wide |
+
+### Upgrading
+
+From inside acorn:
+
+```
+/update install
+```
+
+Or just re-run the installer one-liner from your shell — both routes
+download the latest release and atomic-rename over the running binary.
+On Windows the running `acorn.exe` is renamed aside as `acorn.exe.old`
+first since the OS won't let you overwrite a running image.
+
+### Manual download
+
+If you don't want to pipe-to-shell, releases are at
+<https://github.com/yumlevi/acorn-cli/releases/latest>:
+
+```
+acorn-linux-amd64       Linux  x86_64
+acorn-linux-arm64       Linux  aarch64
+acorn-darwin-amd64      macOS  Intel
+acorn-darwin-arm64      macOS  Apple Silicon
+acorn-windows-amd64.exe Windows  x64
+acorn-windows-arm64.exe Windows  ARM64
+```
+
+Drop the file into a directory on `$PATH` and `chmod +x` (Unix).
 
 ## Configure
 
@@ -73,14 +116,22 @@ acorn --host spore.tld --port 443 --user foo
 
 ## Keybindings
 
-| Key          | Action |
-|--------------|--------|
-| Enter        | Send message |
-| Alt+Enter    | Newline in input (multi-line drafting) |
-| Shift+Tab    | Toggle plan / execute mode |
-| PgUp / PgDn  | Scroll chat history |
-| Esc          | Close modal |
-| Ctrl+C       | Quit |
+| Key                    | Action |
+|------------------------|--------|
+| Enter                  | Send message |
+| Alt+Enter              | Newline in input (multi-line drafting) |
+| Shift+Tab              | Toggle plan / execute mode |
+| Up / Down              | Command history (when input is empty or cursor on edge line) |
+| PgUp / PgDn            | Scroll chat |
+| Ctrl+↑ / Ctrl+↓        | Scroll chat by one line (belt-and-braces for terminals that swallow PgUp/PgDn) |
+| Shift+↑ / Shift+↓      | Same as Ctrl+↑/↓ |
+| Ctrl+Home / Ctrl+End   | Jump to top / bottom of chat |
+| Mouse wheel            | Scroll chat / whichever overlay is open |
+| Ctrl+P                 | Toggle expanded activity panel (full-screen browser) |
+| Ctrl+O                 | Toggle captured tool-output log |
+| Esc                    | Close modal / overlay |
+| Ctrl+C                 | While generating: stop the current turn. While idle: press twice within 1s to quit |
+| Ctrl+D                 | Unconditional quit from any state |
 
 ## Slash commands
 
@@ -95,12 +146,16 @@ acorn --host spore.tld --port 443 --user foo
 | `/stop` | Stop the current generation |
 | `/plan` | Toggle plan/execute mode (same as Shift+Tab) |
 | `/status` | Connection + session info |
-| `/theme <name>` | Switch theme (dark/oak/forest/oled/light) |
+| `/theme [name]` | List themes or switch to one (persists to `~/.acorn/config.toml`) |
 | `/mode <auto\|ask\|locked\|yolo\|rules>` | Tool approval mode |
 | `/approve-all` | `/mode auto` shortcut |
 | `/approve-all-dangerous` | `/mode yolo` shortcut |
-| `/bg [list]` | Background process list (stub — see notes) |
-| `/update [check]` | Check GitHub releases for newer versions |
+| `/bg [list\|<id>\|run <cmd>\|kill <id>]` | Background process manager |
+| `/update check` | Compare running version against latest GitHub release |
+| `/update install [tag]` | Download + atomic-replace the running binary with the latest release (or a specific tag) |
+| `/context [refresh]` | Show the project context currently sent to the agent (or reset it for the next message) |
+| `/tree [depth]` | Print the project file tree (default depth 3) |
+| `/init` | Create an `ACORN.md` template and append `.acorn/` to `.gitignore` |
 
 ## Feature parity vs Python acorn
 
@@ -142,15 +197,31 @@ acorn --host spore.tld --port 443 --user foo
   field; `delegate_task` inputs are gated before the server sees them
 - Slash command set matching Python's `constants.py:SLASH_COMMANDS`
 
-**Stubbed / not yet ported** (clearly flagged at runtime):
+**Fully ported since the initial port** (these used to be stubs):
 
-- `/bg run` — background process manager (Python has a full ProcessManager
-  with persistence; Go port refuses and suggests tmux/screen)
-- `/update` install — only `/update check` works; installing means
-  re-downloading the binary manually
-- `/test` test harness — internal to acorn
-- Code-viewer side panel — paths logged inline instead
-- Subagent activity panel
+- `/bg run|list|kill <id>` — background process manager with PDEATHSIG
+  on Linux + Job Object on Windows so children die with acorn
+- `/update install [tag]` — downloads the release asset, magic-byte
+  verifies, atomic-renames into place (Windows moves the running exe
+  aside first); capability-advertised from SPORE so acorn knows when
+  the upgrade path is available
+- Markdown rendering in assistant messages (via glamour, theme-aware)
+- Activity side panel — shows `💭 thinking`, `⚙ tool`, `📄 read`,
+  `✏ edit`, `🆕 new` entries with live previews; word-wraps thinking,
+  hard-caps height to prevent flicker, cached per-entry so streaming
+  doesn't re-wrap on every token. Ctrl+P opens a full-screen scrollable
+  browser.
+- Output-log overlay (Ctrl+O) — scrollable capture of all tool
+  stdout/stderr from the session
+- Structured `projectContext` wire field (replaces the old "glue
+  GatherContext onto user message" path; SPORE routes it into the
+  system prompt so it doesn't accumulate in `messages[]`)
+- Bracketed-paste support — multi-line paste no longer fires one send
+  per line (bubbletea v1.3.x)
+
+**Intentionally out of scope**:
+
+- `/test` harness — internal acorn UI test runner, not user-facing
 
 ## Layout
 
