@@ -68,8 +68,13 @@ func (m *Model) pushCodeDiff(path, oldT, newT string) {
 // chunks within the same thinking block are merged into one entry so
 // the panel doesn't churn one row per token. Bumps dirtyVer so the
 // per-entry preview cache re-renders on next View().
+//
+// IMPORTANT: don't drop whitespace-only chunks. Models stream tokens
+// individually — `word` and ` ` and `next` arrive as three separate
+// deltas. Throwing away the lone-space chunk glues `wordnext`
+// together and produces the run-on text we saw in early builds.
 func (m *Model) appendThinking(text string) {
-	if strings.TrimSpace(text) == "" {
+	if text == "" {
 		return
 	}
 	if n := len(m.codeViews); n > 0 && m.codeViews[n-1].Thinking {

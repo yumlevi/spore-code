@@ -725,7 +725,11 @@ func (m *Model) handleSlashCommand(text string) (tea.Model, tea.Cmd) {
 func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 	switch f.Type {
 	case "chat:start":
-		m.startStream()
+		// Don't pre-create the bubble — appendDelta starts one
+		// lazily on the first non-empty delta. If the agent goes
+		// straight to a tool without any text, no empty bordered
+		// box appears in the transcript.
+		m.thinkingBuf = ""
 	case "chat:delta":
 		var v proto.ChatDelta
 		_ = json.Unmarshal(f.Raw, &v)

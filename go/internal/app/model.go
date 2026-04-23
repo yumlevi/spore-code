@@ -415,12 +415,26 @@ func (m *Model) appendDelta(t string) {
 
 func (m *Model) endStream() {
 	if m.currentStream != nil {
-		m.currentStream.Streaming = false
-		text := m.currentStream.Text
-		m.currentStream = nil
-		if m.writer != nil && text != "" {
-			m.writer.WriteAssistant(text, nil, 0)
+		text := strings.TrimSpace(m.currentStream.Text)
+		// Empty bubble (agent went straight to a tool with no text) —
+		// drop the entry instead of leaving an empty bordered box in
+		// the transcript. The tool indicator that follows is enough
+		// to mark "the agent did something here."
+		if text == "" {
+			// Find and remove the message we were streaming into.
+			for i := range m.messages {
+				if &m.messages[i] == m.currentStream {
+					m.messages = append(m.messages[:i], m.messages[i+1:]...)
+					break
+				}
+			}
+		} else {
+			m.currentStream.Streaming = false
+			if m.writer != nil {
+				m.writer.WriteAssistant(text, nil, 0)
+			}
 		}
+		m.currentStream = nil
 	}
 	// History changed — the just-finished assistant message goes from
 	// "streaming" to "done", which may render differently (no cursor).
