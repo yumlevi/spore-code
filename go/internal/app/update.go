@@ -299,9 +299,29 @@ func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "pgup":
 		m.viewport.LineUp(m.viewport.Height - 2)
+		m.followBottom = false
 		return m, nil
 	case "pgdown":
 		m.viewport.LineDown(m.viewport.Height - 2)
+		m.updateFollowBottom()
+		return m, nil
+	case "ctrl+up", "shift+up":
+		// Belt-and-braces scroll for terminals that swallow PgUp/PgDn or
+		// don't deliver mouse wheel events (some Windows console hosts).
+		m.viewport.LineUp(1)
+		m.followBottom = false
+		return m, nil
+	case "ctrl+down", "shift+down":
+		m.viewport.LineDown(1)
+		m.updateFollowBottom()
+		return m, nil
+	case "ctrl+home":
+		m.viewport.GotoTop()
+		m.followBottom = false
+		return m, nil
+	case "ctrl+end":
+		m.viewport.GotoBottom()
+		m.followBottom = true
 		return m, nil
 	case "ctrl+p":
 		m.panelExpand = !m.panelExpand
@@ -366,17 +386,11 @@ func (m *Model) handleHistoryNav(dir int) bool {
 }
 
 // handleMouse routes wheel events to whichever viewport currently has
-// the user's attention — the output-log overlay, the expanded panel,
-// or the chat viewport. Anything else is ignored.
-//
-// On Windows in particular this is the only working scroll input —
-// the conpty / terminal apps eat PgUp/PgDn before they reach
-// bubbletea, so without a mouse handler the chat scrollbar appears
-// fixed at "top" and never moves.
+// the user's attention. Wheel scrolling on the chat viewport flips
+// followBottom so the auto-scroll-to-bottom in rerenderViewport stops
+// fighting the user.
 func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	const wheelStep = 3
-
-	// Prefer the active overlay if any.
 	switch {
 	case m.outputLogOpen:
 		switch msg.Type {
@@ -395,14 +409,26 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-
 	switch msg.Type {
 	case tea.MouseWheelUp:
 		m.viewport.LineUp(wheelStep)
+		m.followBottom = false
 	case tea.MouseWheelDown:
 		m.viewport.LineDown(wheelStep)
+		m.updateFollowBottom()
 	}
 	return m, nil
+}
+
+// updateFollowBottom recomputes followBottom from the viewport's
+// current scroll position. Called after any user-initiated scroll
+// down so reaching the last line re-engages auto-follow.
+func (m *Model) updateFollowBottom() {
+	max := m.viewport.TotalLineCount() - m.viewport.Height
+	if max < 0 {
+		max = 0
+	}
+	m.followBottom = m.viewport.YOffset >= max
 }
 
 // handleResize is the single source of truth for terminal-size changes.

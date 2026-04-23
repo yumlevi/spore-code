@@ -364,7 +364,7 @@ func (m *Model) renderHeader() string {
 func (m *Model) renderFooter() string {
 	status := m.status
 	if status == "" {
-		status = "enter send · alt+enter newline · shift+tab mode · pgup/pgdn scroll · ctrl+p panels · ctrl+o output · ctrl+c quit"
+		status = "enter send · alt+enter newline · shift+tab mode · pgup/pgdn or ctrl+↑/↓ scroll · ctrl+p panels · ctrl+o output · ctrl+c quit"
 	}
 	// Truncate first so lipgloss.Width(...) below doesn't overflow when
 	// the status string is wider than the terminal. Width() pads but
@@ -428,8 +428,19 @@ func (m *Model) rerenderViewport() {
 	} else {
 		content = m.renderedHistory
 	}
+	prevYOffset := m.viewport.YOffset
 	m.viewport.SetContent(content)
-	m.viewport.GotoBottom()
+	if m.followBottom {
+		m.viewport.GotoBottom()
+	} else {
+		// Preserve the user's scroll position. SetContent may have shifted
+		// YOffset if the new content is shorter than the old; clamp it.
+		if max := m.viewport.TotalLineCount() - m.viewport.Height; prevYOffset > max {
+			m.viewport.YOffset = max
+		} else {
+			m.viewport.YOffset = prevYOffset
+		}
+	}
 }
 
 // renderHistoryPrefix renders every completed message — i.e. every

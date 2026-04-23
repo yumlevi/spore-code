@@ -101,6 +101,12 @@ type Model struct {
 	historyDirty    bool
 	historyWidth    int // width the cache was rendered against
 
+	// followBottom — when true, every render snaps the viewport to the
+	// last line so streaming text stays visible. Set to false the moment
+	// the user scrolls up so they can read history without it being
+	// yanked back. Set true again when they scroll all the way down.
+	followBottom bool
+
 	// Command history — Up/Down in input cycles through prior sends.
 	// Persisted to ~/.acorn/history (plain text, one entry per line) so
 	// it survives restarts. Mirrors prompt_toolkit's FileHistory.
@@ -158,6 +164,7 @@ func New(cfg *config.Config, cwd, sess string, planMode, isContinue bool) *Model
 	m.exec = tools.New(m.perms, cwd, filepath.Join(cwd, ".acorn", "logs"))
 	m.cmdHistory = loadHistory(cfg.GlobalDir)
 	m.histIdx = -1
+	m.followBottom = true
 	if w, err := sessionlog.Open(cfg.GlobalDir, sess); err == nil {
 		m.writer = w
 	}
@@ -355,6 +362,10 @@ func spinnerTickCmd() tea.Cmd {
 func (m *Model) pushChat(role, text string) {
 	m.messages = append(m.messages, chatMsg{Role: role, Text: text, Timestamp: time.Now()})
 	m.historyDirty = true
+	// New top-level message — surface it. If the user was scrolled up
+	// reading history we still snap to the bottom so they don't miss
+	// new arrivals; that matches what the Python TUI does.
+	m.followBottom = true
 	m.rerenderViewport()
 	if m.writer != nil {
 		switch role {
