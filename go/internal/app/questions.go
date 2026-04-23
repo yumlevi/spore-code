@@ -85,10 +85,28 @@ func (m *Model) openStructuredQuestion(f proto.AskUser) {
 // parseQuestionsBlock parses the QUESTIONS: marker format used by acorn's
 // prose-based question flow (mirrored from acorn/questions.py so CLI behaviour
 // matches the Python implementation).
+//
+// Falls back to detectInlineOptions when no QUESTIONS: marker is found —
+// agents sometimes bypass the marker when they decide a turn calls for
+// "just present options as prose and let the user pick". Without the
+// fallback the user sees a flat bullet list with no picker.
 func parseQuestionsBlock(text string) []question {
 	if text == "" {
 		return nil
 	}
+	// Try the marker-based path first (most reliable).
+	if qs := parseMarkedQuestions(text); len(qs) > 0 {
+		return qs
+	}
+	// Fallback: agent emitted "**Option A** … **Option B** … Which one?"
+	// instead of QUESTIONS:. Synthesize a single-select picker.
+	return detectInlineOptions(text)
+}
+
+// parseMarkedQuestions is the original QUESTIONS:-marker path —
+// extracted out so the public entry point can also fall back to
+// detectInlineOptions when the marker is missing.
+func parseMarkedQuestions(text string) []question {
 	// Split on the QUESTIONS: marker. Accepts:
 	//   QUESTIONS:
 	//   **QUESTIONS:**         (markdown bold — agents love this)
@@ -306,6 +324,113 @@ func extractJSONArray(body string) string {
 		}
 	}
 	return ""
+}
+
+// detectInlineOptions catches the common case where the agent emits
+// a numbered or "**Option X**" list ending with a "Which?" / "Pick"
+// prompt instead of using the QUESTIONS: marker. Synthesizes a
+// single-select question so the picker still renders.
+//
+// Recognizes:
+//   **Option A** / **Option A:** / **Option A — name** / Option A:
+//   Choice 1 / Choice 1:
+// Followed (anywhere later in text) by a question like "Which one?",
+// "Pick one", "Choose one", "Which?", or similar.
+//
+// Returns nil if fewer than 2 options were detected or no closing
+// "which" question — in either case there's no clear single-select
+// to surface.
+func detectInlineOptions(text string) []question {
+	if text == "" {
+		return nil
+	}
+	// Must contain (anywhere, but usually near the end) a single-pick
+	// prompt. The agent's wording varies a lot — "which one?", "which
+	// direction?", "any preference?", "your pick?", "or mix two?" all
+	// signal "I want you to choose".
+	pickRe := regexp.MustCompile(`(?i)\b(?:` +
+		`which(?:\s+\w+)?|` +
+		`pick(?:\s+one)?|` +
+		`choose(?:\s+one)?|` +
+		`(?:any|your)\s+(?:pick|preference|choice|favourite|favorite|pref)|` +
+		`preference\??|` +
+		`or\s+(?:a\s+)?mix(?:\s+\w+)?|` +
+		`thoughts\??` +
+		`)\??`)
+	if !pickRe.MatchString(text) {
+		return nil
+	}
+	// Look for **Option X** / Option X: / Choice N: / N. at line
+	// starts. Capture the human-friendly bit if present so the picker
+	// shows readable labels.
+	optRe := regexp.MustCompile(`(?im)^\s*(?:\*{0,2}|#{0,3})\s*` +
+		`(?:Option\s+([A-Z0-9])|Choice\s+(\d+)|(\d+)\.)\s*` +
+		`\*{0,2}\s*` +
+		`(?:[:—–\-]\s*|\s+)?` +
+		`(?:\*{0,2}\s*"?([^"\n*]{2,200})"?)?`)
+	matches := optRe.FindAllStringSubmatch(text, -1)
+	if len(matches) < 2 {
+		return nil
+	}
+	var labels []string
+	seen := map[string]bool{}
+	for _, m := range matches {
+		// m[1]=letter, m[2]=Choice n, m[3]=plain n., m[4]=label text
+		marker := strings.TrimSpace(m[1] + m[2] + m[3])
+		labelText := shortLabel(m[4])
+		var label string
+		switch {
+		case labelText != "":
+			label = labelText
+		case m[1] != "":
+			label = "Option " + marker
+		case m[2] != "":
+			label = "Choice " + marker
+		default:
+			label = "#" + marker
+		}
+		// Drop duplicates and very-likely false positives.
+		if seen[label] || len(label) < 2 {
+			continue
+		}
+		seen[label] = true
+		labels = append(labels, label)
+	}
+	if len(labels) < 2 {
+		return nil
+	}
+	return []question{{
+		Text:    "Which?",
+		Options: labels,
+	}}
+}
+
+// shortLabel takes the verbose option description an agent might emit
+// after "Option A:" and trims it to a short, picker-friendly chunk.
+// Strategy: strip markdown decor, cut at the first " — " / " – " / " - "
+// (em/en/ascii dash with surrounding spaces) since that's a common
+// "name — long description" separator. Hard-cap at 60 chars so a
+// dashless option doesn't blow out the picker width.
+func shortLabel(s string) string {
+	s = stripMarkdownDecor(strings.TrimSpace(s))
+	if s == "" {
+		return ""
+	}
+	for _, sep := range []string{" — ", " – ", " - "} {
+		if i := strings.Index(s, sep); i > 0 {
+			s = s[:i]
+			break
+		}
+	}
+	// Also cut at ":" if the agent used colon-as-separator.
+	if i := strings.Index(s, ":"); i > 0 && i < 60 {
+		s = s[:i]
+	}
+	s = strings.TrimSpace(s)
+	if len(s) > 60 {
+		s = strings.TrimRight(s[:57], " ") + "…"
+	}
+	return s
 }
 
 // splitOptions splits on " / " at top level (not inside parens) — matches
