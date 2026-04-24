@@ -84,7 +84,13 @@ func New(host string, port int, user, key string) *Client {
 		key:          key,
 		baseURL:      base,
 		wsURL:        wsBase + "/ws",
-		In:           make(chan Frame, 256),
+		// In is sized for bursty streaming. 4096 covers a long agent
+		// turn (1000+ chat:delta chunks) even with a slow renderer
+		// (glamour render time grows linearly with message length).
+		// Combined with the never-drop guard for chat:delta /
+		// chat:thinking in readLoop, this prevents the "garbled text"
+		// failure mode (Kimi K2.6 + glamour on a long reply).
+		In:           make(chan Frame, 4096),
 		ToolRequests: make(chan Frame, 32),
 		done:         make(chan struct{}),
 	}
@@ -259,11 +265,23 @@ func (c *Client) readLoop() {
 			}
 			continue
 		}
+		// Streaming text MUST never be dropped — losing a chat:delta
+		// or chat:thinking chunk corrupts the visible message body
+		// (the user sees concatenated/missing words mid-sentence,
+		// unrecoverable). Block-send for those; the WebSocket reader
+		// pauses until the UI drains. For everything else (status
+		// updates, code views, subagent events, etc.) we keep the
+		// non-blocking send + drop-on-overflow behavior so a backed-up
+		// UI doesn't completely freeze the connection.
+		if peek.Type == "chat:delta" || peek.Type == "chat:thinking" {
+			c.In <- f
+			continue
+		}
 		select {
 		case c.In <- f:
 		default:
-			// Drop frames if UI is backed up. Only high-frequency path is
-			// chat:delta; dropping a few is survivable.
+			// Non-essential frame dropped — UI is backed up.
+			c.log("debug", "ws", "frame dropped (In channel full, type="+peek.Type+")")
 		}
 	}
 }
