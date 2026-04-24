@@ -113,6 +113,119 @@ func bootCheckUpdateCmd() tea.Cmd {
 	}
 }
 
+// releaseInfo is one entry returned by the GitHub /releases endpoint
+// — the subset we render in /update list and use to resolve fuzzy
+// installs (`/update install graphcorn`, `/update install pre`).
+type releaseInfo struct {
+	TagName    string `json:"tag_name"`
+	Name       string `json:"name"`
+	URL        string `json:"html_url"`
+	Prerelease bool   `json:"prerelease"`
+	Draft      bool   `json:"draft"`
+	PublishedAt string `json:"published_at"`
+}
+
+// releaseListResult — Tea message carrying a slice of releases for the
+// /update list handler to render. Capped at 25 so the chat bubble
+// doesn't explode on long release histories.
+type releaseListResult struct {
+	Err      string
+	Releases []releaseInfo
+}
+
+// fetchAllReleasesCmd hits GitHub's /releases endpoint (NOT /releases/latest
+// which silently skips pre-releases). Returns up to 25 most recent
+// releases for the /update list handler to display. Pre-releases like
+// v0.2.0-graphcorn show up here even though they don't show up in the
+// stable channel that the boot-time check uses.
+func fetchAllReleasesCmd() tea.Cmd {
+	return func() tea.Msg {
+		client := &http.Client{Timeout: 10 * time.Second}
+		req, _ := http.NewRequest("GET", "https://api.github.com/repos/yumlevi/acorn-cli/releases?per_page=25", nil)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		resp, err := client.Do(req)
+		if err != nil {
+			return releaseListResult{Err: err.Error()}
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != 200 {
+			return releaseListResult{Err: fmt.Sprintf("HTTP %d", resp.StatusCode)}
+		}
+		var releases []releaseInfo
+		if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
+			return releaseListResult{Err: err.Error()}
+		}
+		return releaseListResult{Releases: releases}
+	}
+}
+
+// installResolveResult — same shape as updateInstallResult but tagged
+// distinctly so the handler can show the resolution explanation
+// (e.g. "Resolved 'graphcorn' → v0.2.0-graphcorn") before / instead
+// of the install. Currently the standard install path is what runs;
+// this type exists for future use if we want pre-install confirm.
+//
+// resolveAndInstallCmd takes a user-supplied query (a literal tag, a
+// keyword like 'pre' or 'stable', or a substring like 'graphcorn'),
+// fetches the release list, picks the best match, and dispatches the
+// install. Single round-trip from user typing to binary swap.
+func resolveAndInstallCmd(query string) tea.Cmd {
+	return func() tea.Msg {
+		query = strings.TrimSpace(query)
+		// Empty / "stable" / "latest" → fall through to the standard
+		// /releases/latest path (skips pre-releases).
+		if query == "" || query == "stable" || query == "latest" {
+			return installUpdateCmd("")()
+		}
+
+		// Need the full list to pick from for everything else.
+		client := &http.Client{Timeout: 10 * time.Second}
+		req, _ := http.NewRequest("GET", "https://api.github.com/repos/yumlevi/acorn-cli/releases?per_page=50", nil)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		resp, err := client.Do(req)
+		if err != nil {
+			return updateInstallResult{Err: "release list fetch failed: " + err.Error()}
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != 200 {
+			return updateInstallResult{Err: fmt.Sprintf("release list HTTP %d", resp.StatusCode)}
+		}
+		var rels []releaseInfo
+		if err := json.NewDecoder(resp.Body).Decode(&rels); err != nil {
+			return updateInstallResult{Err: "release list decode: " + err.Error()}
+		}
+
+		// Resolution rules, in order:
+		//   1. exact tag match wins (e.g. "v0.2.0-graphcorn")
+		//   2. keyword "pre" / "prerelease" → first prerelease in the list
+		//   3. substring match against tag name → newest matching tag
+		// All matches skip drafts.
+		filter := func(predicate func(releaseInfo) bool) *releaseInfo {
+			for i := range rels {
+				if rels[i].Draft { continue }
+				if predicate(rels[i]) { return &rels[i] }
+			}
+			return nil
+		}
+		var picked *releaseInfo
+		// Exact tag
+		picked = filter(func(r releaseInfo) bool { return r.TagName == query || r.TagName == "v"+query })
+		// Keywords
+		if picked == nil && (query == "pre" || query == "prerelease" || query == "experimental") {
+			picked = filter(func(r releaseInfo) bool { return r.Prerelease })
+		}
+		// Substring (longest-tag wins via list order — releases are newest first)
+		if picked == nil {
+			ql := strings.ToLower(query)
+			picked = filter(func(r releaseInfo) bool { return strings.Contains(strings.ToLower(r.TagName), ql) || strings.Contains(strings.ToLower(r.Name), ql) })
+		}
+		if picked == nil {
+			return updateInstallResult{Err: fmt.Sprintf("no release matches %q (try /update list)", query)}
+		}
+		return installUpdateCmd(picked.TagName)()
+	}
+}
+
 // checkUpdateCmd pings GitHub for the latest release tag.
 func checkUpdateCmd(checkOnly bool) tea.Cmd {
 	_ = checkOnly // no distinction for now — we never install in-process.

@@ -189,6 +189,42 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pushChat("system", fmt.Sprintf("Installed %s at %s — restart acorn to use the new binary.", msg.Version, msg.Path))
 		return m, nil
 
+	case releaseListResult:
+		if msg.Err != "" {
+			m.pushChat("system", "Release list fetch failed: "+msg.Err)
+			return m, nil
+		}
+		if len(msg.Releases) == 0 {
+			m.pushChat("system", "No releases found.")
+			return m, nil
+		}
+		var lines []string
+		lines = append(lines, "Recent releases (most recent first; ⏵ = currently installed):")
+		shown := 0
+		for _, r := range msg.Releases {
+			if r.Draft {
+				continue
+			}
+			marker := "  "
+			if r.TagName == Version {
+				marker = "▸ "
+			}
+			tag := "  "
+			if r.Prerelease {
+				tag = "🧪"
+			}
+			lines = append(lines, fmt.Sprintf("%s %s %-22s  %s", marker, tag, r.TagName, r.URL))
+			shown++
+			if shown >= 12 {
+				break
+			}
+		}
+		lines = append(lines, "")
+		lines = append(lines, "Install with `/update install <tag>` (exact) or `/update install <substring>` (fuzzy, e.g. `graphcorn`).")
+		lines = append(lines, "Use `/update install pre` for the latest pre-release of any kind.")
+		m.pushChat("system", strings.Join(lines, "\n"))
+		return m, nil
+
 	case bootUpdateMsg:
 		// Quiet by design — only surface when newer is available. See
 		// bootCheckUpdateCmd in updater.go for the silent-when-good
@@ -715,17 +751,36 @@ func (m *Model) handleSlashCommand(text string) (tea.Model, tea.Cmd) {
 	case "/update":
 		switch {
 		case len(parts) >= 2 && parts[1] == "install":
-			tag := ""
+			query := ""
 			if len(parts) >= 3 {
-				tag = parts[2]
+				query = strings.Join(parts[2:], " ")
 			}
-			m.pushChat("system", "Installing latest release… will replace the running binary in place.")
-			return m, installUpdateCmd(tag)
+			if query == "" {
+				m.pushChat("system", "Installing latest stable release… will replace the running binary in place.")
+				return m, installUpdateCmd("")
+			}
+			// Anything else routes through resolveAndInstall: handles
+			// exact tags, "pre" / "experimental" keywords, and fuzzy
+			// substring matches like /update install graphcorn.
+			m.pushChat("system", fmt.Sprintf("Resolving release for %q… will install in place when found.", query))
+			return m, resolveAndInstallCmd(query)
 		case len(parts) >= 2 && parts[1] == "check":
 			m.pushChat("system", "Checking GitHub releases…")
 			return m, checkUpdateCmd(true)
+		case len(parts) >= 2 && (parts[1] == "list" || parts[1] == "channels"):
+			m.pushChat("system", "Fetching release list from GitHub (includes pre-releases)…")
+			return m, fetchAllReleasesCmd()
 		default:
-			m.pushChat("system", "Usage: /update check | /update install [version]")
+			m.pushChat("system", strings.Join([]string{
+				"Usage:",
+				"  /update check                       check the stable channel for a newer release",
+				"  /update install                     install the latest STABLE release",
+				"  /update install <tag>               install an exact tag (e.g. v0.2.0-graphcorn)",
+				"  /update install pre                 install the latest pre-release (any kind)",
+				"  /update install <substring>         install latest tag containing this substring (e.g. /update install graphcorn)",
+				"  /update list                        list recent releases (stable + pre-release)",
+				"You're on " + Version + ".",
+			}, "\n"))
 			return m, nil
 		}
 	case "/bg":

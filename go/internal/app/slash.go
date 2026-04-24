@@ -61,9 +61,12 @@ var slashCatalog = []slashEntry{
 	{"/bg run", "/bg run <command> — start a background process"},
 	{"/bg kill", "/bg kill <id> — kill a background process"},
 
-	{"/update", "check/install the latest release"},
-	{"/update check", "check for the latest release without installing"},
-	{"/update install", "install the latest release"},
+	{"/update", "check/install/list releases"},
+	{"/update check", "check the stable channel for a newer release"},
+	{"/update install", "install the latest stable release"},
+	{"/update install pre", "install the latest pre-release (any kind)"},
+	{"/update install graphcorn", "install latest tag matching 'graphcorn' (fuzzy)"},
+	{"/update list", "list recent releases (stable + pre-release)"},
 
 	// Background delegation policy. Backend lives in tools/executor.go;
 	// see cmdDelegate in commands.go.
