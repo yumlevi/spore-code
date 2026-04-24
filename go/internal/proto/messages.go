@@ -123,6 +123,30 @@ type ProjectContext struct {
 	// has opted in to broader access — no cwd check, no sandbox
 	// warning in the prompt. Toggled via /scope.
 	Scope string `json:"scope,omitempty"` // "strict" | "expanded"
+
+	// Hardware describes the user's machine — kernel + CPU + RAM + GPU.
+	// Lets the agent reason about hardware-aware decisions: "you have
+	// an RTX 4090, you can run a 70B local model"; "you're on Apple
+	// Metal, prefer MLX over PyTorch"; "RAM is 8Gi, don't suggest a
+	// docker-compose stack with 5 services". Detected once per session
+	// and cached — see acorn/internal/app/context.go:detectHardware.
+	// Optional — older acorns won't send it; SPORE renders it as a
+	// "## Machine" sub-block in the Project Context section when
+	// present.
+	Hardware *Hardware `json:"hardware,omitempty"`
+}
+
+// Hardware is the optional machine-spec sub-struct on ProjectContext.
+// All fields are best-effort — detectHardware silently skips probes
+// that fail or aren't applicable to the current OS. Empty fields are
+// elided from the JSON via omitempty so unsupported probes don't
+// pollute the prompt.
+type Hardware struct {
+	Kernel   string   `json:"kernel,omitempty"`   // "Linux 5.10.28-Unraid", "Darwin 24.0.0", "Windows 10.0.19045"
+	CPUModel string   `json:"cpuModel,omitempty"` // "AMD Ryzen 9 5950X 16-Core Processor"
+	CPUCores int      `json:"cpuCores,omitempty"` // runtime.NumCPU()
+	RAMGi    int      `json:"ramGi,omitempty"`    // total physical, GiB rounded
+	GPU      []string `json:"gpu,omitempty"`      // ["NVIDIA RTX 4090 24576MiB driver 545.29.06", "CUDA 12.3"]
 }
 
 // ServerCapabilities — SPORE advertises feature support on connection.
