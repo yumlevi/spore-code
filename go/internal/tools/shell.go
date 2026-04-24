@@ -36,14 +36,45 @@ var blockedPaths = []string{
 }
 
 // backgroundHints — commands likely to run forever; the Python version
-// auto-backgrounds these. Go port doesn't yet have a process manager, so
-// we just refuse them with a useful error.
+// Substrings that mark a command as "long-running dev server" — exec
+// auto-backgrounds these via bg.Manager so the agent's tool call
+// returns immediately with a processId instead of blocking forever
+// on output the command never stops producing. Match is plain
+// strings.Contains, so anything inside the command line counts (e.g.
+// "cd path && npx expo start" matches "expo start").
+//
+// Last expanded 2026-04-24 after a real stuck session: agent ran
+// `npx expo start --localhost ...` which didn't match any hint and
+// hung the turn until /stop. Added expo, the four major npm-runner
+// equivalents (pnpm/bun/yarn dev/start), and the common dev-server
+// CLIs from other ecosystems (ng serve, astro dev, nuxt dev, etc.).
 var backgroundHints = []string{
-	"npm start", "npm run dev", "npm run serve", "yarn start", "yarn dev",
-	"python -m http.server", "python manage.py runserver",
-	"node server", "nodemon", "next dev", "vite",
-	"flask run", "uvicorn", "gunicorn", "cargo run",
+	// Node ecosystem package-runners + their dev/start/serve aliases
+	"npm start", "npm run dev", "npm run serve",
+	"yarn start", "yarn dev", "yarn serve",
+	"pnpm start", "pnpm dev", "pnpm serve",
+	"bun start", "bun dev", "bun --hot",
+	// Common JS/TS dev servers (caught regardless of the runner prefix)
+	"next dev", "vite", "nuxt dev", "astro dev", "remix dev",
+	"svelte-kit dev", "svelte dev", "gatsby develop", "gatsby serve",
+	"ng serve", "ember serve", "vue-cli-service serve",
+	"expo start", "expo serve",
+	"nodemon", "ts-node-dev", "tsx watch", "node --watch",
+	// Direct node entrypoints
+	"node server",
+	// Python servers
+	"python -m http.server", "python3 -m http.server",
+	"python manage.py runserver", "python3 manage.py runserver",
+	"flask run", "uvicorn", "gunicorn", "fastapi dev",
+	"streamlit run", "gradio",
+	// Other ecosystems
+	"cargo run", "cargo watch",
+	"rails server", "rails s ", "mix phx.server",
+	"hugo serve", "jekyll serve", "mkdocs serve",
+	"go run ", "air ",
+	"php -S", "php artisan serve",
 	"docker compose up", "docker-compose up",
+	// Tail / watch
 	"tail -f", "watch ",
 }
 
