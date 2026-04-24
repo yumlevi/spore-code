@@ -34,6 +34,16 @@ type chatMsg struct {
 	Text      string
 	Timestamp time.Time
 	Streaming bool
+
+	// Questions-block streaming state. When the assistant emits
+	// `\nQUESTIONS:` in plan mode, appendDelta flips InQuestionsBlock
+	// and routes subsequent deltas into QuestionsBuf instead of Text
+	// so the raw JSON never appears in the visible chat. On
+	// chat:done the buffer is parsed into the questions modal; on
+	// parse failure it's flushed back into Text as a safety net so
+	// nothing is silently eaten.
+	InQuestionsBlock bool
+	QuestionsBuf     string
 }
 
 // Model is the Bubble Tea Model.
@@ -111,6 +121,7 @@ type Model struct {
 	// Side panel state for code viewer + subagent activity.
 	codeViews    []codeViewEntry
 	subagents    *subagentPanel
+	planTasks    *planTaskPanel     // plan-mode execution checklist (task:* frames)
 	panelExpand  bool               // ctrl+p opens a full-height browser
 	panelView    viewport.Model     // scrollable viewport for the expanded panel
 	panelViewInit bool
@@ -485,10 +496,78 @@ func (m *Model) appendDelta(t string) {
 	}
 	// Re-resolve every call — the pointer would be stale if anything
 	// else appended to m.messages since startStream.
-	if msg := m.streamMsg(); msg != nil {
+	msg := m.streamMsg()
+	if msg == nil {
+		return
+	}
+	// Plan-mode questions intercept: once the rolling text contains a
+	// newline-anchored "QUESTIONS:" marker, everything from that
+	// point on goes into QuestionsBuf instead of visible Text. The
+	// JSON body is handed to the questions parser on chat:done; on
+	// parse failure the buffer is flushed back into Text so a
+	// malformed emission isn't lost silently.
+	if msg.InQuestionsBlock {
+		msg.QuestionsBuf += t
+		m.rerenderViewport()
+		return
+	}
+	combined := msg.Text + t
+	if idx := findQuestionsMarker(combined); idx >= 0 {
+		// Split: everything up to (and including) the QUESTIONS: line
+		// prefix stays in Text; the rest goes into QuestionsBuf.
+		// findQuestionsMarker returns the index of the 'Q' in
+		// QUESTIONS:, so split AT that index (drop the marker from
+		// visible chat too — it's UI noise once we're extracting).
+		// Keep the preceding newline so the text reads naturally.
+		msg.Text = strings.TrimRight(combined[:idx], " \t")
+		// Strip a trailing newline so the visible lead-in doesn't
+		// end with a dangling blank line.
+		msg.Text = strings.TrimRight(msg.Text, "\n")
+		// Buffer starts from the marker onward (including
+		// "QUESTIONS:" line) so the existing parser sees its expected
+		// input shape.
+		msg.QuestionsBuf = combined[idx:]
+		msg.InQuestionsBlock = true
+	} else {
 		msg.Text += t
 	}
 	m.rerenderViewport()
+}
+
+// findQuestionsMarker scans s for the left-anchored QUESTIONS: marker
+// that plan mode uses to signal a questions block. Returns the index
+// of the 'Q' in "QUESTIONS:", or -1 if not present. The marker is
+// recognized only when it appears at the start of a line (so it
+// doesn't fire on references to the word inside prose).
+func findQuestionsMarker(s string) int {
+	const marker = "QUESTIONS:"
+	// Fast-path: single-scan using index + anchor check.
+	start := 0
+	for {
+		i := strings.Index(s[start:], marker)
+		if i < 0 {
+			return -1
+		}
+		abs := start + i
+		// Left-anchor check: either at the very start of s, or
+		// preceded by a newline. Tolerate leading spaces/tabs too
+		// (indented markers happen).
+		if abs == 0 {
+			return abs
+		}
+		// Walk back through horizontal whitespace; must hit a newline.
+		j := abs - 1
+		for j >= 0 && (s[j] == ' ' || s[j] == '\t') {
+			j--
+		}
+		if j < 0 || s[j] == '\n' {
+			return abs
+		}
+		start = abs + len(marker)
+		if start >= len(s) {
+			return -1
+		}
+	}
 }
 
 func (m *Model) endStream() {

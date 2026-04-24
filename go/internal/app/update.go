@@ -860,6 +860,14 @@ func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 		// straight to a tool without any text, no empty bordered
 		// box appears in the transcript.
 		m.thinkingBuf = ""
+		// Reap completed subagent rows from prior turns so the panel
+		// shows only the current turn's activity. Tasks finished
+		// >5s ago get dropped; if the panel becomes empty, it
+		// disappears entirely next render.
+		m.pruneSubagents()
+		// Same for the plan-tasks panel (phase 4): prune completed
+		// rows >5s old at the start of a new turn.
+		m.prunePlanTasks()
 	case "chat:delta":
 		var v proto.ChatDelta
 		_ = json.Unmarshal(f.Raw, &v)
@@ -1131,6 +1139,15 @@ func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 			_ = json.Unmarshal(f.Raw, &raw)
 			m.handleSubagentFrame(verb, raw)
 		}
+		// Plan-mode checklist — task:create / task:update from SPORE
+		// when the agent calls task_create / task_progress during a
+		// plan execution. Route into the plan-tasks panel.
+		if strings.HasPrefix(f.Type, "task:") {
+			verb := strings.TrimPrefix(f.Type, "task:")
+			var raw map[string]any
+			_ = json.Unmarshal(f.Raw, &raw)
+			m.handleTaskFrame(verb, raw)
+		}
 	}
 	return nil
 }
@@ -1222,7 +1239,8 @@ func (m *Model) postStreamChecks() tea.Cmd {
 	if m.currentStreamIdx >= 0 || len(m.messages) == 0 {
 		return nil
 	}
-	last := m.messages[len(m.messages)-1]
+	lastIdx := len(m.messages) - 1
+	last := m.messages[lastIdx]
 	if last.Role != "assistant" {
 		return nil
 	}
@@ -1230,10 +1248,37 @@ func (m *Model) postStreamChecks() tea.Cmd {
 	if hasPlan {
 		m.stashedPlan = last.Text
 	}
-	if qs := parseQuestionsBlock(last.Text); qs != nil {
+	// If we intercepted a QUESTIONS: block during streaming, the
+	// JSON body lives on `last.QuestionsBuf` (not `last.Text`).
+	// Feed the parser from the buffer when present. On parse success
+	// the buffer stays out of visible chat; on failure we flush it
+	// back into Text so malformed output is visible for debugging.
+	questionSource := last.Text
+	usedBuffer := false
+	if last.InQuestionsBlock && last.QuestionsBuf != "" {
+		questionSource = last.QuestionsBuf
+		usedBuffer = true
+	}
+	if qs := parseQuestionsBlock(questionSource); qs != nil {
 		m.questionsRetryAttempted = false // success — clear the retry flag
+		// Clear the buffer flags now that we've consumed it so any
+		// later re-render doesn't try to keep hiding the markers.
+		if usedBuffer {
+			m.messages[lastIdx].QuestionsBuf = ""
+			m.messages[lastIdx].InQuestionsBlock = false
+		}
 		m.openQuestionModal(qs)
 		return nil
+	}
+	// Parse failed. Flush the buffer into visible chat so the user
+	// sees what the agent was trying to emit instead of silently
+	// losing it — then fall through to the retry path below, which
+	// reads from last.Text.
+	if usedBuffer {
+		m.messages[lastIdx].Text += "\n\n" + last.QuestionsBuf
+		m.messages[lastIdx].QuestionsBuf = ""
+		m.messages[lastIdx].InQuestionsBlock = false
+		last = m.messages[lastIdx]
 	}
 	// QUESTIONS: marker present but nothing parseable came back. Model
 	// probably emitted broken JSON mid-stream (Kimi-class observed

@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -372,6 +373,23 @@ type subagentState struct {
 	Status  string
 	Lines   []string
 	Updated time.Time
+
+	// Progress fields populated from the richer subagent:* frame types
+	// (iter, iter_done, tool_call, tool_start, tool_progress, heartbeat,
+	// thinking, thinking_start, text, done). Previously the client only
+	// handled start/line/log/done/error so all this progress info was
+	// dropped on the floor and the panel sat at "(running)" forever.
+	CurrentIter    int    // latest iteration number
+	MaxIter        int    // cap on iteration count (from iter frames)
+	CurrentTool    string // tool name currently executing, cleared on iter_done
+	Elapsed        int    // seconds, from heartbeat
+	ThinkingTokens int    // cumulative thinking tokens this iter
+	StreamChars    int    // chars streamed this iter
+
+	// Completion stats (populated on done/error).
+	FinalElapsed  int
+	FinalIters    int
+	FinalTools    int
 }
 
 func newSubagentPanel() *subagentPanel {
@@ -399,6 +417,41 @@ func (m *Model) handleSubagentFrame(verb string, raw map[string]any) {
 	switch verb {
 	case "start":
 		st.Title = asString(raw["task"], asString(raw["title"], ""))
+	case "iter":
+		// New iteration begins — reset per-iter counters so the status
+		// line reflects the current turn, not the cumulative total.
+		st.CurrentIter = asInt(raw["iteration"], st.CurrentIter)
+		st.MaxIter = asInt(raw["maxIter"], st.MaxIter)
+		st.CurrentTool = ""
+		st.ThinkingTokens = 0
+		st.StreamChars = 0
+	case "iter_done":
+		// Iteration finished; clear the "currently running tool"
+		// indicator so the status line doesn't say exec(...) while
+		// the next iter starts thinking.
+		st.CurrentTool = ""
+	case "tool_start", "tool_call":
+		st.CurrentTool = asString(raw["tool"], st.CurrentTool)
+	case "tool_progress":
+		// Tool still running — just bump Updated, no field change.
+	case "heartbeat":
+		st.CurrentIter = asInt(raw["iteration"], st.CurrentIter)
+		st.Elapsed = asInt(raw["elapsed"], st.Elapsed)
+		st.ThinkingTokens = asInt(raw["thinking"], st.ThinkingTokens)
+		st.StreamChars = asInt(raw["chars"], st.StreamChars)
+		if tool := asString(raw["toolName"], ""); tool != "" {
+			st.CurrentTool = tool
+		}
+	case "thinking_start":
+		st.CurrentTool = "thinking"
+	case "thinking":
+		st.ThinkingTokens = asInt(raw["tokens"], st.ThinkingTokens)
+	case "text":
+		// Streaming text — track chars for the status line. Ignore
+		// the text body itself; we don't show it in the side panel.
+		if t := asString(raw["text"], ""); t != "" {
+			st.StreamChars += len(t)
+		}
 	case "line", "log":
 		line := asString(raw["text"], asString(raw["line"], ""))
 		if line != "" {
@@ -409,10 +462,233 @@ func (m *Model) handleSubagentFrame(verb string, raw map[string]any) {
 		}
 	case "done":
 		st.Status = "done"
+		st.CurrentTool = ""
+		st.FinalElapsed = asInt(raw["elapsed"], st.Elapsed)
+		st.FinalIters = asInt(raw["iterations"], st.CurrentIter)
+		st.FinalTools = asInt(raw["toolCalls"], 0)
 	case "error":
 		st.Status = "error"
+		st.CurrentTool = ""
 	case "cancelled":
 		st.Status = "cancelled"
+		st.CurrentTool = ""
+	}
+}
+
+// asInt extracts an integer from an arbitrary JSON value. Handles
+// float64 (the default numeric type from encoding/json), int, and
+// numeric strings. Returns `def` on anything unparseable.
+func asInt(v any, def int) int {
+	switch x := v.(type) {
+	case int:
+		return x
+	case int64:
+		return int(x)
+	case float64:
+		return int(x)
+	case string:
+		if n, err := strconv.Atoi(x); err == nil {
+			return n
+		}
+	}
+	return def
+}
+
+// ── Plan-task panel — mirrors the subagent panel shape ──────────────
+//
+// Renders the checklist built during plan-mode execute turns. SPORE
+// sends `task:create` + `task:update` frames when the agent calls
+// `task_create` / `task_progress` during a plan execution. Status
+// progression: pending → in_progress → done|error|cancelled.
+
+type planTaskPanel struct {
+	Tasks map[string]*planTaskState
+	Order []string
+}
+
+type planTaskState struct {
+	ID         string
+	Subject    string
+	Status     string // pending | in_progress | done | error | cancelled | blocked
+	Note       string
+	Updated    time.Time
+	SessionKey string // for future multi-session filtering; not used yet
+}
+
+func newPlanTaskPanel() *planTaskPanel {
+	return &planTaskPanel{Tasks: map[string]*planTaskState{}}
+}
+
+func (m *Model) handleTaskFrame(verb string, raw map[string]any) {
+	if m.planTasks == nil {
+		m.planTasks = newPlanTaskPanel()
+	}
+	id := asString(raw["id"], asString(raw["taskId"], ""))
+	if id == "" {
+		return
+	}
+	st, ok := m.planTasks.Tasks[id]
+	if !ok {
+		st = &planTaskState{ID: id, Status: "pending"}
+		m.planTasks.Tasks[id] = st
+		m.planTasks.Order = append(m.planTasks.Order, id)
+	}
+	st.Updated = time.Now()
+	st.SessionKey = asString(raw["sessionKey"], st.SessionKey)
+	switch verb {
+	case "create":
+		if s := asString(raw["subject"], ""); s != "" {
+			st.Subject = s
+		}
+		if s := asString(raw["status"], ""); s != "" {
+			st.Status = s
+		}
+	case "update":
+		if s := asString(raw["status"], ""); s != "" {
+			st.Status = s
+		}
+		// Prefer the more specific of note / result if present.
+		if n := asString(raw["note"], ""); n != "" {
+			st.Note = n
+		} else if r := asString(raw["result"], ""); r != "" {
+			st.Note = r
+		}
+		if s := asString(raw["subject"], ""); s != "" && st.Subject == "" {
+			st.Subject = s
+		}
+	}
+}
+
+// prunePlanTasks — same contract as pruneSubagents: called on new
+// chat:start; drops terminal rows older than 5s.
+func (m *Model) prunePlanTasks() {
+	if m.planTasks == nil {
+		return
+	}
+	cutoff := time.Now().Add(-5 * time.Second)
+	keep := m.planTasks.Order[:0]
+	for _, id := range m.planTasks.Order {
+		st := m.planTasks.Tasks[id]
+		if st == nil {
+			continue
+		}
+		if (st.Status == "done" || st.Status == "error" || st.Status == "cancelled") && st.Updated.Before(cutoff) {
+			delete(m.planTasks.Tasks, id)
+			continue
+		}
+		keep = append(keep, id)
+	}
+	m.planTasks.Order = keep
+	if len(m.planTasks.Order) == 0 {
+		m.planTasks = nil
+	}
+}
+
+// renderPlanTasksPanel — bordered side panel showing the plan-mode
+// execution checklist. Returns "" when there are no rows so the
+// caller can lay out without reserving width.
+func (m *Model) renderPlanTasksPanel(width, maxH int) string {
+	if m.planTasks == nil || len(m.planTasks.Order) == 0 || width < 20 || maxH < 5 {
+		return ""
+	}
+	title := lipgloss.NewStyle().Bold(true).Foreground(m.theme.Accent2).Render("Plan Tasks")
+	bodyH := maxH - 4
+	if bodyH < 1 {
+		bodyH = 1
+	}
+	// One line per task row; note line adds a 2nd line when present.
+	// Budget 2 lines per task and take from the tail.
+	perTask := 2
+	maxTasks := bodyH / perTask
+	if maxTasks < 1 {
+		maxTasks = 1
+	}
+	start := len(m.planTasks.Order) - maxTasks
+	if start < 0 {
+		start = 0
+	}
+	var lines []string
+	for _, id := range m.planTasks.Order[start:] {
+		st := m.planTasks.Tasks[id]
+		if st == nil {
+			continue
+		}
+		icon := "◯"
+		color := m.theme.Muted
+		switch st.Status {
+		case "in_progress":
+			icon = "◐"
+			color = m.theme.Accent
+		case "done":
+			icon = "✓"
+			color = m.theme.Success
+		case "error":
+			icon = "✗"
+			color = m.theme.Error
+		case "cancelled":
+			icon = "✕"
+			color = m.theme.Muted
+		case "blocked":
+			icon = "⏸"
+			color = m.theme.Muted
+		}
+		subject := st.Subject
+		if subject == "" {
+			subject = "(" + shortID(id) + ")"
+		}
+		row := trimTo(icon+" "+subject, width-4)
+		lines = append(lines, lipgloss.NewStyle().Foreground(color).Bold(st.Status == "in_progress").Render(row))
+		if st.Note != "" {
+			note := trimTo(st.Note, width-6)
+			lines = append(lines, lipgloss.NewStyle().Foreground(m.theme.Muted).Italic(true).Render("   "+note))
+		}
+	}
+	more := ""
+	if start > 0 {
+		more = "\n" + lipgloss.NewStyle().Foreground(m.theme.Muted).Render(
+			"  "+itoa(start)+" earlier hidden")
+	}
+	inner := title + "\n\n" + strings.Join(lines, "\n") + more
+	innerLines := strings.Split(inner, "\n")
+	if len(innerLines) > maxH-2 {
+		innerLines = innerLines[len(innerLines)-(maxH-2):]
+		inner = strings.Join(innerLines, "\n")
+	}
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(m.theme.Accent2).
+		Padding(0, 1).
+		Width(width - 2).
+		Height(maxH - 2).
+		MaxHeight(maxH).
+		Render(inner)
+}
+
+// pruneSubagents — called when a new user turn begins (chat:start).
+// Removes tasks whose terminal status is older than 5 seconds so the
+// panel doesn't show stale completed rows next to the new activity.
+// If pruning empties the panel entirely, drop it so renderSubagentPanel
+// returns "" and the chat column reclaims the width.
+func (m *Model) pruneSubagents() {
+	if m.subagents == nil {
+		return
+	}
+	cutoff := time.Now().Add(-5 * time.Second)
+	keep := m.subagents.Order[:0]
+	for _, id := range m.subagents.Order {
+		st := m.subagents.Tasks[id]
+		if st == nil {
+			continue
+		}
+		if (st.Status == "done" || st.Status == "error" || st.Status == "cancelled") && st.Updated.Before(cutoff) {
+			delete(m.subagents.Tasks, id)
+			continue
+		}
+		keep = append(keep, id)
+	}
+	m.subagents.Order = keep
+	if len(m.subagents.Order) == 0 {
+		m.subagents = nil
 	}
 }
 
@@ -425,8 +701,9 @@ func (m *Model) renderSubagentPanel(width, maxH int) string {
 	if bodyH < 1 {
 		bodyH = 1
 	}
-	// Each task: 1 title line + 1 status line = 2 lines. Fit from tail.
-	perTask := 2
+	// Each task: 1 header line + 1 title line + (sometimes) 1 status line.
+	// Budget 3 lines per task so rows don't clip mid-row.
+	perTask := 3
 	maxTasks := bodyH / perTask
 	if maxTasks < 1 {
 		maxTasks = 1
@@ -455,8 +732,46 @@ func (m *Model) renderSubagentPanel(width, maxH int) string {
 		if label == "" {
 			label = "(running)"
 		}
+		// Build the status line. For running tasks, show current iter,
+		// current tool (or "thinking"), and elapsed seconds. For
+		// terminal states, show the final iter/tool count + elapsed.
+		var status string
+		switch st.Status {
+		case "done":
+			if st.FinalIters > 0 || st.FinalElapsed > 0 {
+				status = fmt.Sprintf("%d iters │ %d tools │ %ds", st.FinalIters, st.FinalTools, st.FinalElapsed)
+			}
+		case "error", "cancelled":
+			if st.CurrentIter > 0 {
+				status = fmt.Sprintf("stopped at iter %d │ %ds", st.CurrentIter, st.Elapsed)
+			}
+		default: // running
+			var parts []string
+			if st.CurrentIter > 0 {
+				if st.MaxIter > 0 {
+					parts = append(parts, fmt.Sprintf("iter %d/%d", st.CurrentIter, st.MaxIter))
+				} else {
+					parts = append(parts, fmt.Sprintf("iter %d", st.CurrentIter))
+				}
+			}
+			if st.CurrentTool != "" {
+				parts = append(parts, st.CurrentTool)
+			} else if st.ThinkingTokens > 0 {
+				parts = append(parts, fmt.Sprintf("thinking %d tok", st.ThinkingTokens))
+			} else if st.StreamChars > 0 {
+				parts = append(parts, fmt.Sprintf("writing %d ch", st.StreamChars))
+			}
+			if st.Elapsed > 0 {
+				parts = append(parts, fmt.Sprintf("%ds", st.Elapsed))
+			}
+			status = strings.Join(parts, " │ ")
+		}
 		tag := lipgloss.NewStyle().Bold(true).Foreground(color).Render(icon + " " + shortID(id))
 		lines = append(lines, tag, lipgloss.NewStyle().Foreground(m.theme.Muted).Render("   "+label))
+		if status != "" {
+			statusLine := trimTo(status, width-6)
+			lines = append(lines, lipgloss.NewStyle().Foreground(m.theme.Muted).Italic(true).Render("   "+statusLine))
+		}
 	}
 	more := ""
 	if start > 0 {

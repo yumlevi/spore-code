@@ -247,7 +247,7 @@ func (m *Model) renderSidePanels() string {
 	if m.codePanelWidth() == 0 {
 		return ""
 	}
-	if len(m.codeViews) == 0 && (m.subagents == nil || len(m.subagents.Order) == 0) {
+	if len(m.codeViews) == 0 && (m.subagents == nil || len(m.subagents.Order) == 0) && (m.planTasks == nil || len(m.planTasks.Order) == 0) {
 		return ""
 	}
 	// Stub width-only; real render happens in renderSidePanelsBounded.
@@ -268,22 +268,47 @@ func (m *Model) renderSidePanelsBounded(totalH int) string {
 	}
 	showCode := len(m.codeViews) > 0
 	showSub := m.subagents != nil && len(m.subagents.Order) > 0
-	if !showCode && !showSub {
+	showPlan := m.planTasks != nil && len(m.planTasks.Order) > 0
+	if !showCode && !showSub && !showPlan {
 		return ""
 	}
-	codeH, subH := totalH, totalH
-	if showCode && showSub {
-		codeH = totalH / 2
-		subH = totalH - codeH
+	// Split available height evenly across the visible panels. Plan
+	// tasks, when visible, goes on top (priority: the user is actively
+	// tracking progress through it), subagent below, code view at the
+	// bottom. When odd remainder, earlier panels absorb the extra.
+	n := 0
+	if showPlan {
+		n++
+	}
+	if showSub {
+		n++
+	}
+	if showCode {
+		n++
+	}
+	each := totalH / n
+	extra := totalH - each*n
+	heightFor := func() int {
+		h := each
+		if extra > 0 {
+			h++
+			extra--
+		}
+		return h
 	}
 	var panels []string
-	if showCode {
-		if p := m.renderCodePanel(cw, codeH); p != "" {
+	if showPlan {
+		if p := m.renderPlanTasksPanel(cw, heightFor()); p != "" {
 			panels = append(panels, p)
 		}
 	}
 	if showSub {
-		if p := m.renderSubagentPanel(cw, subH); p != "" {
+		if p := m.renderSubagentPanel(cw, heightFor()); p != "" {
+			panels = append(panels, p)
+		}
+	}
+	if showCode {
+		if p := m.renderCodePanel(cw, heightFor()); p != "" {
 			panels = append(panels, p)
 		}
 	}
