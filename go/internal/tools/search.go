@@ -7,7 +7,58 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 )
+
+// globMatch supports doublestar (`**` spans `/`) and forward-slash paths
+// on every OS, which Go's stdlib filepath.Match does NOT (single `*`
+// doesn't cross `/`, and on Windows the path separator is `\` so a
+// pattern containing `/` would never match a real path).
+//
+// Translation rules:
+//   `**`  → `.*`           (zero or more chars, including `/`)
+//   `*`   → `[^/]*`         (zero or more non-`/` chars — single segment)
+//   `?`   → `[^/]`           (single non-`/` char)
+//   else  → regexp.QuoteMeta-ed literal
+//
+// Cached per pattern (we hit the same patterns many times during a
+// WalkDir loop). The candidate path is forward-slash-normalized
+// before matching so the same pattern works on Windows.
+var globReCache sync.Map // map[string]*regexp.Regexp
+
+func globMatch(pattern, candidate string) bool {
+	candidate = filepath.ToSlash(candidate)
+	if v, ok := globReCache.Load(pattern); ok {
+		return v.(*regexp.Regexp).MatchString(candidate)
+	}
+	var b strings.Builder
+	b.WriteString(`\A`)
+	for i := 0; i < len(pattern); i++ {
+		switch c := pattern[i]; c {
+		case '*':
+			if i+1 < len(pattern) && pattern[i+1] == '*' {
+				b.WriteString(`.*`)
+				i++ // consume the second *
+			} else {
+				b.WriteString(`[^/]*`)
+			}
+		case '?':
+			b.WriteString(`[^/]`)
+		case '.', '+', '(', ')', '|', '^', '$', '{', '}', '[', ']', '\\':
+			b.WriteByte('\\')
+			b.WriteByte(c)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	b.WriteString(`\z`)
+	re, err := regexp.Compile(b.String())
+	if err != nil {
+		return false
+	}
+	globReCache.Store(pattern, re)
+	return re.MatchString(candidate)
+}
 
 var noiseDirs = map[string]bool{
 	".git": true, "node_modules": true, "__pycache__": true, ".venv": true, "venv": true,
@@ -38,10 +89,15 @@ func Glob(input map[string]any, cwd string) any {
 			return nil
 		}
 		rel, _ := filepath.Rel(searchPath, path)
-		if match, _ := filepath.Match(pattern, rel); match {
-			matches = append(matches, rel)
-		} else if match, _ := filepath.Match(pattern, name); match {
-			matches = append(matches, rel)
+		// Three match attempts:
+		//   1. full rel-path against the pattern  → "src/x/y.ts"
+		//   2. just the basename against the pattern → "y.ts"
+		//   3. wildcard-prefixed pattern against rel → handles agents
+		//      that send "*.ts" expecting recursive match (which Go's
+		//      stdlib filepath.Match does NOT do)
+		// All three normalize to forward-slash via globMatch.
+		if globMatch(pattern, rel) || globMatch(pattern, name) || globMatch("**/"+pattern, rel) {
+			matches = append(matches, filepath.ToSlash(rel))
 		}
 		if len(matches) >= 500 {
 			return filepath.SkipAll
@@ -101,7 +157,11 @@ func Grep(input map[string]any, cwd string) any {
 			return nil
 		}
 		if fileGlob != "" {
-			if match, _ := filepath.Match(fileGlob, d.Name()); !match {
+			// Same doublestar / cross-OS-friendly matcher as Glob.
+			// Match against basename + rel-path so "*.go" works at
+			// any depth and "src/**/*.ts" anchors from the root.
+			rel, _ := filepath.Rel(searchPath, path)
+			if !globMatch(fileGlob, d.Name()) && !globMatch(fileGlob, rel) && !globMatch("**/"+fileGlob, rel) {
 				return nil
 			}
 		}
