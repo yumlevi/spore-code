@@ -65,7 +65,53 @@ type updateCheckResult struct {
 	Err     string
 }
 
+// bootUpdateMsg is the silent variant — emitted by Init() and handled
+// only when an update is actually available. Up-to-date and any error
+// (no network on the user's box, GitHub rate-limit, etc.) are dropped
+// without spamming the chat. Don't reuse updateCheckResult here so the
+// /update check handler can stay loud for explicit user requests.
+type bootUpdateMsg struct {
+	Version string // empty if no update available or check failed
+	URL     string
+}
+
 func (r updateCheckResult) teaMsg() tea.Msg { return r }
+
+// bootCheckUpdateCmd pings GitHub once at startup. Returns bootUpdateMsg
+// with Version set ONLY when a newer release exists; up-to-date and any
+// network/HTTP error return an empty msg so the handler stays quiet.
+//
+// Wired into Init() in model.go alongside dial/recv/tool cmds. 8s
+// timeout so a slow GitHub doesn't delay the chat — the result lands
+// asynchronously whenever it returns.
+func bootCheckUpdateCmd() tea.Cmd {
+	return func() tea.Msg {
+		client := &http.Client{Timeout: 8 * time.Second}
+		req, _ := http.NewRequest("GET", "https://api.github.com/repos/yumlevi/acorn-cli/releases/latest", nil)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		resp, err := client.Do(req)
+		if err != nil {
+			return bootUpdateMsg{}
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != 200 {
+			return bootUpdateMsg{}
+		}
+		var rel struct {
+			TagName string `json:"tag_name"`
+			URL     string `json:"html_url"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
+			return bootUpdateMsg{}
+		}
+		// Only surface when latest is strictly newer than the running
+		// version. versionLE returns true when 'a <= b'; we want a < b.
+		if rel.TagName == "" || versionLE(rel.TagName, Version) {
+			return bootUpdateMsg{}
+		}
+		return bootUpdateMsg{Version: rel.TagName, URL: rel.URL}
+	}
+}
 
 // checkUpdateCmd pings GitHub for the latest release tag.
 func checkUpdateCmd(checkOnly bool) tea.Cmd {

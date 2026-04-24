@@ -321,6 +321,10 @@ func (m *Model) Init() tea.Cmd {
 		m.toolCmd(),
 		textarea.Blink,
 		sizePollCmd(),
+		// Background ping to GitHub Releases. Silent if up-to-date or
+		// the network is unreachable; only surfaces when a newer tag
+		// exists. See bootCheckUpdateCmd in updater.go.
+		bootCheckUpdateCmd(),
 	)
 }
 
