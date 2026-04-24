@@ -1024,9 +1024,75 @@ func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 			// same session sees the updated state too.
 			m.Broadcast("plan:set-mode", map[string]any{"enabled": m.planMode})
 		}
-	case "plan:decided",
-		"plan:show-approval", "interactive:resolved",
-		"delegate:config", "tool:awaiting-approval", "tool:approval-resolved",
+	case "chat:user-message":
+		// Inbound from a peer client (companion app or second CLI on
+		// the same session). When that peer's user typed a message,
+		// SPORE forwards the text to all OTHER session clients via
+		// _forwardToSessionPeers (gateways/web.js:4584). We push it
+		// to our local message buffer so the CLI shows the same
+		// chat history the companion does. SPORE filters out the
+		// originator so we never get our own messages back here.
+		var v struct {
+			Text     string `json:"text"`
+			UserName string `json:"userName"`
+		}
+		_ = json.Unmarshal(f.Raw, &v)
+		text := strings.TrimSpace(v.Text)
+		if text != "" {
+			m.pushChat("user", text)
+		}
+	case "interactive:resolved":
+		// Companion answered an open question picker (or another
+		// CLI did). Close ours too — they already submitted the
+		// answers to the agent on their side. Idempotent: if no
+		// question modal is open, no-op.
+		if m.modal == modalQuestion {
+			m.modal = modalNone
+			m.question = nil
+			m.pushChat("system", "Questions resolved (from companion).")
+		}
+	case "plan:decided":
+		// Companion clicked Execute/Revise/Cancel on the plan modal.
+		// Just close ours — the action (sending the next chat turn
+		// for execute, sending feedback for revise, doing nothing
+		// for cancel) was already taken on the companion side.
+		if m.modal == modalPlan {
+			var v struct {
+				Action string `json:"action"`
+			}
+			_ = json.Unmarshal(f.Raw, &v)
+			m.modal = modalNone
+			m.planApproval = nil
+			m.stashedPlan = ""
+			label := v.Action
+			if label == "" {
+				label = "decided"
+			}
+			m.pushChat("system", "Plan "+label+" (from companion).")
+		}
+	case "tool:approval-resolved":
+		// Companion answered a tool-permission prompt. Close ours
+		// and resolve the pending blocked-tool channel so the
+		// executor's Prompt() returns. Only act if WE were also
+		// waiting; the resolve API guards against a no-op.
+		if m.modal == modalPermission {
+			var v struct {
+				Allowed bool `json:"allowed"`
+			}
+			_ = json.Unmarshal(f.Raw, &v)
+			if m.perms != nil {
+				m.perms.resolvePerm(v.Allowed, false)
+			}
+			m.modal = modalNone
+			m.permission = nil
+			label := "denied"
+			if v.Allowed {
+				label = "allowed"
+			}
+			m.pushChat("system", "Tool "+label+" (from companion).")
+		}
+	case "plan:show-approval",
+		"delegate:config", "tool:awaiting-approval",
 		"state:questions", "perm:current-mode":
 		// observer relays — outbound only here (we send these to observers)
 	case "conn:error":
