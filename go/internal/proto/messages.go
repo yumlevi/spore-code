@@ -164,6 +164,28 @@ type ServerCapabilities struct {
 type ChatStopped struct{ Type string `json:"type"` }
 type ChatCleared struct{ Type string `json:"type"` }
 
+// SessionStart — graphcorn lifecycle frame. Fired by acorn after a
+// successful WS connect, BEFORE the first chat:submit. SPORE's
+// graphcorn-server creates a `session-<sessionId>` node + edge to the
+// project node on receipt. Old SPOREs that don't recognize the frame
+// just ignore it (the unhandled-frame switch is a no-op default).
+type SessionStart struct {
+	Type           string          `json:"type"` // "session:start"
+	SessionID      string          `json:"sessionId"`
+	UserName       string          `json:"userName,omitempty"`
+	Cwd            string          `json:"cwd,omitempty"`
+	StartedAt      string          `json:"startedAt"` // RFC3339
+	ProjectContext *ProjectContext `json:"projectContext,omitempty"`
+}
+
+// SessionEnd — fired on graceful disconnect / /quit. SPORE finalizes
+// the session node (sets ended_at + turn_count + triggers summary).
+type SessionEnd struct {
+	Type      string `json:"type"` // "session:end"
+	SessionID string `json:"sessionId"`
+	EndedAt   string `json:"endedAt"`
+}
+
 // ToolRequest — server → CLI: "please execute this tool locally and send
 // tool:result back." Matches acorn/tools/executor.py inputs.
 type ToolRequest struct {

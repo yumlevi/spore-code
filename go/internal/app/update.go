@@ -92,6 +92,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		_ = m.client.Send(map[string]any{
 			"type": "chat:history-request", "sessionId": m.sess, "userName": m.cfg.Connection.User,
 		})
+		// graphcorn: announce the session to SPORE so it can create a
+		// `session-<id>` graph node immediately, before the first
+		// chat:submit. SPOREs without graphcorn-server just ignore
+		// this frame (default switch case is a no-op for unknown
+		// types). projectContext is included so SPORE can link the
+		// session to the project node in one shot — saves a roundtrip.
+		pc := BuildProjectContextWithScope(m.cwd, "execute", m.scope)
+		_ = m.client.Send(map[string]any{
+			"type":           "session:start",
+			"sessionId":      m.sess,
+			"userName":       m.cfg.Connection.User,
+			"cwd":            m.cwd,
+			"startedAt":      time.Now().UTC().Format(time.RFC3339),
+			"projectContext": pc,
+		})
 		return m, nil
 
 	case connErrorMsg:
@@ -638,6 +653,15 @@ func (m *Model) handleSlashCommand(text string) (tea.Model, tea.Cmd) {
 		if m.exec != nil && m.exec.BG != nil {
 			m.exec.BG.KillAll()
 		}
+		// graphcorn: tell SPORE we're closing so it can finalize the
+		// session node (set ended_at, count turns, dispatch the
+		// summary turn). Send before Close() so the frame actually
+		// goes out. Old SPOREs ignore unknown types.
+		_ = m.client.Send(map[string]any{
+			"type":      "session:end",
+			"sessionId": m.sess,
+			"endedAt":   time.Now().UTC().Format(time.RFC3339),
+		})
 		m.client.Close()
 		if m.dlog != nil {
 			m.dlog.Close()
