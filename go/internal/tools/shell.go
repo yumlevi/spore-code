@@ -275,6 +275,38 @@ collect:
 	err = <-done
 	duration := time.Since(start).Milliseconds()
 
+	// Inactivity-timeout safety net (mirrors Python shell.py:243-259).
+	// If we killed the foreground process for going quiet but it was
+	// still doing something (unrecognized dev server like `expo start`,
+	// long-running build, etc.), don't just report a hard error — relaunch
+	// it in the background so the user gets a processId they can monitor
+	// instead of having to /stop and retry. The bg.Manager already handles
+	// the lifecycle. Skip when pm is nil (rare — only if no bg manager wired)
+	// or when the process actually exited cleanly before the kill (exit code
+	// would be set in that path).
+	if timedOut && pm != nil {
+		bp, bgErr := pm.Launch(command, cwd)
+		if bgErr == nil {
+			mu.Lock()
+			tail := lines
+			if len(tail) > 50 {
+				tail = tail[len(tail)-50:]
+			}
+			out := strings.Join(tail, "\n") + fmt.Sprintf("\n\n[timed out after %dms of inactivity — moved to background as #%d]", inactivity.Milliseconds(), bp.ID)
+			mu.Unlock()
+			res := map[string]any{
+				"output":       out,
+				"backgrounded": true,
+				"processId":    bp.ID,
+				"note":         fmt.Sprintf("Foreground exec timed out; same command relaunched in background as #%d. Read output via `exec /bg %d`. Kill: `exec /bg kill %d`.", bp.ID, bp.ID, bp.ID),
+			}
+			if bp.LogPath != "" {
+				res["logFile"] = bp.LogPath
+			}
+			return res
+		}
+	}
+
 	mu.Lock()
 	raw := strings.Join(lines, "\n")
 	mu.Unlock()
