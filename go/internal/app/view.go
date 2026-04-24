@@ -129,12 +129,12 @@ func (m *Model) View() string {
 		return m.renderExpandedPanel()
 	}
 
-	switch m.modal {
-	case modalQuestion:
-		return m.question.view(m.width, m.height, m.input.Value())
-	case modalPlan:
-		return m.planApproval.view(m.width, m.height)
-	case modalPermission:
+	// Permission modals are urgent and brief — keep them full-screen.
+	// Questions + plan-approval render INLINE below (replacing the input
+	// bar) so the chat history stays visible above. That matches the
+	// Python acorn UX and lets the user reference the agent's message
+	// while picking an option.
+	if m.modal == modalPermission {
 		return m.permission.view(m.width, m.height, m.theme)
 	}
 
@@ -157,10 +157,21 @@ func (m *Model) View() string {
 	footer := m.renderFooter()
 	footerH := lipgloss.Height(footer)
 
-	// Input width reserves room for border.
-	m.input.SetWidth(m.width - 2)
-	inputBorder := borderStyle.Copy().BorderForeground(m.theme.Separator).Width(m.width - 2)
-	input := inputBorder.Render(m.input.View())
+	// Input region — when no modal is up, the standard textarea bar.
+	// When a question or plan-approval modal is active, the modal view
+	// takes the input row's place (full chat width, bordered, sized to
+	// its content). Same vertical slot, no full-screen takeover.
+	var input string
+	switch m.modal {
+	case modalQuestion:
+		input = m.question.view(m.width, m.height, m.input.Value())
+	case modalPlan:
+		input = m.planApproval.view(m.width, m.height)
+	default:
+		m.input.SetWidth(m.width - 2)
+		inputBorder := borderStyle.Copy().BorderForeground(m.theme.Separator).Width(m.width - 2)
+		input = inputBorder.Render(m.input.View())
+	}
 	inputH := lipgloss.Height(input)
 
 	// Provisional leftW for suggest (actual chat width may differ when

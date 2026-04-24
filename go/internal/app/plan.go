@@ -32,28 +32,25 @@ func (m *Model) openPlanModal(text string) {
 }
 
 func (pm *planModal) view(w, h int) string {
-	choices := []struct{ label, desc string }{
-		{"▶ Execute plan", "Save the plan and switch to execute mode"},
-		{"✎ Revise with feedback", "Keep planning — agent will revise"},
-		{"✕ Cancel", "Discard the plan"},
-	}
+	// Inline render: the plan text itself is already in the chat
+	// history above (the assistant's reply is what triggered this
+	// modal), so we drop the embedded preview and just show the
+	// action UI in the input slot. Matches the Python acorn UX —
+	// the user reads the plan in the chat scrollback, picks an
+	// action below.
 	var lines []string
-	lines = append(lines, accentStyle.Bold(true).Render("Plan Ready"))
-	lines = append(lines, "")
-	// Show a short preview of the plan text.
-	preview := pm.text
-	if len(preview) > 1200 {
-		preview = preview[:1200] + "\n…(truncated)"
-	}
-	lines = append(lines, botStyle.Render(preview))
-	lines = append(lines, "")
+	lines = append(lines, accentStyle.Bold(true).Render("Plan Ready")+mutedStyle.Render("  — review the plan above and choose:"))
 	if pm.noting {
 		lines = append(lines,
-			"Type feedback below — press Enter to submit, Esc to go back:",
-			"",
+			"Feedback for the agent (enter submits, esc cancels):",
 			borderStyle.Render(pm.feedback+"▌"),
 		)
 	} else {
+		choices := []struct{ label, desc string }{
+			{"▶ Execute plan", "save + switch to execute mode"},
+			{"✎ Revise with feedback", "keep planning, agent will revise"},
+			{"✕ Cancel", "discard the plan"},
+		}
 		for i, c := range choices {
 			cursor := "  "
 			label := c.label
@@ -63,22 +60,15 @@ func (pm *planModal) view(w, h int) string {
 			}
 			lines = append(lines, cursor+label+mutedStyle.Render("  "+c.desc))
 		}
-		lines = append(lines, "", mutedStyle.Render(" ↑↓ select · enter confirm · esc cancel"))
+		lines = append(lines, mutedStyle.Render(" ↑↓ select · enter confirm · esc cancel"))
 	}
 
-	boxW := w - 10
-	if boxW < 50 {
-		boxW = w - 4
-	}
-	box := borderStyle.Copy().
+	boxW := w - 2
+	return borderStyle.Copy().
 		BorderForeground(lipgloss.Color("#8b6cf7")).
 		Width(boxW).
-		Padding(1, 2).
+		Padding(0, 1).
 		Render(strings.Join(lines, "\n"))
-
-	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, box,
-		lipgloss.WithWhitespaceChars(" "),
-		lipgloss.WithWhitespaceForeground(lipgloss.Color("#0e1017")))
 }
 
 func (m *Model) updatePlanModal(km tea.KeyMsg) (tea.Model, tea.Cmd) {

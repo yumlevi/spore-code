@@ -435,20 +435,16 @@ func (qm *questionModal) view(w, h int, input string) string {
 		)
 	}
 
+	// Inline render: full chat width, bordered, sized to the content
+	// so the chat history above stays as much as possible. No
+	// lipgloss.Place — the caller (View) puts us in the input slot.
 	inner := strings.Join(lines, "\n")
-	boxW := w - 10
-	if boxW < 40 {
-		boxW = w - 4
-	}
-	box := borderStyle.Copy().
+	boxW := w - 2
+	return borderStyle.Copy().
 		BorderForeground(lipgloss.Color("#8b6cf7")).
 		Width(boxW).
-		Padding(1, 2).
+		Padding(0, 1).
 		Render(inner)
-
-	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, box,
-		lipgloss.WithWhitespaceChars(" "),
-		lipgloss.WithWhitespaceForeground(lipgloss.Color("#0e1017")))
 }
 
 // updateModal handles keystrokes while a modal is open.
