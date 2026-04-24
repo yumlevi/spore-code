@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // findGitRoot returns the git toplevel for cwd, or "" if not a git repo.
@@ -62,6 +63,18 @@ func ComputeSessionID(user, cwd string) string {
 	h := sha256.Sum256([]byte(root))
 	pathHash := hex.EncodeToString(h[:])[:8]
 	return fmt.Sprintf("cli:%s@%s-%s", user, name, pathHash)
+}
+
+// ComputeSessionIDFresh returns a UNIQUE session id for a (user, cwd)
+// pair, suffixed with a UTC timestamp:
+//
+//	cli:<user>@<project-name>-<pathhash>-<YYYYMMDDTHHMMSS>
+//
+// Used for the no-flag launch path (when AutoResume is off) and for the
+// /new slash command. Old sessions are still discoverable via /sessions
+// or `acorn -c`'s picker.
+func ComputeSessionIDFresh(user, cwd string) string {
+	return ComputeSessionID(user, cwd) + "-" + time.Now().UTC().Format("20060102T150405")
 }
 
 // execOutput runs a command and returns stdout. Convenience wrapper.

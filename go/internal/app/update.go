@@ -580,12 +580,35 @@ func (m *Model) handleSlashCommand(text string) (tea.Model, tea.Cmd) {
 		m.rerenderViewport()
 		_ = m.client.Send(map[string]any{"type": "chat:clear", "sessionId": m.sess})
 	case "/new":
-		m.sess = ComputeSessionID(m.cfg.Connection.User, m.cwd)
+		prev := m.sess
+		// Always use the fresh (timestamped) variant so the new session
+		// is genuinely distinct on the server side, even when AutoResume
+		// is on. The old session is preserved on disk + server and stays
+		// reachable via `/resume <id>` or `acorn -c`.
+		m.sess = ComputeSessionIDFresh(m.cfg.Connection.User, m.cwd)
 		m.messages = m.messages[:0]
 		m.contextSent = false
 		m.historyDirty = true
+		// Rotate the JSONL session writer + debug log so the new turns
+		// land in their own files. Without this, /new conversations
+		// would keep appending to the old session's log.
+		if m.writer != nil {
+			m.writer.Close()
+		}
+		if w, err := sessionlog.Open(m.cfg.GlobalDir, m.sess); err == nil {
+			m.writer = w
+		} else {
+			m.writer = nil
+		}
+		if m.dlog != nil {
+			m.dlog.Close()
+		}
+		m.dlog = sessionlog.OpenDebug(m.cfg.GlobalDir, m.sess, m.cfg.Connection.User, m.cwd)
 		m.rerenderViewport()
 		m.pushChat("system", "New session: "+m.sess)
+		if prev != "" && prev != m.sess {
+			m.pushChat("system", "Previous session preserved: "+prev+"  (use /resume "+prev+" to return)")
+		}
 	case "/resume":
 		if len(parts) < 2 {
 			m.pushChat("system", "Usage: /resume <sessionId>")

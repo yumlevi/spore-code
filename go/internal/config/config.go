@@ -26,9 +26,22 @@ type DisplaySection struct {
 	ShowUsage     *bool  `toml:"show_usage"`
 }
 
+// SessionSection controls launch-time session behavior.
+//
+// AutoResume = true  → no-arg `acorn` resumes the deterministic
+//                       (user, cwd)-keyed session, same as before. Useful
+//                       for users who want to pick up where they left off
+//                       on every launch.
+// AutoResume = false → no-arg `acorn` opens a fresh, timestamped session.
+//                       Use `acorn -c` to explicitly resume.
+type SessionSection struct {
+	AutoResume bool `toml:"auto_resume"`
+}
+
 type Config struct {
 	Connection ConnectionSection `toml:"connection"`
 	Display    DisplaySection    `toml:"display"`
+	Session    SessionSection    `toml:"session"`
 
 	// Resolved paths / runtime niceties (not serialized).
 	GlobalDir string `toml:"-"`
@@ -112,6 +125,9 @@ theme = %q
 show_thinking = %t
 show_tools = %t
 show_usage = %t
+
+[session]
+auto_resume = %t
 `,
 		cfg.Connection.Host, cfg.Connection.Port,
 		cfg.Connection.User, cfg.Connection.Key,
@@ -119,6 +135,7 @@ show_usage = %t
 		boolOrDefault(cfg.Display.ShowThinking, true),
 		boolOrDefault(cfg.Display.ShowTools, true),
 		boolOrDefault(cfg.Display.ShowUsage, true),
+		cfg.Session.AutoResume,
 	)
 	return os.WriteFile(path, []byte(out), 0o600)
 }

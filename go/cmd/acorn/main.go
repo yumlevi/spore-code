@@ -19,7 +19,7 @@ import (
 // version is overrideable at link time:
 //   go build -ldflags "-X main.version=v0.1.1" ./cmd/acorn
 // Falls back to the in-source default for plain `go build`.
-var version = "v0.1.18"
+var version = "v0.1.19"
 
 func main() {
 	var (
@@ -116,7 +116,16 @@ func main() {
 		}
 	}
 	if sess == "" {
-		sess = app.ComputeSessionID(cfg.Connection.User, cwd)
+		// Default: each launch gets a fresh, timestamped session so that
+		// `acorn` doesn't silently drop you into your last conversation.
+		// Set [session] auto_resume = true in config.toml to opt back into
+		// the deterministic-id behavior; -c / --session=<id> are the
+		// explicit "continue" gestures regardless.
+		if cfg.Session.AutoResume {
+			sess = app.ComputeSessionID(cfg.Connection.User, cwd)
+		} else {
+			sess = app.ComputeSessionIDFresh(cfg.Connection.User, cwd)
+		}
 	}
 
 	// isContinue is true when the user passed -c/--continue OR gave an
