@@ -65,6 +65,16 @@ var slashCatalog = []slashEntry{
 	{"/update check", "check for the latest release without installing"},
 	{"/update install", "install the latest release"},
 
+	// Background delegation policy. Backend lives in tools/executor.go;
+	// see cmdDelegate in commands.go.
+	{"/delegate", "configure background delegation policy"},
+	{"/delegate default", "research+bg ok, orchestration stays local"},
+	{"/delegate off", "no delegation at all"},
+	{"/delegate research", "only parallel web research"},
+	{"/delegate code", "research + parallel writes"},
+	{"/delegate all", "unrestricted (old behavior)"},
+	{"/delegate workers", "/delegate workers <n> — workers cap is server-side"},
+
 	{"/context", "show the project context block"},
 	{"/context refresh", "re-send project context on next message"},
 

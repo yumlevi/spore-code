@@ -1003,9 +1003,30 @@ func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 			m.perms.SetMode(PermMode(v.Mode))
 			m.pushChat("system", "Perms → "+v.Mode+" (from mobile)")
 		}
-	case "plan:decided", "plan:set-mode",
+	case "plan:set-mode":
+		// Inbound from companion app — operator toggled plan mode in
+		// the mobile/VS Code UI and we need to actually flip our state.
+		// Was previously buried in the no-op "observer relays" switch
+		// case below, which made the companion's toggle a silent
+		// no-op. Mirrors acorn/handlers/ws_events.py:389 on_plan_mode.
+		var v struct {
+			Enabled bool `json:"enabled"`
+		}
+		_ = json.Unmarshal(f.Raw, &v)
+		if v.Enabled != m.planMode {
+			m.planMode = v.Enabled
+			label := "execute"
+			if m.planMode {
+				label = "plan"
+			}
+			m.pushChat("system", "Mode → "+label+" (from companion)")
+			// Re-broadcast so any second observer connected to the
+			// same session sees the updated state too.
+			m.Broadcast("plan:set-mode", map[string]any{"enabled": m.planMode})
+		}
+	case "plan:decided",
 		"plan:show-approval", "interactive:resolved",
-		"delegate:config", "tool:awaiting-approval",
+		"delegate:config", "tool:awaiting-approval", "tool:approval-resolved",
 		"state:questions", "perm:current-mode":
 		// observer relays — outbound only here (we send these to observers)
 	case "conn:error":
@@ -1180,6 +1201,7 @@ func SlashHelp() string {
 		"/init — create ACORN.md + add .acorn/ to .gitignore",
 		"/panel [hide|show|toggle] — toggle the right-column activity panel",
 		"/scope [strict|expanded] — file-op sandbox (strict=cwd only, expanded=any path)",
+		"/delegate [default|off|research|code|all] — background delegation policy",
 		"/test [list|all|<name>] — exercise UI features without an agent round-trip",
 	}, "\n")
 }

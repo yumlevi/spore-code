@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/yumlevi/acorn-cli/go/internal/tools"
 )
 
 // slashHandler is the signature every slash command implements. The
@@ -286,6 +288,70 @@ func cmdPanel(m *Model, args []string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// cmdDelegate exposes the executor's existing DelegationMode field as a
+// slash command. Mirrors the Python /delegate at acorn/app.py:1137-1168.
+//
+//	/delegate                 show current mode + options
+//	/delegate default|off|
+//	         research|code|all set delegation mode
+//	/delegate workers <n>     status-only — see note
+//
+// The five modes are already defined as constants in tools/executor.go
+// (DelegateDefault / DelegateOff / DelegateResearch / DelegateCode /
+// DelegateAll); checkDelegation() at executor.go:198 enforces them on
+// every delegate_task call. We just route the mode change here.
+//
+// Broadcast on change: emits delegate:config so the companion app stays
+// in sync (matches Python's bridge.broadcast at app.py:1147,1156).
+//
+// Workers note: Python's /delegate workers <n> sets a *client-side* cap
+// on locally-spawned sub-agents. In Go, sub-agents run server-side on
+// SPORE, so the equivalent is SPORE_MAX_SUBAGENT_CHILDREN env on the
+// SPORE instance. We surface that as a status message rather than
+// pretending to have the knob.
+func cmdDelegate(m *Model, args []string) (tea.Model, tea.Cmd) {
+	current := "default"
+	if m.exec != nil && m.exec.Delegation != "" {
+		current = string(m.exec.Delegation)
+	}
+	descs := map[string]string{
+		"default":  "research+bg ok, orchestration stays local",
+		"off":      "no delegation at all",
+		"research": "only parallel web research",
+		"code":     "research + parallel writes",
+		"all":      "unrestricted",
+	}
+	if len(args) == 0 {
+		var b strings.Builder
+		b.WriteString("Delegation mode: " + current + "\n")
+		for _, k := range []string{"default", "off", "research", "code", "all"} {
+			b.WriteString("  /delegate " + k + " — " + descs[k] + "\n")
+		}
+		b.WriteString("  /delegate workers <n> — workers cap is server-side; see note")
+		m.pushChat("system", strings.TrimRight(b.String(), "\n"))
+		return m, nil
+	}
+	arg := strings.ToLower(args[0])
+	if arg == "workers" {
+		m.pushChat("system",
+			"Workers cap is set server-side on SPORE (env SPORE_MAX_SUBAGENT_CHILDREN, default 8). "+
+				"Edit the .env / spore.json on the SPORE instance you connect to.")
+		return m, nil
+	}
+	if _, ok := descs[arg]; !ok {
+		m.pushChat("system", "Usage: /delegate [default|off|research|code|all] (got: "+arg+")")
+		return m, nil
+	}
+	if m.exec != nil {
+		m.exec.Delegation = tools.DelegationMode(arg)
+	}
+	m.pushChat("system", "Delegation → "+arg+": "+descs[arg])
+	// Broadcast to observers so companion app's /delegate UI stays in
+	// sync. Mirrors acorn/app.py:1147,1156.
+	m.Broadcast("delegate:config", map[string]any{"mode": arg})
+	return m, nil
+}
+
 func init() {
 	register(&slashCmd{
 		Name:    "/context",
@@ -306,6 +372,11 @@ func init() {
 		Name:    "/panel",
 		Help:    "Toggle the right-column activity panel (hide|show|toggle)",
 		Handler: cmdPanel,
+	})
+	register(&slashCmd{
+		Name:    "/delegate",
+		Help:    "Configure background delegation: default|off|research|code|all (or 'workers <n>')",
+		Handler: cmdDelegate,
 	})
 	register(&slashCmd{
 		Name:    "/scope",

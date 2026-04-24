@@ -287,6 +287,19 @@ func (p *TUIPerms) Prompt(name string, input map[string]any) bool {
 		})
 	}
 
+	// Broadcast to observers (mobile / VS Code companion) so they can
+	// render the same modal or at least show "operator approval needed"
+	// state. Mirrors acorn/permissions.py:142. Safe off the Tea
+	// goroutine: m.Broadcast → conn.Client.Send is mutex-locked.
+	if p.m != nil {
+		p.m.Broadcast("tool:awaiting-approval", map[string]any{
+			"tool":      name,
+			"summary":   Summarize(name, input),
+			"dangerous": IsDangerous(name, input),
+			"rule":      p.pendingRule,
+		})
+	}
+
 	allowed := <-ch
 	p.mu.Lock()
 	p.pendingCh = nil
@@ -294,6 +307,13 @@ func (p *TUIPerms) Prompt(name string, input map[string]any) bool {
 	p.pendingInput = nil
 	p.pendingRule = ""
 	p.mu.Unlock()
+	// Companion gets the resolution too so it can dismiss its prompt UI.
+	if p.m != nil {
+		p.m.Broadcast("tool:approval-resolved", map[string]any{
+			"tool":    name,
+			"allowed": allowed,
+		})
+	}
 	return allowed
 }
 
