@@ -44,6 +44,9 @@ func TestArchitectureAcornCli(t *testing.T) {
 		for _, sym := range res.Symbols {
 			_ = tx.UpsertSymbol(sym)
 		}
+		for _, c := range res.Calls {
+			_ = tx.AddCall(Call{CallerQName: c.CallerQName, CalleeQName: c.CalleeQName, Line: c.Line}, c.CalleeName, fe.RelPath)
+		}
 		return true
 	})
 	if err := tx.Commit(); err != nil {
@@ -58,8 +61,8 @@ func TestArchitectureAcornCli(t *testing.T) {
 	if arch.Stats.Files == 0 || arch.Stats.Symbols == 0 {
 		t.Fatalf("expected non-zero stats; got %+v", arch.Stats)
 	}
-	if arch.Stats.Calls != 0 {
-		t.Errorf("expected 0 calls in M1, got %d", arch.Stats.Calls)
+	if arch.Stats.Calls == 0 {
+		t.Errorf("expected non-zero CALLS edges after M2, got %d", arch.Stats.Calls)
 	}
 
 	// Tech stack: Go must lead.
@@ -93,19 +96,12 @@ func TestArchitectureAcornCli(t *testing.T) {
 		t.Errorf("expected a main() entry point; got %d entries: %+v", len(arch.EntryPoints), arch.EntryPoints)
 	}
 
-	// Hot paths: empty in M1, with a coverage note explaining why.
-	if len(arch.HotPaths) != 0 {
-		t.Errorf("expected empty hot paths in M1, got %d", len(arch.HotPaths))
+	// Hot paths: populated after M2 added Go CALLS extraction.
+	if len(arch.HotPaths) == 0 {
+		t.Errorf("expected non-empty hot paths after M2; got 0")
 	}
-	hasCallsNote := false
-	for _, n := range arch.Notes {
-		if strings.Contains(n, "no CALLS edges") {
-			hasCallsNote = true
-			break
-		}
-	}
-	if !hasCallsNote {
-		t.Errorf("expected coverage note about missing CALLS in M1; got %v", arch.Notes)
+	for _, hp := range arch.HotPaths {
+		t.Logf("  hot %s  callers=%d  file=%s:%d", hp.QName, hp.Callers, hp.File, hp.Line)
 	}
 
 	t.Logf("architecture summary: %d files, %d symbols (%d funcs, %d methods, %d classes), %d clusters, %d entry points",

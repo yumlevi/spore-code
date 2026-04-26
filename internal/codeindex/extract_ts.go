@@ -86,6 +86,34 @@ var notAMethodKeyword = map[string]bool{
 // matching length to preserve line numbers).
 var blockCommentRE = regexp.MustCompile(`/\*[\s\S]*?\*/`)
 
+// reCallSite matches `name(` invocations. The optional `.` lets us
+// capture both bare calls (`foo()`) and method calls (`obj.foo()`); we
+// resolve the latter to a name-only edge since the receiver is opaque
+// at the regex layer.
+var reCallSite = regexp.MustCompile(`(\.\s*)?([A-Za-z_$][\w$]*)\s*\(`)
+
+// hostObjectsAndKeywords are names that, when seen in `name(` form,
+// almost always represent JS/TS builtin calls or control flow rather
+// than user-graph edges. Filtered out to keep the calls table signal-
+// dense. Method-style invocations (`.log(`) are included via the
+// callee_name column for trace_calls "find callers of log".
+var hostObjectsAndKeywords = map[string]bool{
+	// control flow / declarations
+	"if": true, "for": true, "while": true, "switch": true, "catch": true,
+	"return": true, "throw": true, "do": true, "else": true, "function": true,
+	"class": true, "interface": true, "type": true, "new": true, "await": true,
+	"yield": true, "typeof": true, "void": true, "delete": true, "in": true, "of": true,
+	"async": true, "import": true, "export": true, "require": true, "from": true,
+	// host globals (very common, low signal as call-graph edges)
+	"console": true, "Object": true, "Array": true, "JSON": true, "Math": true,
+	"Date": true, "Number": true, "String": true, "Boolean": true, "RegExp": true,
+	"Error": true, "Map": true, "Set": true, "Symbol": true, "Promise": true,
+	"BigInt": true, "Reflect": true, "Proxy": true,
+	"parseInt": true, "parseFloat": true, "isNaN": true, "isFinite": true,
+	"setTimeout": true, "setInterval": true, "clearTimeout": true, "clearInterval": true,
+	"encodeURI": true, "decodeURI": true, "encodeURIComponent": true, "decodeURIComponent": true,
+}
+
 // Extract walks the file line by line, tracking class-body depth so
 // methods get attributed to the right container.
 func (e tsExtractor) Extract(fe FileEntry, src []byte) ExtractResult {
@@ -118,6 +146,17 @@ func (e tsExtractor) Extract(fe FileEntry, src []byte) ExtractResult {
 		openDepth int
 	}
 	var stack []classFrame
+
+	// Function/method frame stack — used to attribute regex-detected
+	// calls to the innermost containing function/method. Pushed when
+	// a function declaration or class member is recognized AND its
+	// body opens with `{`. Popped when depth drops below openDepth.
+	type funcFrame struct {
+		callerQName string
+		openDepth   int
+	}
+	var fstack []funcFrame
+
 	depth := 0
 	exportedNext := false
 
@@ -130,8 +169,9 @@ func (e tsExtractor) Extract(fe FileEntry, src []byte) ExtractResult {
 		if len(stack) == 0 {
 			if m := reTopFunc.FindStringSubmatch(raw); m != nil {
 				name := m[1]
+				qn := makeQName(fe.RelPath, "", name)
 				out.Symbols = append(out.Symbols, Symbol{
-					QName:     makeQName(fe.RelPath, "", name),
+					QName:     qn,
 					Name:      name,
 					Kind:      "function",
 					File:      fe.RelPath,
@@ -141,6 +181,11 @@ func (e tsExtractor) Extract(fe FileEntry, src []byte) ExtractResult {
 					Language:  e.lang,
 					Exported:  strings.Contains(raw, "export "),
 				})
+				if strings.Contains(stripped, "{") {
+					fstack = append(fstack, funcFrame{callerQName: qn, openDepth: depth})
+				} else {
+					fstack = append(fstack, funcFrame{callerQName: qn, openDepth: -1})
+				}
 			} else if m := reTopConstFunc.FindStringSubmatch(raw); m != nil {
 				name := m[1]
 				out.Symbols = append(out.Symbols, Symbol{
@@ -234,8 +279,9 @@ func (e tsExtractor) Extract(fe FileEntry, src []byte) ExtractResult {
 						if name == "constructor" {
 							kind = "constructor"
 						}
+						qn := makeQName(fe.RelPath, top.name, name)
 						out.Symbols = append(out.Symbols, Symbol{
-							QName:     makeQName(fe.RelPath, top.name, name),
+							QName:     qn,
 							Name:      name,
 							Kind:      kind,
 							File:      fe.RelPath,
@@ -246,7 +292,41 @@ func (e tsExtractor) Extract(fe FileEntry, src []byte) ExtractResult {
 							Container: top.name,
 							Exported:  isExportedJS(name),
 						})
+						// Push function frame so calls in the body
+						// attribute back to this method.
+						if strings.Contains(stripped, "{") {
+							fstack = append(fstack, funcFrame{callerQName: qn, openDepth: depth})
+						} else {
+							fstack = append(fstack, funcFrame{callerQName: qn, openDepth: -1})
+						}
 					}
+				}
+			}
+		}
+
+		// Call extraction — only attempted while we're inside a known
+		// function body (innermost frame on fstack). Suppresses the
+		// declaration line of the function itself by checking that
+		// at least one frame is fully open at this depth.
+		if len(fstack) > 0 {
+			top := fstack[len(fstack)-1]
+			if top.openDepth >= 0 && depth > top.openDepth {
+				for _, m := range reCallSite.FindAllStringSubmatchIndex(stripped, -1) {
+					// m: [matchStart, matchEnd, dotStart, dotEnd, nameStart, nameEnd]
+					nameStart, nameEnd := m[4], m[5]
+					if nameStart < 0 {
+						continue
+					}
+					name := stripped[nameStart:nameEnd]
+					if hostObjectsAndKeywords[name] {
+						continue
+					}
+					out.Calls = append(out.Calls, ExtractedCall{
+						CallerQName: top.callerQName,
+						CalleeQName: "", // regex layer can't resolve; query side matches by callee_name
+						CalleeName:  name,
+						Line:        lineNo,
+					})
 				}
 			}
 		}
@@ -254,11 +334,15 @@ func (e tsExtractor) Extract(fe FileEntry, src []byte) ExtractResult {
 		// Brace counting. Increment first (a class header line containing
 		// `{` opens its body at the new depth).
 		opens, closes := countBraces(stripped)
-		// If the topmost frame was waiting for its `{` and we just saw
+		// If the topmost class frame was waiting for its `{` and we just saw
 		// one, set its openDepth.
 		if len(stack) > 0 && stack[len(stack)-1].openDepth < 0 && opens > 0 {
 			stack[len(stack)-1].openDepth = depth
 			_ = exportedNext // consumed
+		}
+		// Same treatment for the topmost function frame.
+		if len(fstack) > 0 && fstack[len(fstack)-1].openDepth < 0 && opens > 0 {
+			fstack[len(fstack)-1].openDepth = depth
 		}
 		depth += opens
 		depth -= closes
@@ -267,6 +351,15 @@ func (e tsExtractor) Extract(fe FileEntry, src []byte) ExtractResult {
 			f := stack[len(stack)-1]
 			if f.openDepth >= 0 && depth <= f.openDepth {
 				stack = stack[:len(stack)-1]
+				continue
+			}
+			break
+		}
+		// Pop function frames whose body has closed.
+		for len(fstack) > 0 {
+			f := fstack[len(fstack)-1]
+			if f.openDepth >= 0 && depth <= f.openDepth {
+				fstack = fstack[:len(fstack)-1]
 				continue
 			}
 			break

@@ -313,6 +313,340 @@ func Architecture(input map[string]any, cwd string) any {
 	}
 }
 
+// MaxTraceCallsEdges caps the total edges returned by trace_calls so a
+// hot symbol can't blow the agent's context budget. 200 keeps the
+// response compact (≈ 5 KB JSON) while leaving headroom for paths
+// through medium-depth fan-out.
+const MaxTraceCallsEdges = 200
+
+// TraceCalls walks CALLS edges from a starting symbol, in callers and/or
+// callees direction, up to depth N. Returns flat edges; the agent
+// reconstructs paths or asks again with a tighter depth.
+//
+// Input fields:
+//   name:       string — matches callee_name (works regardless of qname resolution)
+//   qname:      string — exact callee/caller match (preferred when known)
+//   direction:  callers | callees | both (default: callers)
+//   depth:      1..5 (default: 3)
+//   limit:      total edge cap; default and max 200
+func TraceCalls(input map[string]any, cwd string) any {
+	store, err := codeindex.Open(cwd)
+	if err != nil {
+		return errMap("open index: " + err.Error())
+	}
+	defer store.Close()
+
+	name := asString(input["name"], "")
+	qname := asString(input["qname"], "")
+	dir := strings.ToLower(asString(input["direction"], "callers"))
+	depth := asInt(input["depth"], 3)
+	if depth < 1 {
+		depth = 1
+	}
+	if depth > 5 {
+		depth = 5
+	}
+	limit := asInt(input["limit"], MaxTraceCallsEdges)
+	if limit <= 0 || limit > MaxTraceCallsEdges {
+		limit = MaxTraceCallsEdges
+	}
+	if name == "" && qname == "" {
+		return errMap("name or qname is required")
+	}
+
+	type edge struct {
+		Caller string `json:"caller"`
+		Callee string `json:"callee"`
+		Name   string `json:"callee_name"`
+		Line   int    `json:"line"`
+		Depth  int    `json:"depth"`
+	}
+	var edges []edge
+	visited := map[string]bool{}
+	truncated := false
+
+	walkCallers := func(seedQName, seedName string) {
+		// BFS frontier of (qname, name) — we may have only one or the other.
+		type frontierItem struct {
+			qname, name string
+			d           int
+		}
+		queue := []frontierItem{{seedQName, seedName, 0}}
+		key := seedQName
+		if key == "" {
+			key = seedName
+		}
+		visited[key] = true
+		for len(queue) > 0 && !truncated {
+			cur := queue[0]
+			queue = queue[1:]
+			if cur.d >= depth {
+				continue
+			}
+			callers, err := store.CallersOf(cur.qname, cur.name)
+			if err != nil {
+				continue
+			}
+			for _, c := range callers {
+				if len(edges) >= limit {
+					truncated = true
+					break
+				}
+				edges = append(edges, edge{
+					Caller: c.CallerQName,
+					Callee: c.CalleeQName,
+					Name:   cur.name,
+					Line:   c.Line,
+					Depth:  cur.d + 1,
+				})
+				if !visited[c.CallerQName] {
+					visited[c.CallerQName] = true
+					sym, _ := store.GetSymbol(c.CallerQName)
+					nextName := ""
+					if sym != nil {
+						nextName = sym.Name
+					}
+					queue = append(queue, frontierItem{c.CallerQName, nextName, cur.d + 1})
+				}
+			}
+		}
+	}
+
+	walkCallees := func(seedQName, seedName string) {
+		// For callees we need a starting qname — the caller_qname column is
+		// always populated, so we can BFS down via CalleesOf.
+		if seedQName == "" {
+			// Try to resolve a qname from the seedName via Search.
+			res, _ := store.Search(codeindex.SearchQuery{NameLike: seedName, Limit: 5})
+			for _, r := range res {
+				if r.Name == seedName {
+					seedQName = r.QName
+					break
+				}
+			}
+		}
+		if seedQName == "" {
+			return
+		}
+		type frontierItem struct {
+			qname string
+			d     int
+		}
+		queue := []frontierItem{{seedQName, 0}}
+		visited[seedQName] = true
+		for len(queue) > 0 && !truncated {
+			cur := queue[0]
+			queue = queue[1:]
+			if cur.d >= depth {
+				continue
+			}
+			callees, err := store.CalleesOf(cur.qname)
+			if err != nil {
+				continue
+			}
+			for _, c := range callees {
+				if len(edges) >= limit {
+					truncated = true
+					break
+				}
+				edges = append(edges, edge{
+					Caller: c.CallerQName,
+					Callee: c.CalleeQName,
+					Line:   c.Line,
+					Depth:  cur.d + 1,
+				})
+				next := c.CalleeQName
+				if next != "" && !visited[next] {
+					visited[next] = true
+					queue = append(queue, frontierItem{next, cur.d + 1})
+				}
+			}
+		}
+	}
+
+	switch dir {
+	case "callers":
+		walkCallers(qname, name)
+	case "callees":
+		walkCallees(qname, name)
+	case "both":
+		walkCallers(qname, name)
+		walkCallees(qname, name)
+	default:
+		return errMap("direction must be one of: callers, callees, both")
+	}
+
+	return map[string]any{
+		"ok":         true,
+		"root_name":  name,
+		"root_qname": qname,
+		"direction":  dir,
+		"depth":      depth,
+		"edges":      edges,
+		"truncated":  truncated,
+		"count":      len(edges),
+	}
+}
+
+// Impact maps a list of paths (or the current git diff) to affected
+// symbols and counts their transitive callers up to depth=2 — answering
+// "what could a change in this file break?" in token-cheap form.
+//
+// Input fields:
+//   paths:     []string — repo-relative; default: `git diff --name-only HEAD`
+//   depth:     1..3 (default: 2) — caller transitive depth
+//   limit:     total symbol cap (default 100)
+func Impact(input map[string]any, cwd string) any {
+	store, err := codeindex.Open(cwd)
+	if err != nil {
+		return errMap("open index: " + err.Error())
+	}
+	defer store.Close()
+
+	paths := asStringSlice(input["paths"])
+	if len(paths) == 0 {
+		paths = gitChangedPaths(cwd)
+	}
+	if len(paths) == 0 {
+		return map[string]any{"ok": true, "paths": nil, "affected_symbols": []any{}, "note": "no paths supplied and `git diff --name-only HEAD` is empty"}
+	}
+
+	depth := asInt(input["depth"], 2)
+	if depth < 1 {
+		depth = 1
+	}
+	if depth > 3 {
+		depth = 3
+	}
+	limit := asInt(input["limit"], 100)
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+
+	// Collect all symbols defined in the changed files. Each entry is a
+	// map for JSON-friendly typing — same shape as SearchSymbols
+	// results so the agent gets a consistent envelope across tools.
+	type affected struct {
+		qname, name, file, kind string
+		line                    int
+		transitiveCallers       int
+	}
+	var symbols []affected
+
+	for _, p := range paths {
+		res, err := store.Search(codeindex.SearchQuery{FileLike: p, Limit: 500})
+		if err != nil {
+			continue
+		}
+		for _, r := range res {
+			symbols = append(symbols, affected{
+				qname: r.QName, name: r.Name, file: r.File, line: r.StartLine, kind: r.Kind,
+			})
+			if len(symbols) >= limit {
+				break
+			}
+		}
+		if len(symbols) >= limit {
+			break
+		}
+	}
+
+	// Compute transitive caller count via BFS up to depth.
+	for i := range symbols {
+		symbols[i].transitiveCallers = countTransitiveCallers(store, symbols[i].qname, symbols[i].name, depth)
+	}
+
+	// Sort hottest first.
+	for i := 1; i < len(symbols); i++ {
+		for j := i; j > 0 && symbols[j-1].transitiveCallers < symbols[j].transitiveCallers; j-- {
+			symbols[j-1], symbols[j] = symbols[j], symbols[j-1]
+		}
+	}
+
+	out := make([]map[string]any, 0, len(symbols))
+	totalCallers := 0
+	for _, s := range symbols {
+		out = append(out, map[string]any{
+			"qname":              s.qname,
+			"name":               s.name,
+			"file":               s.file,
+			"line":               s.line,
+			"kind":               s.kind,
+			"transitive_callers": s.transitiveCallers,
+		})
+		totalCallers += s.transitiveCallers
+	}
+
+	return map[string]any{
+		"ok":               true,
+		"paths":            paths,
+		"depth":            depth,
+		"affected_symbols": out,
+		"total_callers":    totalCallers,
+	}
+}
+
+// countTransitiveCallers BFS-counts unique callers up to depth.
+func countTransitiveCallers(s *codeindex.Store, qname, name string, depth int) int {
+	type item struct {
+		qname, name string
+		d           int
+	}
+	visited := map[string]bool{}
+	if qname != "" {
+		visited[qname] = true
+	} else {
+		visited[name] = true
+	}
+	queue := []item{{qname, name, 0}}
+	count := 0
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		if cur.d >= depth {
+			continue
+		}
+		callers, err := s.CallersOf(cur.qname, cur.name)
+		if err != nil {
+			continue
+		}
+		for _, c := range callers {
+			if visited[c.CallerQName] {
+				continue
+			}
+			visited[c.CallerQName] = true
+			count++
+			sym, _ := s.GetSymbol(c.CallerQName)
+			nextName := ""
+			if sym != nil {
+				nextName = sym.Name
+			}
+			queue = append(queue, item{c.CallerQName, nextName, cur.d + 1})
+		}
+	}
+	return count
+}
+
+// gitChangedPaths returns the set of paths in `git diff --name-only HEAD`
+// limited to in-repo POSIX paths. Empty slice when git unavailable or no
+// diff. Used as the default `paths` for Impact.
+func gitChangedPaths(cwd string) []string {
+	cmd := exec.Command("git", "-C", cwd, "diff", "--name-only", "HEAD")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	var paths []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		paths = append(paths, line)
+	}
+	return paths
+}
+
 // ── helpers ─────────────────────────────────────────────────────────
 
 func errMap(msg string) map[string]any { return map[string]any{"ok": false, "error": msg} }

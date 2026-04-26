@@ -129,3 +129,63 @@ func firstChars(s string, n int) string {
 	}
 	return s[:n]
 }
+
+// TestExecutorTraceCallsAndImpact exercises the M2 tools through
+// Executor.Execute. Indexes acorn-cli itself, then asks "who calls
+// Open?" and "what does a change to internal/codeindex/store.go
+// affect?" — both should return non-empty results.
+func TestExecutorTraceCallsAndImpact(t *testing.T) {
+	root := findRepoRoot(t)
+	tmp := t.TempDir()
+	logDir := filepath.Join(tmp, "logs")
+	_ = os.MkdirAll(logDir, 0o755)
+	exe := New(allowAllPerms{}, root, logDir)
+
+	// Reset prior index so the test is self-contained.
+	_ = os.Remove(filepath.Join(root, ".acorn", "index.db"))
+	_ = os.Remove(filepath.Join(root, ".acorn", "index.db-shm"))
+	_ = os.Remove(filepath.Join(root, ".acorn", "index.db-wal"))
+	t.Cleanup(func() {
+		_ = os.Remove(filepath.Join(root, ".acorn", "index.db"))
+		_ = os.Remove(filepath.Join(root, ".acorn", "index.db-shm"))
+		_ = os.Remove(filepath.Join(root, ".acorn", "index.db-wal"))
+	})
+
+	in1, _ := json.Marshal(map[string]any{"languages": []string{"go"}, "force": true})
+	r1, _ := exe.Execute("index_codebase", in1)
+	if m, _ := r1.(map[string]any); m["ok"] != true {
+		t.Fatalf("index_codebase failed: %+v", r1)
+	}
+
+	// trace_calls direction=callers name=Open
+	in2, _ := json.Marshal(map[string]any{"name": "Open", "direction": "callers", "depth": 2})
+	r2, _ := exe.Execute("trace_calls", in2)
+	m2, _ := r2.(map[string]any)
+	if m2["ok"] != true {
+		t.Fatalf("trace_calls failed: %+v", r2)
+	}
+	count, _ := m2["count"].(int)
+	if count == 0 {
+		t.Fatalf("trace_calls returned 0 callers for Open; expected at least one (e.g. our own tools/codeindex.go callers)")
+	}
+	t.Logf("trace_calls Open callers: count=%d truncated=%v", count, m2["truncated"])
+
+	// impact paths=[internal/codeindex/store.go]
+	in3, _ := json.Marshal(map[string]any{"paths": []string{"internal/codeindex/store.go"}, "depth": 2})
+	r3, _ := exe.Execute("impact", in3)
+	m3, _ := r3.(map[string]any)
+	if m3["ok"] != true {
+		t.Fatalf("impact failed: %+v", r3)
+	}
+	syms, _ := m3["affected_symbols"].([]map[string]any)
+	if len(syms) == 0 {
+		t.Fatalf("impact returned 0 affected symbols for store.go; expected the public API")
+	}
+	t.Logf("impact: %d symbols affected, total_callers=%v", len(syms), m3["total_callers"])
+	for i, s := range syms {
+		if i >= 5 {
+			break
+		}
+		t.Logf("  - %s @ %s:%v  tc=%v", s["name"], s["file"], s["line"], s["transitive_callers"])
+	}
+}

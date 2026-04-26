@@ -65,15 +65,23 @@ func extractFuncDecl(fe FileEntry, fset *token.FileSet, d *ast.FuncDecl, out *Ex
 	name := d.Name.Name
 	kind := "function"
 	container := ""
+	receiverIdent := ""
 	if d.Recv != nil && len(d.Recv.List) > 0 {
 		kind = "method"
 		container = receiverTypeName(d.Recv.List[0])
+		// Track the receiver variable name so calls like `e.foo()`
+		// resolve to file::Container.foo.
+		if len(d.Recv.List[0].Names) > 0 && d.Recv.List[0].Names[0] != nil {
+			receiverIdent = d.Recv.List[0].Names[0].Name
+		}
 	}
 	startLine := fset.Position(d.Pos()).Line
 	endLine := fset.Position(d.End()).Line
 	sig := goFuncSignature(fset, d)
+
+	callerQName := makeQName(fe.RelPath, container, name)
 	out.Symbols = append(out.Symbols, Symbol{
-		QName:     makeQName(fe.RelPath, container, name),
+		QName:     callerQName,
 		Name:      name,
 		Kind:      kind,
 		File:      fe.RelPath,
@@ -84,6 +92,76 @@ func extractFuncDecl(fe FileEntry, fset *token.FileSet, d *ast.FuncDecl, out *Ex
 		Container: container,
 		Exported:  isExportedIdent(name),
 	})
+
+	// Walk the body for CallExpr to populate the calls table. Skip
+	// builtin "len/cap/make/new/append/copy/panic/recover" since they
+	// add noise without informative edges.
+	if d.Body == nil {
+		return
+	}
+	ast.Inspect(d.Body, func(n ast.Node) bool {
+		ce, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		callee, calleeQ := resolveGoCallee(ce.Fun, fe.RelPath, container, receiverIdent)
+		if callee == "" || isGoBuiltin(callee) {
+			return true
+		}
+		out.Calls = append(out.Calls, ExtractedCall{
+			CallerQName: callerQName,
+			CalleeQName: calleeQ,
+			CalleeName:  callee,
+			Line:        fset.Position(ce.Lparen).Line,
+		})
+		return true
+	})
+}
+
+// resolveGoCallee inspects a CallExpr's Fun and returns (name, qname).
+// qname is non-empty only when we can resolve the call against the same
+// file/container; cross-package calls leave qname blank and let the
+// query side match by callee_name.
+func resolveGoCallee(fun ast.Expr, file, ownContainer, recvIdent string) (name, qname string) {
+	switch f := fun.(type) {
+	case *ast.Ident:
+		// Bare call: foo()
+		// Same-file resolution — foo() usually resolves to the same
+		// package. Fall back to name-only matching at query time.
+		return f.Name, ""
+	case *ast.SelectorExpr:
+		// Selector form: X.name(...)
+		sel := f.Sel.Name
+		// Method on own receiver — resolve to file::ownContainer.sel
+		if recvIdent != "" {
+			if id, ok := f.X.(*ast.Ident); ok && id.Name == recvIdent && ownContainer != "" {
+				return sel, makeQName(file, ownContainer, sel)
+			}
+		}
+		return sel, ""
+	case *ast.IndexExpr:
+		return resolveGoCallee(f.X, file, ownContainer, recvIdent)
+	case *ast.IndexListExpr:
+		return resolveGoCallee(f.X, file, ownContainer, recvIdent)
+	case *ast.ParenExpr:
+		return resolveGoCallee(f.X, file, ownContainer, recvIdent)
+	case *ast.FuncLit:
+		// Anonymous function called inline; not a useful edge.
+		return "", ""
+	}
+	return "", ""
+}
+
+// isGoBuiltin filters out noisy builtin "calls" that aren't real
+// edges in the call graph.
+func isGoBuiltin(name string) bool {
+	switch name {
+	case "len", "cap", "make", "new", "append", "copy",
+		"panic", "recover", "print", "println",
+		"close", "delete", "complex", "real", "imag":
+		return true
+	}
+	return false
 }
 
 func extractGenDecl(fe FileEntry, fset *token.FileSet, d *ast.GenDecl, out *ExtractResult) {

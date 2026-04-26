@@ -189,3 +189,60 @@ func TestEndToEndIndexAnimaPlugins(t *testing.T) {
 	abs, _ := filepath.Abs(animaPlugins)
 	t.Logf("indexed %d files, %d symbols from %s; by lang: %+v", st.Files, st.Symbols, abs, st.ByLanguage)
 }
+
+// TestEndToEndCallsAnimaPlugins exercises the M2 call extractor against
+// real anima-new plugin code: it must find that upsertSessionNode
+// (session:start handler in plugins/acorn-cli/index.js) calls into
+// session-graph's lib functions.
+func TestEndToEndCallsAnimaPlugins(t *testing.T) {
+	const animaPlugins = "/mnt/user/appdata/anima/anima-new/plugins"
+	if _, err := os.Stat(animaPlugins); err != nil {
+		t.Skipf("anima-new plugins not accessible at %s; skipping", animaPlugins)
+	}
+	tmp := t.TempDir()
+	store, err := Open(tmp)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer store.Close()
+	tx, err := store.BeginIndex()
+	if err != nil {
+		t.Fatalf("BeginIndex: %v", err)
+	}
+	totalCalls := 0
+	_ = Walk(WalkOptions{
+		Root:      animaPlugins,
+		Languages: map[string]bool{LangJS: true, LangTS: true},
+	}, func(fe FileEntry) bool {
+		res := ExtractFile(fe)
+		_ = tx.UpsertFile(fe.RelPath, fe.Language, fe.MTime, "", len(res.Symbols))
+		for _, s := range res.Symbols {
+			_ = tx.UpsertSymbol(s)
+		}
+		for _, c := range res.Calls {
+			_ = tx.AddCall(Call{CallerQName: c.CallerQName, CalleeQName: c.CalleeQName, Line: c.Line}, c.CalleeName, fe.RelPath)
+			totalCalls++
+		}
+		return true
+	})
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if totalCalls == 0 {
+		t.Fatal("expected non-zero JS calls extracted")
+	}
+
+	// upsertSessionNode is invoked from sessionStartHandler in
+	// plugins/acorn-cli/index.js — must show as a callee of the latter.
+	callers, err := store.CallersOf("", "upsertSessionNode")
+	if err != nil {
+		t.Fatalf("CallersOf: %v", err)
+	}
+	if len(callers) == 0 {
+		t.Errorf("expected at least one caller of upsertSessionNode; got 0")
+	}
+	for _, c := range callers {
+		t.Logf("upsertSessionNode caller: %s @ line %d", c.CallerQName, c.Line)
+	}
+	t.Logf("total JS calls extracted: %d", totalCalls)
+}

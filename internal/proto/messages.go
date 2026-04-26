@@ -124,6 +124,20 @@ type ProjectContext struct {
 	// warning in the prompt. Toggled via /scope.
 	Scope string `json:"scope,omitempty"` // "strict" | "expanded"
 
+	// HasCodeIndex is true when <cwd>/.acorn/index.db exists and has
+	// rows. Drives the plan-mode Phase 2 prompt branch in the
+	// acorn-cli plugin: when true, agent prefers structural queries
+	// (search_symbols, trace_calls, get_snippet, architecture, impact)
+	// over read_file/grep. When false the original Phase 2 prompt
+	// stands.
+	HasCodeIndex bool `json:"hasCodeIndex,omitempty"`
+
+	// IndexHead is the abbreviated git sha recorded the last time the
+	// index was built. Lets the plugin / agent decide whether the
+	// index is stale relative to the current git HEAD without re-
+	// running the indexer.
+	IndexHead string `json:"indexHead,omitempty"`
+
 	// Hardware describes the user's machine — kernel + CPU + RAM + GPU.
 	// Lets the agent reason about hardware-aware decisions: "you have
 	// an RTX 4090, you can run a 70B local model"; "you're on Apple

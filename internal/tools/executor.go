@@ -45,6 +45,10 @@ var localTools = map[string]bool{
 	"search_symbols": true,
 	"get_snippet":    true,
 	"architecture":   true,
+
+	// codeindex (M2): call graph + change-impact analysis.
+	"trace_calls": true,
+	"impact":      true,
 }
 
 // DelegationMode controls what the agent may delegate via delegate_task.
@@ -208,6 +212,12 @@ func (e *Executor) Execute(name string, inputRaw json.RawMessage) (result any, c
 		return GetSnippet(input, e.CWD), true
 	case "architecture":
 		return Architecture(input, e.CWD), true
+
+	// codeindex (M2)
+	case "trace_calls":
+		return TraceCalls(input, e.CWD), true
+	case "impact":
+		return Impact(input, e.CWD), true
 	}
 	return nil, false
 }

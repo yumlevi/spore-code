@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/yumlevi/acorn-cli/internal/codeindex"
 	"github.com/yumlevi/acorn-cli/internal/proto"
 )
 
@@ -76,7 +77,33 @@ func BuildProjectContextWithScope(cwd, mode, scope string) proto.ProjectContext 
 	if hw := detectHardware(); hw != nil {
 		pc.Hardware = hw
 	}
+	// codeindex (M2): advertise the local index so the SPORE-side
+	// acorn-cli plugin's Plan Mode Phase 2 prompt can branch.
+	if has, head := codeindexState(root); has {
+		pc.HasCodeIndex = true
+		pc.IndexHead = head
+	}
 	return pc
+}
+
+// codeindexState reports whether <root>/.acorn/index.db is present and
+// has at least one indexed file, plus the recorded git sha. Best-effort:
+// any error returns (false, "") so we never block context build.
+func codeindexState(root string) (bool, string) {
+	dbPath := filepath.Join(root, ".acorn", "index.db")
+	if _, err := os.Stat(dbPath); err != nil {
+		return false, ""
+	}
+	store, err := codeindex.Open(root)
+	if err != nil {
+		return false, ""
+	}
+	defer store.Close()
+	stats, err := store.Stats()
+	if err != nil || stats.Files == 0 {
+		return false, ""
+	}
+	return true, stats.IndexHead
 }
 
 // projectTreeList is projectTree's sibling for the structured-context

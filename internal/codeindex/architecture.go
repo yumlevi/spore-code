@@ -314,7 +314,9 @@ func computeEntryPoints(s *Store) []EntryPoint {
 }
 
 // computeHotPaths returns the top-N symbols by inbound CALLS edge count.
-// M1 has no CALLS rows, so this returns an empty slice; M2 populates.
+// Collect-then-resolve, never resolve inside the iterator: the store
+// runs MaxOpenConns=1 and a nested QueryRow during rows.Next() would
+// deadlock the pool.
 func computeHotPaths(s *Store) []HotSymbol {
 	rows, err := s.db.Query(`
 		SELECT
@@ -329,17 +331,24 @@ func computeHotPaths(s *Store) []HotSymbol {
 	if err != nil {
 		return nil
 	}
-	defer rows.Close()
-	var out []HotSymbol
+	type pending struct {
+		qname, name string
+		callers     int
+	}
+	var pendings []pending
 	for rows.Next() {
-		var qn, name string
-		var callers int
-		if err := rows.Scan(&qn, &name, &callers); err != nil {
+		var p pending
+		if err := rows.Scan(&p.qname, &p.name, &p.callers); err != nil {
 			continue
 		}
-		// Resolve to the symbol row for file/line, when possible.
-		sym, _ := s.GetSymbol(qn)
-		hs := HotSymbol{QName: qn, Name: name, Callers: callers}
+		pendings = append(pendings, p)
+	}
+	rows.Close()
+
+	out := make([]HotSymbol, 0, len(pendings))
+	for _, p := range pendings {
+		sym, _ := s.GetSymbol(p.qname)
+		hs := HotSymbol{QName: p.qname, Name: p.name, Callers: p.callers}
 		if sym != nil {
 			hs.File = sym.File
 			hs.Line = sym.StartLine

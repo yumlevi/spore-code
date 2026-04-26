@@ -375,14 +375,36 @@ func (s *Store) GetSymbol(qname string) (*Symbol, error) {
 }
 
 // CallersOf returns every (caller -> target) edge whose callee resolves
-// to qname OR matches the bare name when qname is just a name. Used by
-// trace_calls direction=callers.
+// to qname OR matches the bare name when qname is "". Used by
+// trace_calls direction=callers. Empty qname is treated as "match by
+// name only" — passing an empty string used to match all rows where
+// callee_qname is the empty string (regex-extracted JS), which was a
+// query-time bug we now guard against.
 func (s *Store) CallersOf(qname, name string) ([]Call, error) {
-	rows, err := s.db.Query(`
-		SELECT caller_qname, callee_qname, line FROM calls
-		WHERE callee_qname = ? OR callee_name = ?
-		ORDER BY caller_qname
-	`, qname, name)
+	var (
+		query string
+		args  []any
+	)
+	switch {
+	case qname != "" && name != "":
+		query = `SELECT caller_qname, callee_qname, line FROM calls
+		         WHERE callee_qname = ? OR callee_name = ?
+		         ORDER BY caller_qname`
+		args = []any{qname, name}
+	case qname != "":
+		query = `SELECT caller_qname, callee_qname, line FROM calls
+		         WHERE callee_qname = ?
+		         ORDER BY caller_qname`
+		args = []any{qname}
+	case name != "":
+		query = `SELECT caller_qname, callee_qname, line FROM calls
+		         WHERE callee_name = ?
+		         ORDER BY caller_qname`
+		args = []any{name}
+	default:
+		return nil, nil
+	}
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("codeindex: callers: %w", err)
 	}
