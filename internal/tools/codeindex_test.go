@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // allowAllPerms auto-approves every tool. The codeindex tools are
@@ -128,6 +129,62 @@ func firstChars(s string, n int) string {
 		return s
 	}
 	return s[:n]
+}
+
+// TestIndexNonForceDoesNotDeadlock indexes a project twice without
+// force=true. The second run hits the FileMTime mtime-skip path while
+// an index transaction is open. With MaxOpenConns=1 this used to
+// deadlock forever (BeginIndex held the only conn, FileMTime needed
+// another). Regression test for the bug that bit users running a
+// fresh /index in the wild.
+func TestIndexNonForceDoesNotDeadlock(t *testing.T) {
+	root := findRepoRoot(t)
+	tmp := t.TempDir()
+	logDir := filepath.Join(tmp, "logs")
+	_ = os.MkdirAll(logDir, 0o755)
+	exe := New(allowAllPerms{}, root, logDir)
+
+	_ = os.Remove(filepath.Join(root, ".acorn", "index.db"))
+	_ = os.Remove(filepath.Join(root, ".acorn", "index.db-shm"))
+	_ = os.Remove(filepath.Join(root, ".acorn", "index.db-wal"))
+	t.Cleanup(func() {
+		_ = os.Remove(filepath.Join(root, ".acorn", "index.db"))
+		_ = os.Remove(filepath.Join(root, ".acorn", "index.db-shm"))
+		_ = os.Remove(filepath.Join(root, ".acorn", "index.db-wal"))
+	})
+
+	// First run: force=true so files get inserted with current mtime.
+	in1, _ := json.Marshal(map[string]any{"languages": []string{"go"}, "force": true})
+	r1, _ := exe.Execute("index_codebase", in1)
+	if m1, ok := r1.(map[string]any); !ok || m1["ok"] != true {
+		t.Fatalf("first /index failed: %+v", r1)
+	}
+
+	// Second run: NO force. This is the exact path that deadlocked —
+	// FileMTime gets called for every file while the tx is open.
+	// Wrap in a goroutine + 30s timeout so a real deadlock fails the
+	// test instead of hanging it.
+	in2, _ := json.Marshal(map[string]any{"languages": []string{"go"}})
+	done := make(chan any, 1)
+	go func() {
+		r, _ := exe.Execute("index_codebase", in2)
+		done <- r
+	}()
+	select {
+	case r := <-done:
+		m, ok := r.(map[string]any)
+		if !ok || m["ok"] != true {
+			t.Fatalf("second /index failed: %+v", r)
+		}
+		// Skipped count should equal the number of files indexed
+		// the first time (every file was unchanged).
+		if skipped, _ := m["skipped"].(int); skipped == 0 {
+			t.Errorf("expected non-zero skipped on re-index, got %v", m["skipped"])
+		}
+		t.Logf("re-index: files=%v skipped=%v took_ms=%v", m["files"], m["skipped"], m["took_ms"])
+	case <-time.After(30 * time.Second):
+		t.Fatal("non-force re-index deadlocked (>30s)")
+	}
 }
 
 // TestExecutorTraceCallsAndImpact exercises the M2 tools through

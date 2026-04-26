@@ -90,7 +90,14 @@ func Open(root string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("codeindex: open db: %w", err)
 	}
-	db.SetMaxOpenConns(1) // single writer; readers share the conn
+	// Allow multiple connections so reads (FileMTime, GetSymbol,
+	// CallersOf, etc.) don't deadlock against an open write tx —
+	// SQLite WAL mode supports one writer + many concurrent readers.
+	// MaxOpenConns=1 was the original setting and caused a hard
+	// deadlock the first time a non-force /index ran: BeginIndex held
+	// the only conn, FileMTime tried to grab another, blocked forever.
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(4)
 
 	s := &Store{db: db, path: path, root: root}
 	if err := s.ensureSchema(); err != nil {
