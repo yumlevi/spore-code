@@ -383,4 +383,135 @@ func init() {
 		Help:    "Set file-op sandbox: strict (cwd only, default) or expanded (any path)",
 		Handler: cmdScope,
 	})
+
+	// codeindex slash commands — thin wrappers over the local tools
+	// dispatched by Executor.Execute. All are read/index-only against
+	// .acorn/index.db.
+	register(&slashCmd{
+		Name:    "/index",
+		Help:    "Build the per-project code index (.acorn/index.db). 'force' re-indexes everything.",
+		Handler: cmdIndex,
+	})
+	register(&slashCmd{
+		Name:    "/architecture",
+		Aliases: []string{"/arch"},
+		Help:    "Show clusters, entry points, hot paths, tech stack from the code index",
+		Handler: cmdArchitecture,
+	})
+	register(&slashCmd{
+		Name:    "/why",
+		Help:    "/why <symbol> — show callers (depth 3) of a symbol from the index",
+		Handler: cmdWhy,
+	})
+	register(&slashCmd{
+		Name:    "/calls",
+		Help:    "/calls <symbol> — show callees (depth 3) of a symbol from the index",
+		Handler: cmdCalls,
+	})
+	register(&slashCmd{
+		Name:    "/impact",
+		Help:    "Show transitive caller blast-radius for current `git diff` paths",
+		Handler: cmdImpact,
+	})
+	register(&slashCmd{
+		Name:    "/scripts",
+		Help:    "/scripts → list saved project scripts. /scripts <name> → fetch one.",
+		Handler: cmdScripts,
+	})
+}
+
+// ── codeindex commands ─────────────────────────────────────────────
+
+func cmdIndex(m *Model, args []string) (tea.Model, tea.Cmd) {
+	input := map[string]any{}
+	if len(args) > 0 && args[0] == "force" {
+		input["force"] = true
+	}
+	r := tools.IndexCodebase(input, m.cwd)
+	rendered := renderToolResult("/index", r)
+	m.pushChat("system",rendered)
+	return m, nil
+}
+
+func cmdArchitecture(m *Model, args []string) (tea.Model, tea.Cmd) {
+	r := tools.Architecture(map[string]any{}, m.cwd)
+	m.pushChat("system",renderToolResult("/architecture", r))
+	return m, nil
+}
+
+func cmdWhy(m *Model, args []string) (tea.Model, tea.Cmd) {
+	if len(args) == 0 {
+		m.pushChat("system","usage: /why <symbol-name>")
+		return m, nil
+	}
+	r := tools.TraceCalls(map[string]any{
+		"name":      args[0],
+		"direction": "callers",
+		"depth":     3,
+	}, m.cwd)
+	m.pushChat("system",renderToolResult("/why "+args[0], r))
+	return m, nil
+}
+
+func cmdCalls(m *Model, args []string) (tea.Model, tea.Cmd) {
+	if len(args) == 0 {
+		m.pushChat("system","usage: /calls <symbol-name>")
+		return m, nil
+	}
+	r := tools.TraceCalls(map[string]any{
+		"name":      args[0],
+		"direction": "callees",
+		"depth":     3,
+	}, m.cwd)
+	m.pushChat("system",renderToolResult("/calls "+args[0], r))
+	return m, nil
+}
+
+func cmdImpact(m *Model, args []string) (tea.Model, tea.Cmd) {
+	r := tools.Impact(map[string]any{}, m.cwd)
+	m.pushChat("system",renderToolResult("/impact", r))
+	return m, nil
+}
+
+// cmdScripts prints a one-line hint that nudges the user toward asking
+// the agent. The actual scripts memory lives server-side in the SPORE
+// graph (plugins/session-graph/lib/scripts.js); the agent calls
+// list_project_scripts / get_project_script / save_project_script /
+// record_script_outcome on the user's behalf. Keeping /scripts as a
+// discoverable reminder is more useful than wiring a synthetic
+// chat-submit pathway from the CLI.
+func cmdScripts(m *Model, args []string) (tea.Model, tea.Cmd) {
+	if len(args) == 0 {
+		m.pushChat("system",
+			"Saved project scripts live in the graph (server-side). Ask the agent: "+
+				"\"list saved project scripts for this project\" — it will call list_project_scripts. "+
+				"To fetch one: \"get the saved script <name>\" → get_project_script. "+
+				"To save one: ask the agent to save it via save_project_script.")
+		return m, nil
+	}
+	m.pushChat("system",
+		fmt.Sprintf("Ask the agent: \"fetch the saved project script %q\" — it will call get_project_script.", args[0]))
+	return m, nil
+}
+
+// renderToolResult formats a local-tool return for the chat scrollback.
+// Pretty-prints JSON-ish maps; passes strings through.
+func renderToolResult(label string, r any) string {
+	if r == nil {
+		return label + " — (no result)"
+	}
+	switch v := r.(type) {
+	case string:
+		return label + ":\n" + v
+	default:
+		// Fall back to a compact dump.
+		return label + ":\n" + sprintCompact(v)
+	}
+}
+
+func sprintCompact(v any) string {
+	// Use fmt with %+v for now; full pretty-printing would pull in
+	// encoding/json which the package already imports for other code,
+	// but the Verbose %+v is enough to read in scrollback.
+	return fmt.Sprintf("%+v", v)
 }
