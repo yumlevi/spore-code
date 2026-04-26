@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/yumlevi/acorn-cli/internal/codeindex"
@@ -102,41 +103,63 @@ func IndexCodebaseWithProgress(input map[string]any, cwd string, onProgress Inde
 	}
 
 	start := time.Now()
-	totalFiles := 0
-	totalSymbols := 0
-	totalCalls := 0
-	totalImports := 0
-	skipped := 0
-	scanned := 0
-	unsupported := 0
+	// Counters are read by the heartbeat goroutine while the walker
+	// writes them, so they need to be word-atomic. atomic.Int64 keeps
+	// the reads tear-free without taking a mutex on every file.
+	var (
+		totalFiles   atomic.Int64
+		totalSymbols atomic.Int64
+		totalCalls   atomic.Int64
+		totalImports atomic.Int64
+		skipped      atomic.Int64
+		scanned      atomic.Int64
+		unsupported  atomic.Int64
+	)
 	unsupportedByLang := map[string]int{}
 	walkErr := error(nil)
 
-	// Progress throttling — emit at most one update every 2s so big
-	// repos (50k+ files) don't flood the chat scrollback.
-	lastProgressAt := start
-	const progressInterval = 2 * time.Second
+	// emitProgress is invoked by both the heartbeat goroutine and the
+	// final/synthesis emits. Always sends — the throttling lives in
+	// the ticker rather than this helper now, so the explicit
+	// "walking…"/"committing…" markers fire reliably.
 	emitProgress := func(note string) {
 		if onProgress == nil {
 			return
 		}
-		now := time.Now()
-		if now.Sub(lastProgressAt) < progressInterval && note == "" {
-			return
-		}
-		lastProgressAt = now
 		onProgress(IndexProgress{
-			FilesScanned: scanned,
-			FilesParsed:  totalFiles,
-			FilesSkipped: skipped,
-			Symbols:      totalSymbols,
-			Calls:        totalCalls,
-			ElapsedMs:    int(now.Sub(start).Milliseconds()),
+			FilesScanned: int(scanned.Load()),
+			FilesParsed:  int(totalFiles.Load()),
+			FilesSkipped: int(skipped.Load()),
+			Symbols:      int(totalSymbols.Load()),
+			Calls:        int(totalCalls.Load()),
+			ElapsedMs:    int(time.Since(start).Milliseconds()),
 			Note:         note,
 		})
 	}
 
 	emitProgress("walking…")
+
+	// Heartbeat goroutine — fires every 2s regardless of whether the
+	// walker has yielded a file. This is the fix for "walking…" being
+	// the only tick on big trees: filepath.WalkDir can spend many
+	// seconds traversing dirs before the first matching file shows up,
+	// during which the per-file callback never runs and we never emit.
+	heartbeatDone := make(chan struct{})
+	defer close(heartbeatDone)
+	if onProgress != nil {
+		go func() {
+			ticker := time.NewTicker(2 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-heartbeatDone:
+					return
+				case <-ticker.C:
+					emitProgress("walking…")
+				}
+			}
+		}()
+	}
 
 	for _, r := range roots {
 		err := codeindex.Walk(codeindex.WalkOptions{
@@ -144,11 +167,11 @@ func IndexCodebaseWithProgress(input map[string]any, cwd string, onProgress Inde
 			Languages: langFilter,
 			MaxFiles:  maxFiles,
 		}, func(fe codeindex.FileEntry) bool {
-			scanned++
+			scanned.Add(1)
 			// Skip unchanged files when not forcing — mtime check.
 			if !force {
 				if prev, ok, _ := store.FileMTime(fe.RelPath); ok && prev == fe.MTime {
-					skipped++
+					skipped.Add(1)
 					return true
 				}
 			}
@@ -161,7 +184,7 @@ func IndexCodebaseWithProgress(input map[string]any, cwd string, onProgress Inde
 				// by-language breakdown reflect the project's true
 				// composition. The latter is logged but not counted.
 				if strings.Contains(res.Err.Error(), "no extractor") {
-					unsupported++
+					unsupported.Add(1)
 					unsupportedByLang[fe.Language]++
 					_ = tx.DeleteFile(fe.RelPath)
 					if err := tx.UpsertFile(fe.RelPath, fe.Language, fe.MTime, "", 0); err != nil {
@@ -181,7 +204,7 @@ func IndexCodebaseWithProgress(input map[string]any, cwd string, onProgress Inde
 				if err := tx.UpsertSymbol(s); err != nil {
 					return false
 				}
-				totalSymbols++
+				totalSymbols.Add(1)
 			}
 			for _, c := range res.Calls {
 				if err := tx.AddCall(codeindex.Call{
@@ -191,16 +214,15 @@ func IndexCodebaseWithProgress(input map[string]any, cwd string, onProgress Inde
 				}, c.CalleeName, fe.RelPath); err != nil {
 					return false
 				}
-				totalCalls++
+				totalCalls.Add(1)
 			}
 			for _, im := range res.Imports {
 				if err := tx.AddImport(fe.RelPath, im.Target, im.Alias, im.Line); err != nil {
 					return false
 				}
-				totalImports++
+				totalImports.Add(1)
 			}
-			totalFiles++
-			emitProgress("")
+			totalFiles.Add(1)
 			return true
 		})
 		if err != nil {
@@ -226,13 +248,13 @@ func IndexCodebaseWithProgress(input map[string]any, cwd string, onProgress Inde
 	stats, _ := store.Stats()
 	return map[string]any{
 		"ok":                  true,
-		"files":               totalFiles,
-		"skipped":             skipped,
-		"unsupported":         unsupported,
+		"files":               int(totalFiles.Load()),
+		"skipped":             int(skipped.Load()),
+		"unsupported":         int(unsupported.Load()),
 		"unsupported_by_lang": unsupportedByLang,
-		"symbols":             totalSymbols,
-		"calls":               totalCalls,
-		"imports":             totalImports,
+		"symbols":             int(totalSymbols.Load()),
+		"calls":               int(totalCalls.Load()),
+		"imports":             int(totalImports.Load()),
 		"took_ms":             int(time.Since(start).Milliseconds()),
 		"index_head":          stats.IndexHead,
 		"total_files":         stats.Files,
