@@ -108,6 +108,8 @@ func IndexCodebaseWithProgress(input map[string]any, cwd string, onProgress Inde
 	totalImports := 0
 	skipped := 0
 	scanned := 0
+	unsupported := 0
+	unsupportedByLang := map[string]int{}
 	walkErr := error(nil)
 
 	// Progress throttling — emit at most one update every 2s so big
@@ -152,7 +154,21 @@ func IndexCodebaseWithProgress(input map[string]any, cwd string, onProgress Inde
 			}
 			res := codeindex.ExtractFile(fe)
 			if res.Err != nil && len(res.Symbols) == 0 {
-				return true // best-effort; skip the file but keep walking
+				// Distinguish "no extractor for this language" (py/rs
+				// today) from "parser failed on this file". The former
+				// is a coverage gap to surface to the user; we still
+				// upsert the file row so /architecture and the
+				// by-language breakdown reflect the project's true
+				// composition. The latter is logged but not counted.
+				if strings.Contains(res.Err.Error(), "no extractor") {
+					unsupported++
+					unsupportedByLang[fe.Language]++
+					_ = tx.DeleteFile(fe.RelPath)
+					if err := tx.UpsertFile(fe.RelPath, fe.Language, fe.MTime, "", 0); err != nil {
+						return false
+					}
+				}
+				return true
 			}
 			// Refresh: drop prior rows for this file before re-insert.
 			if err := tx.DeleteFile(fe.RelPath); err != nil {
@@ -209,17 +225,19 @@ func IndexCodebaseWithProgress(input map[string]any, cwd string, onProgress Inde
 
 	stats, _ := store.Stats()
 	return map[string]any{
-		"ok":          true,
-		"files":       totalFiles,
-		"skipped":     skipped,
-		"symbols":     totalSymbols,
-		"calls":       totalCalls,
-		"imports":     totalImports,
-		"took_ms":     int(time.Since(start).Milliseconds()),
-		"index_head":  stats.IndexHead,
-		"total_files": stats.Files,
-		"total_syms":  stats.Symbols,
-		"by_language": stats.ByLanguage,
+		"ok":                  true,
+		"files":               totalFiles,
+		"skipped":             skipped,
+		"unsupported":         unsupported,
+		"unsupported_by_lang": unsupportedByLang,
+		"symbols":             totalSymbols,
+		"calls":               totalCalls,
+		"imports":             totalImports,
+		"took_ms":             int(time.Since(start).Milliseconds()),
+		"index_head":          stats.IndexHead,
+		"total_files":         stats.Files,
+		"total_syms":          stats.Symbols,
+		"by_language":         stats.ByLanguage,
 	}
 }
 
@@ -734,12 +752,17 @@ func asStringSlice(v any) []string {
 
 func buildLanguageFilter(langs []string) map[string]bool {
 	if len(langs) == 0 {
+		// Default: all 5 known extensions. Languages without an
+		// extractor yet (py/rs) still get walked so the user sees
+		// them in the by-language breakdown — IndexCodebase records
+		// them as `unsupported` and surfaces a clear note rather than
+		// silently producing 0 files.
 		return map[string]bool{
-			codeindex.LangGo: true,
-			codeindex.LangTS: true,
-			codeindex.LangJS: true,
-			// py + rs walked but not yet extracted — gate them out at the
-			// walker so we don't generate empty file rows.
+			codeindex.LangGo:     true,
+			codeindex.LangTS:     true,
+			codeindex.LangJS:     true,
+			codeindex.LangPython: true,
+			codeindex.LangRust:   true,
 		}
 	}
 	out := make(map[string]bool, len(langs))

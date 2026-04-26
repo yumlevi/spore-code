@@ -21,32 +21,44 @@ const MaxFileBytes = 2 * 1024 * 1024 // 2 MiB
 // prompt advertises in plugins/acorn-cli/index.js buildProjectContextSection
 // (line ~389) so the index reflects the same project view the user sees.
 var noiseDirs = map[string]struct{}{
-	".git":           {},
-	"node_modules":   {},
-	".venv":          {},
-	"venv":           {},
-	"__pycache__":    {},
-	"dist":           {},
-	"build":          {},
-	"target":         {},
-	".next":          {},
-	".cache":         {},
-	".acorn":         {},
-	"vendor":         {},
-	".gradle":        {},
-	".mvn":           {},
-	".pytest_cache":  {},
-	".mypy_cache":    {},
-	".ruff_cache":    {},
-	".turbo":         {},
-	".nuxt":          {},
-	".svelte-kit":    {},
-	".terraform":     {},
-	".idea":          {},
-	".vscode":        {},
-	"coverage":       {},
-	".nyc_output":    {},
-	".DS_Store":      {},
+	".git":             {},
+	"node_modules":     {},
+	".venv":            {},
+	"venv":             {},
+	"env":              {}, // virtualenv default name
+	"__pycache__":      {},
+	"dist":             {},
+	"build":            {},
+	"target":           {},
+	"out":              {}, // common JS/Java output dir
+	".next":            {},
+	".cache":           {},
+	".acorn":           {},
+	"vendor":           {},
+	".gradle":          {},
+	".mvn":             {},
+	".pytest_cache":    {},
+	".mypy_cache":      {},
+	".ruff_cache":      {},
+	".turbo":           {},
+	".nuxt":            {},
+	".svelte-kit":      {},
+	".terraform":       {},
+	".idea":            {},
+	".vscode":          {},
+	"coverage":         {},
+	".nyc_output":      {},
+	".DS_Store":        {},
+	"Pods":             {}, // CocoaPods / iOS
+	"bower_components": {}, // legacy JS
+	".pnpm-store":      {}, // pnpm
+	".yarn":            {}, // yarn berry cache
+	".parcel-cache":    {},
+	".tox":             {}, // python tox
+	".eggs":            {},
+	".gem":             {}, // ruby
+	"_build":           {}, // erlang/elixir
+	"deps":             {}, // erlang/elixir
 }
 
 // Language constants keyed by detected extension. M1 supports go + ts/js;

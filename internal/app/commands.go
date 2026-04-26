@@ -590,6 +590,7 @@ func renderIndexResult(label string, m map[string]any) string {
 	took := readInt(m, "took_ms")
 	files := readInt(m, "files")
 	skipped := readInt(m, "skipped")
+	unsupported := readInt(m, "unsupported")
 	syms := readInt(m, "symbols")
 	calls := readInt(m, "calls")
 	totalFiles := readInt(m, "total_files")
@@ -598,6 +599,21 @@ func renderIndexResult(label string, m map[string]any) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s — done in %dms\n", label, took)
 	fmt.Fprintf(&b, "  parsed: %d files (%d skipped unchanged), %d symbols, %d call edges\n", files, skipped, syms, calls)
+	if unsupported > 0 {
+		// Surface the gap loud and clear so 0-symbol results don't
+		// look like a bug. Today: only Go and TS/JS have extractors.
+		fmt.Fprintf(&b, "  unsupported: %d files (extractor not yet built", unsupported)
+		if ub, ok := m["unsupported_by_lang"].(map[string]int); ok && len(ub) > 0 {
+			parts := make([]string, 0, len(ub))
+			for l, n := range ub {
+				parts = append(parts, fmt.Sprintf("%s=%d", l, n))
+			}
+			sort.Strings(parts)
+			fmt.Fprintf(&b, "; %s)\n", strings.Join(parts, ", "))
+		} else {
+			b.WriteString(")\n")
+		}
+	}
 	if totalFiles > 0 || totalSyms > 0 {
 		fmt.Fprintf(&b, "  index now: %d files, %d symbols\n", totalFiles, totalSyms)
 	}
@@ -611,6 +627,15 @@ func renderIndexResult(label string, m map[string]any) string {
 		}
 		sort.Strings(langs)
 		fmt.Fprintf(&b, "  by language: %s\n", strings.Join(langs, ", "))
+	}
+	if files == 0 && unsupported == 0 {
+		// Nothing got walked at all — most likely the cwd has no
+		// recognized source file extensions, or everything's behind a
+		// noise-dir filter (.git, node_modules, .venv, dist, build,
+		// target, etc.) Surface a hint so the user can self-diagnose.
+		b.WriteString("  No supported source files found in this directory.\n")
+		b.WriteString("  Recognized: .go, .ts/.tsx/.mts/.cts, .js/.jsx/.mjs/.cjs, .py, .rs.\n")
+		b.WriteString("  Check that you're in the project root, or override with index_codebase({roots:[\"src\"]}).\n")
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
