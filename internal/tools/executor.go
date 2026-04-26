@@ -38,6 +38,13 @@ var localTools = map[string]bool{
 	"glob":       true,
 	"grep":       true,
 	// web_serve / web_fetch left to server for now (mirrors Python's web_fetch).
+
+	// codeindex (M1): structural code search backed by a per-project
+	// SQLite index at <cwd>/.acorn/index.db. See internal/codeindex/.
+	"index_codebase": true,
+	"search_symbols": true,
+	"get_snippet":    true,
+	"architecture":   true,
 }
 
 // DelegationMode controls what the agent may delegate via delegate_task.
@@ -191,6 +198,16 @@ func (e *Executor) Execute(name string, inputRaw json.RawMessage) (result any, c
 		return Grep(input, e.CWD), true
 	case "exec":
 		return Exec(input, e.CWD, e.LogDir, e.BG, e.Hooks.OnExecLine), true
+
+	// codeindex (M1)
+	case "index_codebase":
+		return IndexCodebase(input, e.CWD), true
+	case "search_symbols":
+		return SearchSymbols(input, e.CWD), true
+	case "get_snippet":
+		return GetSnippet(input, e.CWD), true
+	case "architecture":
+		return Architecture(input, e.CWD), true
 	}
 	return nil, false
 }

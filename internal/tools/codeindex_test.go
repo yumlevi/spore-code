@@ -1,0 +1,131 @@
+package tools
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// allowAllPerms auto-approves every tool. The codeindex tools are
+// read/index-only so this is the test equivalent of /mode auto.
+type allowAllPerms struct{}
+
+func (allowAllPerms) IsAutoApproved(string, map[string]any) bool { return true }
+func (allowAllPerms) Prompt(string, map[string]any) bool         { return true }
+
+// findRepoRoot walks up looking for go.mod; same trick the codeindex
+// tests use.
+func findRepoRoot(t *testing.T) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := wd
+	for i := 0; i < 6; i++ {
+		if _, err := os.Stat(filepath.Join(root, "go.mod")); err == nil {
+			return root
+		}
+		root = filepath.Dir(root)
+	}
+	t.Skip("repo root with go.mod not found")
+	return ""
+}
+
+// TestExecutorCodeIndexFlow drives index_codebase + search_symbols +
+// get_snippet + architecture through Executor.Execute as if the agent
+// had requested them over WS. Validates wiring + dispatch + helper
+// reuse from fileops.go.
+func TestExecutorCodeIndexFlow(t *testing.T) {
+	root := findRepoRoot(t)
+	tmp := t.TempDir()
+
+	// The executor reads CWD for sandboxing. We point it at the tmp
+	// dir but feed index_codebase a `roots` arg pointing at the real
+	// repo so it can index something. The roots-sandbox check requires
+	// roots to live under cwd, so instead use the repo root as cwd.
+	logDir := filepath.Join(tmp, "logs")
+	_ = os.MkdirAll(logDir, 0o755)
+	exe := New(allowAllPerms{}, root, logDir)
+
+	// Clean any prior index from the repo's .acorn dir so the test
+	// starts fresh.
+	_ = os.Remove(filepath.Join(root, ".acorn", "index.db"))
+	_ = os.Remove(filepath.Join(root, ".acorn", "index.db-shm"))
+	_ = os.Remove(filepath.Join(root, ".acorn", "index.db-wal"))
+	t.Cleanup(func() {
+		_ = os.Remove(filepath.Join(root, ".acorn", "index.db"))
+		_ = os.Remove(filepath.Join(root, ".acorn", "index.db-shm"))
+		_ = os.Remove(filepath.Join(root, ".acorn", "index.db-wal"))
+	})
+
+	// 1. index_codebase
+	in1, _ := json.Marshal(map[string]any{"languages": []string{"go"}, "force": true})
+	r1, claimed := exe.Execute("index_codebase", in1)
+	if !claimed {
+		t.Fatal("index_codebase should be claimed")
+	}
+	m1, ok := r1.(map[string]any)
+	if !ok || m1["ok"] != true {
+		t.Fatalf("index_codebase failed: %+v", r1)
+	}
+	if files, _ := m1["files"].(int); files == 0 {
+		t.Errorf("expected files > 0, got %v", m1["files"])
+	}
+
+	// 2. search_symbols for Execute (method)
+	in2, _ := json.Marshal(map[string]any{"name": "Execute", "kind": "method"})
+	r2, _ := exe.Execute("search_symbols", in2)
+	m2, _ := r2.(map[string]any)
+	if m2["ok"] != true {
+		t.Fatalf("search_symbols failed: %+v", r2)
+	}
+	results, _ := m2["results"].([]map[string]any)
+	if len(results) == 0 {
+		t.Fatalf("search_symbols returned 0 results")
+	}
+	foundExec := false
+	var execQName string
+	for _, r := range results {
+		if r["name"] == "Execute" && r["container"] == "Executor" {
+			foundExec = true
+			execQName, _ = r["qname"].(string)
+			break
+		}
+	}
+	if !foundExec {
+		t.Fatalf("expected Executor.Execute in results; got %d", len(results))
+	}
+
+	// 3. get_snippet by qname
+	in3, _ := json.Marshal(map[string]any{"qname": execQName})
+	r3, _ := exe.Execute("get_snippet", in3)
+	m3, _ := r3.(map[string]any)
+	if m3["ok"] != true {
+		t.Fatalf("get_snippet failed: %+v", r3)
+	}
+	content, _ := m3["content"].(string)
+	if !strings.Contains(content, "func (e *Executor) Execute") {
+		t.Errorf("snippet should include func decl line; got first 80 chars: %q", firstChars(content, 80))
+	}
+
+	// 4. architecture
+	r4, _ := exe.Execute("architecture", []byte(`{}`))
+	m4, _ := r4.(map[string]any)
+	if m4["ok"] != true {
+		t.Fatalf("architecture failed: %+v", r4)
+	}
+	if m4["clusters"] == nil || m4["tech_stack"] == nil {
+		t.Errorf("architecture missing fields: %v", m4)
+	}
+	t.Logf("architecture: stats=%+v notes=%v", m4["stats"], m4["notes"])
+}
+
+func firstChars(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
+}
