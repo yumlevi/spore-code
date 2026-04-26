@@ -170,6 +170,14 @@ func Walk(opts WalkOptions, yield func(FileEntry) bool) error {
 		if infoErr != nil {
 			return nil
 		}
+		// Skip non-regular files: FIFOs, sockets, char/block devices,
+		// and symlinks. os.ReadFile follows symlinks and can block
+		// indefinitely on a special file or a stale network-mount
+		// target. The walker is "what's part of the project source",
+		// not "what's reachable through links" — keep it tight.
+		if !info.Mode().IsRegular() {
+			return nil
+		}
 		if info.Size() > MaxFileBytes {
 			return nil
 		}

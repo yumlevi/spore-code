@@ -2,6 +2,7 @@ package tools
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -115,6 +116,12 @@ func IndexCodebaseWithProgress(input map[string]any, cwd string, onProgress Inde
 		scanned      atomic.Int64
 		unsupported  atomic.Int64
 	)
+	// currentPath holds the file the walker is presently inside (if
+	// any). Set on callback entry, cleared on exit. Surfaced in the
+	// heartbeat note so a stuck file is visible to the user — e.g.
+	// "processing src/foo.ts" sitting for 30s tells you exactly which
+	// file the parser hung on.
+	var currentPath atomic.Pointer[string]
 	unsupportedByLang := map[string]int{}
 	walkErr := error(nil)
 
@@ -140,10 +147,10 @@ func IndexCodebaseWithProgress(input map[string]any, cwd string, onProgress Inde
 	emitProgress("walking…")
 
 	// Heartbeat goroutine — fires every 2s regardless of whether the
-	// walker has yielded a file. This is the fix for "walking…" being
-	// the only tick on big trees: filepath.WalkDir can spend many
-	// seconds traversing dirs before the first matching file shows up,
-	// during which the per-file callback never runs and we never emit.
+	// walker has yielded a file. Surfaces the in-flight file path
+	// when the walker is inside the per-file callback, so a hung
+	// extractor or read is identifiable rather than just appearing
+	// stuck.
 	heartbeatDone := make(chan struct{})
 	defer close(heartbeatDone)
 	if onProgress != nil {
@@ -155,7 +162,11 @@ func IndexCodebaseWithProgress(input map[string]any, cwd string, onProgress Inde
 				case <-heartbeatDone:
 					return
 				case <-ticker.C:
-					emitProgress("walking…")
+					note := "walking…"
+					if cp := currentPath.Load(); cp != nil && *cp != "" {
+						note = "processing " + *cp
+					}
+					emitProgress(note)
 				}
 			}
 		}()
@@ -167,6 +178,15 @@ func IndexCodebaseWithProgress(input map[string]any, cwd string, onProgress Inde
 			Languages: langFilter,
 			MaxFiles:  maxFiles,
 		}, func(fe codeindex.FileEntry) bool {
+			// Surface the in-flight file path so the heartbeat can
+			// show "processing <path>" — diagnostic when a single
+			// file hangs the extractor.
+			p := fe.RelPath
+			currentPath.Store(&p)
+			defer func() {
+				var empty *string
+				currentPath.Store(empty)
+			}()
 			scanned.Add(1)
 			// Skip unchanged files when not forcing — mtime check.
 			if !force {
@@ -175,7 +195,14 @@ func IndexCodebaseWithProgress(input map[string]any, cwd string, onProgress Inde
 					return true
 				}
 			}
-			res := codeindex.ExtractFile(fe)
+			// Wrap ExtractFile in a 30s timeout. os.ReadFile follows
+			// symlinks and has no native cancellation; a stalled
+			// network-mount target or a kernel bug could otherwise
+			// hang us forever. The goroutine is "abandoned" on
+			// timeout (no shared state — ExtractFile only reads the
+			// file and returns a value), so worst case we leak one
+			// goroutine per stuck file.
+			res := extractWithTimeout(fe, 30*time.Second)
 			if res.Err != nil && len(res.Symbols) == 0 {
 				// Distinguish "no extractor for this language" (py/rs
 				// today) from "parser failed on this file". The former
@@ -720,6 +747,28 @@ func countTransitiveCallers(s *codeindex.Store, qname, name string, depth int) i
 		}
 	}
 	return count
+}
+
+// extractWithTimeout runs ExtractFile in a goroutine and gives up
+// after `d`. On timeout we return a synthetic Err result so the caller
+// records the file as a parse failure (and surfaces it in logs) rather
+// than blocking the whole indexer. The original goroutine continues
+// until os.ReadFile returns — that's a goroutine leak, but it doesn't
+// touch the index transaction (ExtractFile has no access to tx) so
+// it's safe to abandon.
+func extractWithTimeout(fe codeindex.FileEntry, d time.Duration) codeindex.ExtractResult {
+	resCh := make(chan codeindex.ExtractResult, 1)
+	go func() {
+		resCh <- codeindex.ExtractFile(fe)
+	}()
+	select {
+	case r := <-resCh:
+		return r
+	case <-time.After(d):
+		return codeindex.ExtractResult{
+			Err: fmt.Errorf("codeindex: extract timed out after %s on %s", d, fe.RelPath),
+		}
+	}
 }
 
 // gitChangedPaths returns the set of paths in `git diff --name-only HEAD`
