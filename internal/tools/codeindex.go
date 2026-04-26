@@ -22,6 +22,24 @@ import (
 // handle for v1; if benchmarks show real overhead we can lift a cached
 // store onto the Executor later.
 
+// IndexProgress carries a periodic status update from IndexCodebase.
+// Slash-command callers wire a sendProgramMsg-style callback so the
+// TUI can show real progress instead of a single "indexing…" line
+// that looks like a hang on big repos. Sent at most once per progress
+// interval (default 2s) regardless of how fast files stream in.
+type IndexProgress struct {
+	FilesScanned int
+	FilesParsed  int
+	FilesSkipped int
+	Symbols      int
+	Calls        int
+	ElapsedMs    int
+	Note         string // free-form, e.g. "walking…", "parsing src/foo.ts"
+}
+
+// IndexProgressFn is the callback signature. Nil = no progress events.
+type IndexProgressFn func(IndexProgress)
+
 // IndexCodebase walks cwd, extracts symbols, writes them to the index.
 // Idempotent: every file's prior symbols/calls/imports are deleted
 // before re-insert so a re-run produces a clean state.
@@ -32,6 +50,13 @@ import (
 //   max_files: int          — safety cap; 0 = unlimited
 //   force: bool             — re-index everything even if mtime unchanged
 func IndexCodebase(input map[string]any, cwd string) any {
+	return IndexCodebaseWithProgress(input, cwd, nil)
+}
+
+// IndexCodebaseWithProgress is the slash-command-friendly variant that
+// accepts a progress callback. The agent-callable IndexCodebase wrapper
+// passes nil so its result envelope stays JSON-clean.
+func IndexCodebaseWithProgress(input map[string]any, cwd string, onProgress IndexProgressFn) any {
 	if cwd == "" {
 		return errMap("cwd is empty; cannot index")
 	}
@@ -82,7 +107,34 @@ func IndexCodebase(input map[string]any, cwd string) any {
 	totalCalls := 0
 	totalImports := 0
 	skipped := 0
+	scanned := 0
 	walkErr := error(nil)
+
+	// Progress throttling — emit at most one update every 2s so big
+	// repos (50k+ files) don't flood the chat scrollback.
+	lastProgressAt := start
+	const progressInterval = 2 * time.Second
+	emitProgress := func(note string) {
+		if onProgress == nil {
+			return
+		}
+		now := time.Now()
+		if now.Sub(lastProgressAt) < progressInterval && note == "" {
+			return
+		}
+		lastProgressAt = now
+		onProgress(IndexProgress{
+			FilesScanned: scanned,
+			FilesParsed:  totalFiles,
+			FilesSkipped: skipped,
+			Symbols:      totalSymbols,
+			Calls:        totalCalls,
+			ElapsedMs:    int(now.Sub(start).Milliseconds()),
+			Note:         note,
+		})
+	}
+
+	emitProgress("walking…")
 
 	for _, r := range roots {
 		err := codeindex.Walk(codeindex.WalkOptions{
@@ -90,6 +142,7 @@ func IndexCodebase(input map[string]any, cwd string) any {
 			Languages: langFilter,
 			MaxFiles:  maxFiles,
 		}, func(fe codeindex.FileEntry) bool {
+			scanned++
 			// Skip unchanged files when not forcing — mtime check.
 			if !force {
 				if prev, ok, _ := store.FileMTime(fe.RelPath); ok && prev == fe.MTime {
@@ -131,6 +184,7 @@ func IndexCodebase(input map[string]any, cwd string) any {
 				totalImports++
 			}
 			totalFiles++
+			emitProgress("")
 			return true
 		})
 		if err != nil {
@@ -142,6 +196,7 @@ func IndexCodebase(input map[string]any, cwd string) any {
 		tx.Rollback()
 		return errMap("walk: " + walkErr.Error())
 	}
+	emitProgress("committing…")
 	if err := tx.Commit(); err != nil {
 		return errMap("commit: " + err.Error())
 	}

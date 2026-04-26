@@ -171,6 +171,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pushChat("system", renderCodeindexResult(msg.Label, msg.Result))
 		return m, nil
 
+	case CodeindexProgressMsg:
+		// Streamed in by /index roughly every 2s so big-repo indexing
+		// shows real progress instead of looking like a hang.
+		note := msg.Note
+		if note == "" {
+			note = "indexing"
+		}
+		line := fmt.Sprintf("  ↻ %s — scanned %d, parsed %d (%d unchanged), %d symbols, %d calls (%dms)",
+			note, msg.FilesScanned, msg.FilesParsed, msg.FilesSkipped, msg.Symbols, msg.Calls, msg.ElapsedMs)
+		m.pushChat("system", line)
+		return m, nil
+
 	case hookExecLineMsg:
 		preview := msg.line
 		if len(preview) > 120 {

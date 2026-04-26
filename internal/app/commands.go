@@ -436,6 +436,19 @@ type CodeindexResultMsg struct {
 	Result any
 }
 
+// CodeindexProgressMsg streams in periodically while /index runs so
+// big repos don't look like a hang. update.go appends one chat line
+// per message; the indexer throttles emission to ~once every 2s.
+type CodeindexProgressMsg struct {
+	FilesScanned int
+	FilesParsed  int
+	FilesSkipped int
+	Symbols      int
+	Calls        int
+	ElapsedMs    int
+	Note         string
+}
+
 // runCodeindexAsync wraps a tool call in a tea.Cmd. Captures cwd up-
 // front so a /scope or /cwd change mid-flight doesn't retarget.
 func runCodeindexAsync(label, cwd string, fn func(string) any) tea.Cmd {
@@ -449,10 +462,23 @@ func cmdIndex(m *Model, args []string) (tea.Model, tea.Cmd) {
 	if len(args) > 0 && args[0] == "force" {
 		input["force"] = true
 	}
-	m.pushChat("system", "Indexing codebase… (this may take a few seconds)")
-	return m, runCodeindexAsync("/index", m.cwd, func(cwd string) any {
-		return tools.IndexCodebase(input, cwd)
-	})
+	m.pushChat("system", "Indexing codebase… (this may take a few seconds — progress every 2s below)")
+	send := m.sendProgramMsg
+	cwd := m.cwd
+	return m, func() tea.Msg {
+		var onProgress tools.IndexProgressFn
+		if send != nil {
+			onProgress = func(p tools.IndexProgress) {
+				send(CodeindexProgressMsg{
+					FilesScanned: p.FilesScanned, FilesParsed: p.FilesParsed,
+					FilesSkipped: p.FilesSkipped, Symbols: p.Symbols, Calls: p.Calls,
+					ElapsedMs: p.ElapsedMs, Note: p.Note,
+				})
+			}
+		}
+		r := tools.IndexCodebaseWithProgress(input, cwd, onProgress)
+		return CodeindexResultMsg{Label: "/index", Result: r}
+	}
 }
 
 func cmdArchitecture(m *Model, args []string) (tea.Model, tea.Cmd) {
