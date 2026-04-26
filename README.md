@@ -1,276 +1,266 @@
-# Acorn
+# acorn — Go port
 
-A full-screen CLI coding assistant that connects to an [Anima](https://github.com/Klace/Anima-AI) agent. Think Claude Code, but backed by a persistent AI agent with a knowledge graph that remembers you across projects.
+Go / Bubble Tea rewrite of acorn-cli. Distribution is a single static
+binary per OS/arch — no Python, no Node, no runtime dependencies, launches
+from any directory once dropped in `$PATH`.
 
+## Why
+
+The Python implementation uses Textual, which glitches on older Windows
+terminals and requires a working Python install + pip/pipx. The Go port
+targets:
+
+- **Zero-install** — download one binary, `chmod +x`, done.
+- **Robust Windows** — Bubble Tea uses the Windows virtual-terminal API
+  directly and falls back gracefully on cmd.exe.
+- **Fast startup** — compiled Go boots in tens of ms vs Python's ~1s.
+
+## Build
+
+Requires Go 1.22+.
+
+```sh
+go mod tidy
+make build          # ./acorn
+make install        # ~/.local/bin/acorn
+make release        # cross-compile linux/darwin/windows × amd64/arm64 into dist/
 ```
- ██████╗  ██████╗ ██████╗ ██████╗ ███╗   ██╗
-██╔══██╗██╔════╝██╔═══██╗██╔══██╗████╗  ██║
-███████║██║     ██║   ██║██████╔╝██╔██╗ ██║
-██╔══██║██║     ██║   ██║██╔══██╗██║╚██╗██║
-██║  ██║╚██████╗╚██████╔╝██║  ██║██║ ╚████║
-╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝
-```
-
-## What makes Acorn different
-
-- **Persistent memory** — Anima's knowledge graph remembers you, your preferences, past projects, and lessons learned. Switch to a new codebase and the agent already knows your conventions.
-- **Local tool execution** — file edits, shell commands, and searches run on *your* machine, not inside Docker. The agent thinks, your machine acts.
-- **Multi-user** — multiple developers connect to the same Anima instance. Each gets their own session history and identity in the graph.
-- **Plan mode** — 5-phase structured planning with environment audit, codebase scan, web research, interactive Q&A, then execution.
 
 ## Install
 
-```bash
-# From wheel
-pip install acorn_cli-0.1.0-py3-none-any.whl
+One-liner installers detect your OS+arch, download the matching release
+binary, verify it (ELF/Mach-O/PE magic check), atomic-rename into place,
+and handle PATH setup. Re-running upgrades in place.
 
-# Or from source
-git clone https://github.com/yumlevi/acorn-cli.git
-cd acorn-cli
-pip install -e .
+**Linux / macOS** (bash / zsh / fish):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/yumlevi/acorn-cli/go-rewrite/install.sh | sh
 ```
 
-Requires Python 3.9+. Dependencies install automatically.
+**Windows** (PowerShell 5.1+):
 
-## Setup
-
-### Server side
-
-Your Anima agent needs the [acorn-server-side](https://github.com/Klace/Anima-AI/pull/4) branch. Add to the agent's `.env`:
-
-```env
-ANIMA_ACORN_KEY=acorn_sk_your_random_secret_here
-
-# SearXNG for web search (recommended)
-SEARXNG_URL=http://your-searxng-instance.com
+```powershell
+irm https://raw.githubusercontent.com/yumlevi/acorn-cli/go-rewrite/install.ps1 | iex
 ```
 
-### Client side
+Both scripts respect overrides via env vars:
 
-First run prompts for connection details:
+| Env var          | Default                                            | Notes |
+|------------------|----------------------------------------------------|-------|
+| `ACORN_VERSION`  | `latest`                                           | Pin a tag like `v0.1.4` |
+| `ACORN_DIR`      | `~/.local/bin` (Unix), `~/.acorn/bin` (Windows)    | Install to a different directory; `ACORN_DIR=/usr/local/bin sudo …` for system-wide |
+
+### Upgrading
+
+From inside acorn:
 
 ```
-$ acorn
-Welcome to Acorn! Let's connect to your Anima agent.
-
-Anima host or URL [localhost]: 192.168.1.78
-Anima web port [18810]: 18810
-Your username: yam
-Team key (ANIMA_ACORN_KEY from server .env): acorn_sk_...
-
-Available themes: dark, oled, light, oak, forest
-Theme [dark]: forest
+/update install
 ```
 
-Config saved to `~/.acorn/config.toml`. Edit it anytime:
+Or just re-run the installer one-liner from your shell — both routes
+download the latest release and atomic-rename over the running binary.
+On Windows the running `acorn.exe` is renamed aside as `acorn.exe.old`
+first since the OS won't let you overwrite a running image.
+
+### Manual download
+
+If you don't want to pipe-to-shell, releases are at
+<https://github.com/yumlevi/acorn-cli/releases/latest>:
+
+```
+acorn-linux-amd64       Linux  x86_64
+acorn-linux-arm64       Linux  aarch64
+acorn-darwin-amd64      macOS  Intel
+acorn-darwin-arm64      macOS  Apple Silicon
+acorn-windows-amd64.exe Windows  x64
+acorn-windows-arm64.exe Windows  ARM64
+```
+
+Drop the file into a directory on `$PATH` and `chmod +x` (Unix).
+
+## Configure
+
+Global config at `~/.acorn/config.toml`, per-project override at
+`./.acorn/config.toml` (project wins).
 
 ```toml
 [connection]
-host = "192.168.1.78"    # or https://acorn.example.com for reverse proxy
-port = 18810
+host = "spore.hyrule.vip"   # or an https://… URL
+port = 18801
 user = "yam"
-key = "acorn_sk_..."
+key = "<your-acorn-team-key>"
 
 [display]
-theme = "forest"
+theme = "dark"              # dark, oak, forest, oled, light
 show_thinking = true
 show_tools = true
 show_usage = true
 ```
 
-## Usage
+If this file doesn't exist the Go port errors out and tells you to create
+it. The Python port has an interactive setup wizard — run `python -m
+acorn` once to go through it, or write the TOML by hand.
 
-```bash
-# Interactive full-screen TUI
-acorn
+## Run
 
-# One-shot (send message, get response, exit)
-acorn "what does this project do?"
-
-# Resume previous session
-acorn --continue
-acorn -c
-
-# Start in plan mode
-acorn --plan
-
-# Override connection
-acorn --host 10.0.0.5 --port 18810 --user dan
+```sh
+acorn                       # normal mode — REPL in your cwd
+acorn -c                    # resume the last session (saved in ~/.acorn/last_session)
+acorn --session cli:…-…-…   # resume a specific session
+acorn --plan                # start in plan mode
+acorn --host spore.tld --port 443 --user foo
 ```
 
-## Keyboard shortcuts
+## Keybindings
 
-| Key | Action |
-|-----|--------|
-| **Enter** | Send message |
-| **Ctrl+J** | Insert newline (multi-line input) |
-| **Ctrl+P** | Toggle plan/execute mode |
-| **Ctrl+C** | Stop generation (x2 to quit) |
-| **Esc** | Stop generation |
-| **↑↓** | Navigate autocomplete / question selector |
-| **Space** | Toggle checkbox (multi-select questions) |
-| **Tab** | Fill autocomplete / add notes to question |
+| Key                    | Action |
+|------------------------|--------|
+| Enter                  | Send message |
+| Alt+Enter              | Newline in input (multi-line drafting) |
+| Shift+Tab              | Toggle plan / execute mode |
+| Up / Down              | Command history (when input is empty or cursor on edge line) |
+| PgUp / PgDn            | Scroll chat |
+| Ctrl+↑ / Ctrl+↓        | Scroll chat by one line (belt-and-braces for terminals that swallow PgUp/PgDn) |
+| Shift+↑ / Shift+↓      | Same as Ctrl+↑/↓ |
+| Ctrl+Home / Ctrl+End   | Jump to top / bottom of chat |
+| Mouse wheel            | Scroll chat / whichever overlay is open |
+| Ctrl+P                 | Toggle expanded activity panel (full-screen browser) |
+| Ctrl+O                 | Toggle captured tool-output log |
+| Esc                    | Close modal / overlay |
+| Ctrl+C                 | While generating: stop the current turn. While idle: press twice within 1s to quit |
+| Ctrl+D                 | Unconditional quit from any state |
 
 ## Slash commands
 
-| Command | Description |
-|---------|-------------|
-| `/help` | Show all commands |
-| `/quit` | Exit Acorn |
-| `/clear` | Clear session history |
-| `/stop` | Stop current generation |
-| `/plan` | Toggle plan mode |
-| `/status` | Connection info, session ID |
-| `/theme [name]` | Switch theme (dark, oled, light, oak, forest) |
-| `/mode [auto/ask/locked]` | Tool approval mode |
-| `/mode rules` | Show session allow rules |
-| `/approve-all` | Shortcut for `/mode auto` |
-| `/bg` | List background processes |
-| `/bg run <cmd>` | Run command in background |
-| `/bg <id>` | View process output |
-| `/bg kill <id>` | Kill a process |
-| `/test [name]` | Run UI tests |
-| `/test all` | Run full test suite (22 tests) |
+| Command | What it does |
+|---------|--------------|
+| `/help` | Show this list |
+| `/new` | Fresh session in current cwd |
+| `/clear` | Clear chat (server-side too) |
+| `/resume <sessionId>` | Resume a specific session |
+| `/sessions` | List saved sessions for this project |
+| `/quit` | Exit |
+| `/stop` | Stop the current generation |
+| `/plan` | Toggle plan/execute mode (same as Shift+Tab) |
+| `/status` | Connection + session info |
+| `/theme [name]` | List themes or switch to one (persists to `~/.acorn/config.toml`) |
+| `/mode <auto\|ask\|locked\|yolo\|rules>` | Tool approval mode |
+| `/approve-all` | `/mode auto` shortcut |
+| `/approve-all-dangerous` | `/mode yolo` shortcut |
+| `/bg [list\|<id>\|run <cmd>\|kill <id>]` | Background process manager |
+| `/update check` | Compare running version against latest GitHub release |
+| `/update install [tag]` | Download + atomic-replace the running binary with the latest release (or a specific tag) |
+| `/context [refresh]` | Show the project context currently sent to the agent (or reset it for the next message) |
+| `/tree [depth]` | Print the project file tree (default depth 3) |
+| `/init` | Create an `ACORN.md` template and append `.acorn/` to `.gitignore` |
 
-## Permission modes
+## Feature parity vs Python acorn
 
-| Mode | Behavior |
-|------|----------|
-| **ask** (default) | Prompts for every write/exec with interactive selector. Option to add session rules (e.g. "Allow all `exec:git*`") |
-| **auto** | Auto-approves everything except dangerous commands (`rm -rf`, `kill -9`, `git push --force`, etc.) |
-| **locked** | Denies all writes and exec. Only reads allowed. |
+**Fully ported**:
 
-When prompted, you get an arrow-key selector:
-```
-  ▸ ✓ Allow
-    ✓ Allow all exec:git*
-    ✗ Deny
-```
+- Authentication (HTTP POST `/api/acorn/auth` → token → WS connect)
+- Auto-reconnect with exponential backoff + outbox flush
+- Heartbeat (15s WS ping) + disconnect detection
+- Chat send + streaming deltas + thinking-delta + tool-status indicators
+- Chat history replay on session join
+- Plan mode with PLAN_PREFIX constant + PLAN_READY marker detection
+- Plan approval modal (Execute / Revise / Cancel) + plan save to
+  `.acorn/plans/plan-<ts>.md`
+- Plan save silent-exception fix (prints to stderr instead of swallowing)
+- QUESTIONS: prose parser with single-select `[a / b]`, multi-select `{a / b}`,
+  and open-ended formats (parity with `acorn/questions.py`)
+- Composition fix for plan-mode + QUESTIONS: in the same response (the
+  Python 277fc8c bug — questions run first, plan modal surfaces after answers)
+- Structured `ask_user` tool (new SPORE capability) with its own picker modal
+- Local tool execution:
+  - `read_file` / `write_file` / `edit_file` (cwd-sandboxed)
+  - `glob` / `grep` (walkdir with noise-dir skipping, 500/200 result caps)
+  - `exec` (inactivity timeout, dangerous-pattern block, sensitive-path block,
+    output truncation, log file in `.acorn/logs/`)
+- Permission system: four modes (auto/ask/locked/yolo), dangerous-pattern
+  heuristics, session allow rules ("exec:git*", "write_file:src/*"),
+  structured approval modal with "Allow similar" option for non-dangerous
+- Session persistence — per-session JSONL at `~/.acorn/sessions/<safeid>.jsonl`
+  compatible with the Python format (same character substitutions, same
+  `_meta` header); `/sessions` lists, `/resume` loads
+- Diagnostic log at `~/.acorn/logs/<ts>_<safeid>.log` mirroring session_log.py
+- Context gathering on first message (OS, git branch, top-level project
+  markers, available CLIs)
+- Themes: dark, oak, forest, oled, light (runtime switchable via `/theme`)
+- Companion observer protocol — outbound: `state:questions`,
+  `plan:show-approval`, `plan:decided`, `plan:set-mode`, `interactive:resolved`,
+  `perm:current-mode`. Inbound: `plan:decision`, `perm:query`, `perm:set-mode`
+- Delegation policies: /mode pipes through the `tools.Executor.Delegation`
+  field; `delegate_task` inputs are gated before the server sees them
+- Slash command set matching Python's `constants.py:SLASH_COMMANDS`
 
-## Plan mode
+**Fully ported since the initial port** (these used to be stubs):
 
-Ctrl+P toggles plan mode. The agent follows a structured 5-phase process:
+- `/bg run|list|kill <id>` — background process manager with PDEATHSIG
+  on Linux + Job Object on Windows so children die with acorn
+- `/update install [tag]` — downloads the release asset, magic-byte
+  verifies, atomic-renames into place (Windows moves the running exe
+  aside first); capability-advertised from SPORE so acorn knows when
+  the upgrade path is available
+- Markdown rendering in assistant messages (via glamour, theme-aware)
+- Activity side panel — shows `💭 thinking`, `⚙ tool`, `📄 read`,
+  `✏ edit`, `🆕 new` entries with live previews; word-wraps thinking,
+  hard-caps height to prevent flicker, cached per-entry so streaming
+  doesn't re-wrap on every token. Ctrl+P opens a full-screen scrollable
+  browser.
+- Output-log overlay (Ctrl+O) — scrollable capture of all tool
+  stdout/stderr from the session
+- Structured `projectContext` wire field (replaces the old "glue
+  GatherContext onto user message" path; SPORE routes it into the
+  system prompt so it doesn't accumulate in `messages[]`)
+- Bracketed-paste support — multi-line paste no longer fires one send
+  per line (bubbletea v1.3.x)
 
-1. **Environment audit** — checks installed tools, runtimes, GPU, disk space
-2. **Codebase scan** — reads files, greps patterns, understands the project
-3. **Research** — web searches for framework docs, API references, best practices
-4. **Clarify** — interactive Q&A with single-select, multi-select, and open-ended questions
-5. **Plan** — detailed step-by-step plan with file paths and verification steps
+**Intentionally out of scope**:
 
-After the plan, you get:
-```
-  ▸ ▶ Execute plan
-    ✎ Revise with feedback
-    ✕ Cancel
-```
+- `/test` harness — internal acorn UI test runner, not user-facing
 
-Plans are saved to `.acorn/plans/` in your project directory.
-
-## Themes
-
-5 built-in themes with distinct visual identities:
-
-| Theme | Background | Vibe |
-|-------|-----------|------|
-| **dark** | Charcoal `#1e2030` | Soft dark with lavender accents |
-| **oled** | Pure black `#000000` | Monochrome, battery saver |
-| **light** | White `#fafafa` | Clean with blue/green accents |
-| **oak** | Warm brown `#2c2016` | Earthy with terracotta/sage |
-| **forest** | Deep green `#0c1f14` | Pine/moss/emerald |
-
-Switch with `/theme oak` — persists to config.
-
-## Project structure
-
-```
-~/.acorn/                    # Global config (per user)
-  config.toml                # Connection, theme, display prefs
-  history                    # REPL command history
-  last_session               # For --continue
-  logs/                      # Session logs (auto-cleanup after 14 days)
-
-.acorn/                      # Local to project (gitignored)
-  config.toml                # Per-project overrides (optional)
-  plans/                     # Saved approved plans
-```
-
-## Session management
-
-Each `acorn` invocation creates a fresh session. The agent starts with no conversation history but still knows you from the knowledge graph (your preferences, expertise, past interactions).
-
-Use `acorn -c` / `acorn --continue` to resume the previous session with full history.
-
-Session key format: `cli:{user}@{project}-{hash}` — unique per user and project directory.
-
-## Tool routing
-
-| Runs locally (your machine) | Runs server-side (Anima Docker) |
-|----|-----|
-| `read_file`, `write_file`, `edit_file` | `graph_query`, `graph_update` |
-| `exec` (shell commands) | `web_search` (SearXNG/Brave) |
-| `glob`, `grep` | `message_send`, `delegate_task` |
-| `web_serve` (local HTTP server) | `skill_lookup`, `save_tool` |
-
-File operations are sandboxed to your working directory.
-
-## Background processes
-
-Long-running commands (servers, watchers) are auto-detected and launched in background:
+## Layout
 
 ```
-/bg              — list all processes
-/bg run <cmd>    — manual background launch
-/bg 3            — view output of process #3
-/bg kill 3       — stop it
+go/
+├── Makefile                     build + cross-compile targets
+├── README.md                    this file
+├── install.sh                   prebuilt-binary installer
+├── go.mod / go.sum              module + locked deps
+├── cmd/acorn/main.go            entry point
+└── internal/
+    ├── config/config.go         [connection]+[display] TOML loader, last_session
+    ├── conn/ws.go               auth + WS + reconnect + outbox
+    ├── proto/messages.go        server message shapes
+    ├── sessionlog/
+    │   ├── writer.go            ~/.acorn/sessions/*.jsonl writer + listings
+    │   └── debuglog.go          ~/.acorn/logs/*.log verbose logger
+    ├── tools/
+    │   ├── executor.go          dispatch, delegation policing, hooks
+    │   ├── fileops.go           read/write/edit_file with cwd sandbox
+    │   ├── search.go            glob + grep
+    │   └── shell.go             exec with timeout/safety/log
+    └── app/
+        ├── model.go             Bubble Tea Model + init wiring
+        ├── update.go            Update() — keystrokes, frames, slash
+        ├── view.go              chat rendering, header, footer
+        ├── themes.go            dark/oak/forest/oled/light palettes
+        ├── context.go           first-message context gathering
+        ├── session.go           sessionID compute, git helpers
+        ├── permissions.go       TUIPerms (impl Permissions interface)
+        ├── permmodal.go         per-tool approval modal
+        ├── questions.go         QUESTIONS: parser + prose picker + ask_user
+        ├── plan.go              plan approval modal + savePlan
+        └── updater.go           /update check against GitHub releases
 ```
 
-Server-like commands (`npm start`, `flask run`, etc.) auto-background.
+## Protocol compatibility
 
-## Session logging
-
-Every session writes verbose diagnostics to `~/.acorn/logs/`:
-
-```
-~/.acorn/logs/20260412-203045_cli_yam_myproject-a1b2c3d4.log
-```
-
-Contains: WebSocket events, tool requests/results with timing, permission decisions, errors with tracebacks, session summary. Auto-cleanup after 14 days.
-
-## Testing
-
-22 built-in tests covering all subsystems:
-
-```
-/test all                 # Run everything
-/test question-parse      # Parser assertions
-/test questions-inline    # Interactive selector
-/test permissions         # Dangerous detection + rules
-/test bg-lifecycle        # Process management
-/test file-ops            # Read/write/edit roundtrip
-/test shell               # Exec + safety
-/test path-sandbox        # File sandboxing
-/test local-server        # HTTP server start/stop
-/test panels              # Theme rendering
-/test themes              # Color swatches
-/test env                 # Environment audit
-/test connection          # WebSocket + auth
-```
-
-## Architecture
-
-```
-┌─────────────────────────┐       WebSocket        ┌──────────────────────┐
-│       Acorn CLI          │ ◄════════════════════► │    Anima Agent        │
-│   (developer's machine)  │                        │  (Docker container)   │
-│                          │  ── chat message ──►   │                       │
-│  • Full-screen TUI       │  ◄── chat:delta ───    │  • LLM reasoning      │
-���  • Local tool execution  │  ◄── tool:request ──   │  • Session storage    │
-│  • Context gathering     │  ── tool:result ──►    │  • Knowledge graph    │
-│  • Permission system     │  ◄── chat:done ────    │  • Learning pipeline  │
-│  • Themes + rendering    │                        │  • SearXNG search     │
-└─────────────────────────┘                         └──────────────────────┘
-```
-
-## License
-
-MIT
+The Go port speaks the same protocol as the Python CLI and connects to the
+same SPORE server endpoints. You can switch between the two CLIs on the
+same machine — they share the `~/.acorn/config.toml`, `~/.acorn/sessions/`,
+`~/.acorn/logs/`, and `~/.acorn/last_session` files. `/sessions` in either
+CLI lists the same history.
