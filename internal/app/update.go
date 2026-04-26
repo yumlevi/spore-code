@@ -107,6 +107,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			"startedAt":      time.Now().UTC().Format(time.RFC3339),
 			"projectContext": pc,
 		})
+		// codeindex onboarding hint — fires once per acorn launch when
+		// the cwd has parseable source but no .acorn/index.db. The
+		// agent's plan-mode prompt branches on hasCodeIndex; without
+		// the index, it falls back to grep+read_file instead of
+		// search_symbols / trace_calls / architecture / impact, which
+		// is significantly more expensive in tokens and slower. The
+		// hint nudges the user toward `/index` once.
+		if !pc.HasCodeIndex && first {
+			m.pushChat("system", "This project isn't indexed yet. Run /index to enable structural search (search_symbols, trace_calls, architecture, impact). One-time, takes a few seconds; the agent will prefer the index over grep+read_file when present.")
+		}
 		return m, nil
 
 	case connErrorMsg:
@@ -152,6 +162,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case toolHandledMsg:
 		return m, m.toolCmd()
+
+	case CodeindexResultMsg:
+		// Result of an async codeindex slash command (/index, /architecture,
+		// /why, /calls, /impact). Rendered onto the chat scrollback under
+		// the Label header. The cmd ran in its own goroutine so the UI
+		// stayed responsive while the tool did its work.
+		m.pushChat("system", renderCodeindexResult(msg.Label, msg.Result))
+		return m, nil
 
 	case hookExecLineMsg:
 		preview := msg.line

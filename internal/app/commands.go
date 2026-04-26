@@ -421,56 +421,84 @@ func init() {
 }
 
 // ── codeindex commands ─────────────────────────────────────────────
+//
+// Each command runs the underlying tool inside a tea.Cmd goroutine so
+// the Bubble Tea Update loop never blocks. Indexing a real project can
+// take seconds; running it on the UI thread freezes the entire TUI for
+// that duration. The Cmd posts a CodeindexResultMsg back; update.go
+// renders it into the chat scrollback.
+
+// CodeindexResultMsg is the deferred result from any codeindex slash
+// command. Label is the chat header (e.g. "/index" or "/why Foo");
+// Result is whatever the tool returned (typically map[string]any).
+type CodeindexResultMsg struct {
+	Label  string
+	Result any
+}
+
+// runCodeindexAsync wraps a tool call in a tea.Cmd. Captures cwd up-
+// front so a /scope or /cwd change mid-flight doesn't retarget.
+func runCodeindexAsync(label, cwd string, fn func(string) any) tea.Cmd {
+	return func() tea.Msg {
+		return CodeindexResultMsg{Label: label, Result: fn(cwd)}
+	}
+}
 
 func cmdIndex(m *Model, args []string) (tea.Model, tea.Cmd) {
 	input := map[string]any{}
 	if len(args) > 0 && args[0] == "force" {
 		input["force"] = true
 	}
-	r := tools.IndexCodebase(input, m.cwd)
-	rendered := renderToolResult("/index", r)
-	m.pushChat("system",rendered)
-	return m, nil
+	m.pushChat("system", "Indexing codebase… (this may take a few seconds)")
+	return m, runCodeindexAsync("/index", m.cwd, func(cwd string) any {
+		return tools.IndexCodebase(input, cwd)
+	})
 }
 
 func cmdArchitecture(m *Model, args []string) (tea.Model, tea.Cmd) {
-	r := tools.Architecture(map[string]any{}, m.cwd)
-	m.pushChat("system",renderToolResult("/architecture", r))
-	return m, nil
+	m.pushChat("system", "Computing architecture summary…")
+	return m, runCodeindexAsync("/architecture", m.cwd, func(cwd string) any {
+		return tools.Architecture(map[string]any{}, cwd)
+	})
 }
 
 func cmdWhy(m *Model, args []string) (tea.Model, tea.Cmd) {
 	if len(args) == 0 {
-		m.pushChat("system","usage: /why <symbol-name>")
+		m.pushChat("system", "usage: /why <symbol-name>")
 		return m, nil
 	}
-	r := tools.TraceCalls(map[string]any{
-		"name":      args[0],
-		"direction": "callers",
-		"depth":     3,
-	}, m.cwd)
-	m.pushChat("system",renderToolResult("/why "+args[0], r))
-	return m, nil
+	name := args[0]
+	m.pushChat("system", "Tracing callers of "+name+"…")
+	return m, runCodeindexAsync("/why "+name, m.cwd, func(cwd string) any {
+		return tools.TraceCalls(map[string]any{
+			"name":      name,
+			"direction": "callers",
+			"depth":     3,
+		}, cwd)
+	})
 }
 
 func cmdCalls(m *Model, args []string) (tea.Model, tea.Cmd) {
 	if len(args) == 0 {
-		m.pushChat("system","usage: /calls <symbol-name>")
+		m.pushChat("system", "usage: /calls <symbol-name>")
 		return m, nil
 	}
-	r := tools.TraceCalls(map[string]any{
-		"name":      args[0],
-		"direction": "callees",
-		"depth":     3,
-	}, m.cwd)
-	m.pushChat("system",renderToolResult("/calls "+args[0], r))
-	return m, nil
+	name := args[0]
+	m.pushChat("system", "Tracing callees of "+name+"…")
+	return m, runCodeindexAsync("/calls "+name, m.cwd, func(cwd string) any {
+		return tools.TraceCalls(map[string]any{
+			"name":      name,
+			"direction": "callees",
+			"depth":     3,
+		}, cwd)
+	})
 }
 
 func cmdImpact(m *Model, args []string) (tea.Model, tea.Cmd) {
-	r := tools.Impact(map[string]any{}, m.cwd)
-	m.pushChat("system",renderToolResult("/impact", r))
-	return m, nil
+	m.pushChat("system", "Computing change impact for staged + unstaged paths…")
+	return m, runCodeindexAsync("/impact", m.cwd, func(cwd string) any {
+		return tools.Impact(map[string]any{}, cwd)
+	})
 }
 
 // cmdScripts prints a one-line hint that nudges the user toward asking
@@ -494,24 +522,231 @@ func cmdScripts(m *Model, args []string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// renderToolResult formats a local-tool return for the chat scrollback.
-// Pretty-prints JSON-ish maps; passes strings through.
-func renderToolResult(label string, r any) string {
+// renderCodeindexResult turns a tool's return map into chat-friendly
+// markdown. Each codeindex tool returns the same envelope shape
+// ({ok, ...}); we shape the body per known label so the agent (and
+// the user) gets a readable summary instead of a Go-struct dump.
+func renderCodeindexResult(label string, r any) string {
 	if r == nil {
 		return label + " — (no result)"
 	}
-	switch v := r.(type) {
-	case string:
-		return label + ":\n" + v
-	default:
-		// Fall back to a compact dump.
-		return label + ":\n" + sprintCompact(v)
+	m, ok := r.(map[string]any)
+	if !ok {
+		return label + ":\n" + fmt.Sprintf("%+v", r)
 	}
+	if okFlag, present := m["ok"]; present && okFlag != true {
+		errMsg := ""
+		if s, ok := m["error"].(string); ok {
+			errMsg = s
+		} else if s, ok := m["reason"].(string); ok {
+			errMsg = s
+		}
+		if errMsg == "" {
+			errMsg = "tool returned ok=false"
+		}
+		return label + " — failed: " + errMsg
+	}
+	switch {
+	case strings.HasPrefix(label, "/index"):
+		return renderIndexResult(label, m)
+	case strings.HasPrefix(label, "/architecture"):
+		return renderArchitectureResult(label, m)
+	case strings.HasPrefix(label, "/why") || strings.HasPrefix(label, "/calls"):
+		return renderTraceCallsResult(label, m)
+	case strings.HasPrefix(label, "/impact"):
+		return renderImpactResult(label, m)
+	}
+	// Fallback: compact key=value listing (excluding ok flag).
+	return label + ":\n" + compactKV(m)
 }
 
-func sprintCompact(v any) string {
-	// Use fmt with %+v for now; full pretty-printing would pull in
-	// encoding/json which the package already imports for other code,
-	// but the Verbose %+v is enough to read in scrollback.
-	return fmt.Sprintf("%+v", v)
+func renderIndexResult(label string, m map[string]any) string {
+	took := readInt(m, "took_ms")
+	files := readInt(m, "files")
+	skipped := readInt(m, "skipped")
+	syms := readInt(m, "symbols")
+	calls := readInt(m, "calls")
+	totalFiles := readInt(m, "total_files")
+	totalSyms := readInt(m, "total_syms")
+	head, _ := m["index_head"].(string)
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s — done in %dms\n", label, took)
+	fmt.Fprintf(&b, "  parsed: %d files (%d skipped unchanged), %d symbols, %d call edges\n", files, skipped, syms, calls)
+	if totalFiles > 0 || totalSyms > 0 {
+		fmt.Fprintf(&b, "  index now: %d files, %d symbols\n", totalFiles, totalSyms)
+	}
+	if head != "" {
+		fmt.Fprintf(&b, "  index_head: %s\n", head)
+	}
+	if byLang, ok := m["by_language"].(map[string]int); ok && len(byLang) > 0 {
+		var langs []string
+		for l, n := range byLang {
+			langs = append(langs, fmt.Sprintf("%s=%d", l, n))
+		}
+		sort.Strings(langs)
+		fmt.Fprintf(&b, "  by language: %s\n", strings.Join(langs, ", "))
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func renderArchitectureResult(label string, m map[string]any) string {
+	var b strings.Builder
+	b.WriteString(label + ":\n")
+
+	if stats, ok := m["stats"].(any); ok {
+		// stats is the ArchitectureStats struct passed through as-is;
+		// a fmt.Sprintf("%+v") on it is the cheapest readable form.
+		fmt.Fprintf(&b, "  stats: %+v\n", stats)
+	}
+	if head, _ := m["index_head"].(string); head != "" {
+		fmt.Fprintf(&b, "  index_head: %s\n", head)
+	}
+
+	// Tech stack — the value is []codeindex.LanguageBreakdown but we
+	// only need the language and file count for a one-line render.
+	if ts := m["tech_stack"]; ts != nil {
+		fmt.Fprintf(&b, "  tech_stack: %s\n", oneLineSlice(ts))
+	}
+	if eps := m["entry_points"]; eps != nil {
+		fmt.Fprintf(&b, "  entry_points: %s\n", oneLineSlice(eps))
+	}
+	if cls := m["clusters"]; cls != nil {
+		fmt.Fprintf(&b, "  clusters: %s\n", oneLineSlice(cls))
+	}
+	if hp := m["hot_paths"]; hp != nil {
+		fmt.Fprintf(&b, "  hot_paths: %s\n", oneLineSlice(hp))
+	}
+	if notes, ok := m["notes"].([]string); ok && len(notes) > 0 {
+		b.WriteString("  notes:\n")
+		for _, n := range notes {
+			b.WriteString("    - " + n + "\n")
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func renderTraceCallsResult(label string, m map[string]any) string {
+	count := readInt(m, "count")
+	if count == 0 {
+		return label + " — 0 edges (try a different name or `force`-reindex first)"
+	}
+	dir, _ := m["direction"].(string)
+	depth := readInt(m, "depth")
+	truncated, _ := m["truncated"].(bool)
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s — %d edges (direction=%s depth=%d%s):\n", label, count, dir, depth, ternary(truncated, ", TRUNCATED", ""))
+	// Print up to 25 edges; agent gets the full list via the JSON tool result.
+	if edges, ok := m["edges"].([]struct{ /* anonymous from inline closure */ }); ok {
+		_ = edges
+	}
+	// Use reflection-light loop via type assertion onto []any.
+	if edges, ok := m["edges"].([]any); ok {
+		shown := 0
+		for _, e := range edges {
+			if shown >= 25 {
+				fmt.Fprintf(&b, "  … (%d more)\n", count-shown)
+				break
+			}
+			fmt.Fprintf(&b, "  %v\n", e)
+			shown++
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func renderImpactResult(label string, m map[string]any) string {
+	totalCallers := readInt(m, "total_callers")
+	depth := readInt(m, "depth")
+	paths, _ := m["paths"].([]string)
+	syms, _ := m["affected_symbols"].([]map[string]any)
+	if note, ok := m["note"].(string); ok && len(paths) == 0 {
+		return label + " — " + note
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s — %d affected symbols, %d transitive callers (depth=%d) across %d paths\n",
+		label, len(syms), totalCallers, depth, len(paths))
+	for i, s := range syms {
+		if i >= 15 {
+			fmt.Fprintf(&b, "  … (%d more)\n", len(syms)-i)
+			break
+		}
+		fmt.Fprintf(&b, "  %v::%v  callers=%v  @%v:%v\n",
+			s["file"], s["name"], s["transitive_callers"], s["file"], s["line"])
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// ── tiny helpers ───────────────────────────────────────────────────
+
+func readInt(m map[string]any, key string) int {
+	switch v := m[key].(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	}
+	return 0
+}
+
+func compactKV(m map[string]any) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		if k == "ok" {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		fmt.Fprintf(&b, "  %s: %v\n", k, m[k])
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// oneLineSlice formats a slice into a compact "[a, b, c…]" form. Falls
+// back to %+v when the type isn't a simple slice. Caps at 5 elements.
+func oneLineSlice(v any) string {
+	switch s := v.(type) {
+	case []any:
+		return formatAnySlice(s, 5)
+	case []map[string]any:
+		out := make([]any, len(s))
+		for i := range s {
+			out[i] = s[i]
+		}
+		return formatAnySlice(out, 5)
+	}
+	str := fmt.Sprintf("%+v", v)
+	if len(str) > 200 {
+		str = str[:200] + "…"
+	}
+	return str
+}
+
+func formatAnySlice(s []any, max int) string {
+	if len(s) == 0 {
+		return "[]"
+	}
+	parts := make([]string, 0, max)
+	for i, e := range s {
+		if i >= max {
+			break
+		}
+		parts = append(parts, fmt.Sprintf("%v", e))
+	}
+	suffix := ""
+	if len(s) > max {
+		suffix = fmt.Sprintf(" … (%d more)", len(s)-max)
+	}
+	return "[" + strings.Join(parts, ", ") + suffix + "]"
+}
+
+func ternary[T any](cond bool, a, b T) T {
+	if cond {
+		return a
+	}
+	return b
 }
