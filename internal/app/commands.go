@@ -10,6 +10,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/yumlevi/acorn-cli/internal/codeindex"
+	"github.com/yumlevi/acorn-cli/internal/conn"
 	"github.com/yumlevi/acorn-cli/internal/tools"
 )
 
@@ -464,6 +466,71 @@ func runCodeindexAsync(label, cwd string, fn func(string) any) tea.Cmd {
 	return func() tea.Msg {
 		return CodeindexResultMsg{Label: label, Result: fn(cwd)}
 	}
+}
+
+// autoMirrorCodeGraph computes the architecture summary from the
+// freshly-updated .acorn/index.db and pushes it to the SPORE-side
+// acorn-cli plugin via a `code_graph:summary` WS frame. The plugin
+// writes the summary onto the project node's `code_graph` aspect,
+// so subsequent sessions on this project (or fresh laptops, or
+// session distillation) see the codebase shape without anyone
+// having to call architecture + update_code_graph_summary by hand.
+//
+// Best-effort — every failure path silently no-ops since this is a
+// background nicety, not a load-bearing part of the index flow.
+func autoMirrorCodeGraph(client *conn.Client, cwd, sessionID, userName string) {
+	if client == nil || cwd == "" {
+		return
+	}
+	store, err := codeindex.Open(cwd)
+	if err != nil {
+		return
+	}
+	defer store.Close()
+	arch, err := codeindex.ComputeArchitecture(store)
+	if err != nil || arch == nil {
+		return
+	}
+	// Marshal-friendly payload: convert the concrete typed slices to
+	// []map[string]any so JSON encoding produces stable shapes the
+	// plugin's projects.upsertProjectCodeGraph can iterate.
+	techStack := make([]map[string]any, 0, len(arch.TechStack))
+	for _, t := range arch.TechStack {
+		techStack = append(techStack, map[string]any{"language": t.Language, "files": t.Files, "symbols": t.Symbols})
+	}
+	clusters := make([]map[string]any, 0, len(arch.Clusters))
+	for _, c := range arch.Clusters {
+		clusters = append(clusters, map[string]any{"name": c.Name, "path": c.Path, "files": c.Files, "symbols": c.Symbols, "dominant_lang": c.DominantLang})
+	}
+	entryPoints := make([]map[string]any, 0, len(arch.EntryPoints))
+	for _, e := range arch.EntryPoints {
+		entryPoints = append(entryPoints, map[string]any{"qname": e.QName, "name": e.Name, "file": e.File, "line": e.Line, "kind": e.Kind, "language": e.Language})
+	}
+	hotPaths := make([]map[string]any, 0, len(arch.HotPaths))
+	for _, h := range arch.HotPaths {
+		hotPaths = append(hotPaths, map[string]any{"qname": h.QName, "name": h.Name, "file": h.File, "line": h.Line, "callers": h.Callers, "language": h.Language})
+	}
+	stats := map[string]any{
+		"files": arch.Stats.Files, "symbols": arch.Stats.Symbols,
+		"functions": arch.Stats.Functions, "methods": arch.Stats.Methods,
+		"classes": arch.Stats.Classes, "calls": arch.Stats.Calls,
+	}
+	summary := map[string]any{
+		"index_head":   arch.IndexHead,
+		"stats":        stats,
+		"tech_stack":   techStack,
+		"entry_points": entryPoints,
+		"clusters":     clusters,
+		"hot_paths":    hotPaths,
+		"notes":        arch.Notes,
+	}
+	_ = client.Send(map[string]any{
+		"type":      "code_graph:summary",
+		"sessionId": sessionID,
+		"userName":  userName,
+		"cwd":       cwd,
+		"summary":   summary,
+	})
 }
 
 func cmdIndex(m *Model, args []string) (tea.Model, tea.Cmd) {
