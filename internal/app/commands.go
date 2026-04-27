@@ -655,6 +655,119 @@ func autoSaveHelperIfMatch(client *conn.Client, cwd, sessionID, userName, path, 
 	})
 }
 
+// autoRecordScriptOutcome inspects an `exec` tool call's input +
+// result. If the command line references a saved-helper path
+// (.acorn/scratch/<name>.<ext>, gen_<name>.<ext>, etc.), the CLI
+// fires a `record_script_outcome:from_exec` WS frame so the
+// matching script: node's success_count / fail_count tracks
+// reality without the agent having to call record_script_outcome.
+//
+// Best-effort — quiet skip on any malformed input. Multiple helper
+// references in one command produce multiple frames (each script
+// gets its own counter bump).
+func autoRecordScriptOutcome(client *conn.Client, cwd, sessionID, userName string, input map[string]any, result any) {
+	if client == nil {
+		return
+	}
+	cmdRaw, _ := input["command"].(string)
+	if cmdRaw == "" {
+		return
+	}
+	scripts := scriptNamesInCommand(cmdRaw)
+	if len(scripts) == 0 {
+		return
+	}
+	ok := isExecResultOK(result)
+	for _, name := range scripts {
+		_ = client.Send(map[string]any{
+			"type":      "record_script_outcome:from_exec",
+			"sessionId": sessionID,
+			"userName":  userName,
+			"cwd":       cwd,
+			"name":      name,
+			"ok":        ok,
+		})
+	}
+}
+
+// scriptNamesInCommand scans a shell command line for tokens that
+// look like saved-helper paths and returns their derived script
+// names (matching helperNameFromPath). Conservative — only
+// definitive helper-pattern paths trigger a record. Cross-platform
+// path separators handled via filepath.ToSlash before matching.
+func scriptNamesInCommand(cmd string) []string {
+	if cmd == "" {
+		return nil
+	}
+	normalized := strings.ReplaceAll(cmd, `\`, "/")
+	// Token split on whitespace + common shell quote/op characters.
+	toks := strings.FieldsFunc(normalized, func(r rune) bool {
+		switch r {
+		case ' ', '\t', '\n', '\r', '"', '\'', ';', '|', '&', '(', ')':
+			return true
+		}
+		return false
+	})
+	seen := map[string]bool{}
+	var out []string
+	for _, t := range toks {
+		// Strip leading "./" or "/" prefixes so .acorn/scratch/foo.py
+		// matches both ".acorn/scratch/foo.py" and "./.acorn/scratch/foo.py".
+		clean := strings.TrimPrefix(strings.TrimPrefix(t, "./"), "/")
+		if !helperPathPatterns(clean) {
+			continue
+		}
+		name := helperNameFromPath(clean)
+		if name == "" {
+			continue
+		}
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out
+}
+
+// isExecResultOK looks at the exec tool's result map and decides
+// whether the run counts as a success. Mirrors the existing
+// internal/tools.Exec output shape: {ok, exit, stdout, stderr,
+// timed_out, ...}. ok=true AND exit=0 → success; anything else
+// (non-zero exit, error, timeout) → failure.
+func isExecResultOK(result any) bool {
+	m, ok := result.(map[string]any)
+	if !ok {
+		return false
+	}
+	if okFlag, present := m["ok"]; present {
+		if okFlag != true {
+			return false
+		}
+	}
+	if errStr, _ := m["error"].(string); errStr != "" {
+		return false
+	}
+	if to, _ := m["timed_out"].(bool); to {
+		return false
+	}
+	switch v := m["exit"].(type) {
+	case int:
+		if v != 0 {
+			return false
+		}
+	case int64:
+		if v != 0 {
+			return false
+		}
+	case float64:
+		if v != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // autoMirrorCodeGraph computes the architecture summary from the
 // freshly-updated .acorn/index.db and pushes it to the SPORE-side
 // acorn-cli plugin via a `code_graph:summary` WS frame. The plugin

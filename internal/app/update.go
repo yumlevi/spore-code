@@ -283,6 +283,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.dlog != nil {
 			m.dlog.Info("tool", msg.name, "ms", msg.ms)
 		}
+		// Auto-record script outcomes — when `exec` runs a command
+		// referencing a saved-helper path, fire a
+		// `record_script_outcome:from_exec` WS frame so the script
+		// node's success/fail counters get bumped without the agent
+		// having to call record_script_outcome. Same architectural
+		// pattern as auto-save: deterministic CLI-side bookkeeping.
+		if msg.name == "exec" {
+			go autoRecordScriptOutcome(m.client, m.cwd, m.sess, m.cfg.Connection.User, msg.input, msg.result)
+		}
 		return m, nil
 
 	case updateCheckResult:
