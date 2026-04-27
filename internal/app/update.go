@@ -15,6 +15,7 @@ import (
 	"github.com/yumlevi/acorn-cli/internal/conn"
 	"github.com/yumlevi/acorn-cli/internal/proto"
 	"github.com/yumlevi/acorn-cli/internal/sessionlog"
+	"github.com/yumlevi/acorn-cli/internal/tools"
 )
 
 // PlanPrefix — port of acorn/constants.py:PLAN_PREFIX. Prepended to the
@@ -107,15 +108,32 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			"startedAt":      time.Now().UTC().Format(time.RFC3339),
 			"projectContext": pc,
 		})
-		// codeindex onboarding hint — fires once per acorn launch when
-		// the cwd has parseable source but no .acorn/index.db. The
-		// agent's plan-mode prompt branches on hasCodeIndex; without
-		// the index, it falls back to grep+read_file instead of
-		// search_symbols / trace_calls / architecture / impact, which
-		// is significantly more expensive in tokens and slower. The
-		// hint nudges the user toward `/index` once.
+		// codeindex auto-bootstrap — when the cwd has no index yet,
+		// kick a background index pass so the agent has structural
+		// tools available without the user needing to remember
+		// /index. Async via tea.Cmd so the UI stays responsive
+		// (heartbeat ticks every 2s; result lands in the chat).
+		// Keyed on `first` so we don't re-trigger across reconnects
+		// in the same TUI process. Slash command `/index` still
+		// works for explicit re-indexing.
 		if !pc.HasCodeIndex && first {
-			m.pushChat("system", "This project isn't indexed yet. Run /index to enable structural search (search_symbols, trace_calls, architecture, impact). One-time, takes a few seconds; the agent will prefer the index over grep+read_file when present.")
+			m.pushChat("system", "Auto-indexing this project so the agent can use structural search (search_symbols, trace_calls, architecture, impact). One-time, takes a few seconds; progress every 2s.")
+			send := m.sendProgramMsg
+			cwd := m.cwd
+			return m, func() tea.Msg {
+				var onProgress tools.IndexProgressFn
+				if send != nil {
+					onProgress = func(p tools.IndexProgress) {
+						send(CodeindexProgressMsg{
+							FilesScanned: p.FilesScanned, FilesParsed: p.FilesParsed,
+							FilesSkipped: p.FilesSkipped, Symbols: p.Symbols, Calls: p.Calls,
+							ElapsedMs: p.ElapsedMs, Note: p.Note,
+						})
+					}
+				}
+				r := tools.IndexCodebaseWithProgress(map[string]any{}, cwd, onProgress)
+				return CodeindexResultMsg{Label: "/index (auto-bootstrap)", Result: r}
+			}
 		}
 		return m, nil
 

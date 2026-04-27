@@ -188,9 +188,14 @@ func IndexCodebaseWithProgress(input map[string]any, cwd string, onProgress Inde
 				currentPath.Store(empty)
 			}()
 			scanned.Add(1)
-			// Skip unchanged files when not forcing — mtime check.
+			// Skip unchanged files when not forcing — mtime check
+			// gated by the dirty flag. fileops post-write hooks set
+			// dirty=1 when a write_file/edit_file lands on a path,
+			// so even if mtime didn't visibly change (sub-second
+			// edit on a filesystem with 1s mtime granularity), we
+			// still re-parse the affected file.
 			if !force {
-				if prev, ok, _ := store.FileMTime(fe.RelPath); ok && prev == fe.MTime {
+				if prev, dirty, ok, _ := store.FileFreshness(fe.RelPath); ok && prev == fe.MTime && !dirty {
 					skipped.Add(1)
 					return true
 				}

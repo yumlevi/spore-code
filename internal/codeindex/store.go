@@ -490,6 +490,25 @@ func (s *Store) FileMTime(path string) (int64, bool, error) {
 	return mtime, true, nil
 }
 
+// FileFreshness returns (mtime, dirty, ok) for the file. Used by the
+// indexer's mtime-skip path so files explicitly marked dirty by
+// fileops post-write hooks are re-parsed regardless of mtime: a
+// filesystem with second-resolution mtime can let a same-second
+// edit slip past the mtime check, and the dirty flag is the
+// authoritative "this changed since last index" signal.
+func (s *Store) FileFreshness(path string) (mtime int64, dirty bool, ok bool, err error) {
+	row := s.db.QueryRow(`SELECT mtime_unix, dirty FROM files WHERE path = ?`, path)
+	var d int
+	scanErr := row.Scan(&mtime, &d)
+	if scanErr == sql.ErrNoRows {
+		return 0, false, false, nil
+	}
+	if scanErr != nil {
+		return 0, false, false, scanErr
+	}
+	return mtime, d != 0, true, nil
+}
+
 // SetMeta writes a key/value pair into the meta table. Used for
 // IndexHead (current git sha) and other small bookkeeping.
 func (s *Store) SetMeta(key, value string) error {

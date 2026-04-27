@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/yumlevi/acorn-cli/internal/codeindex"
 )
 
 // ResolvePath enforces the cwd sandbox — tools may only touch paths inside
@@ -107,6 +109,7 @@ func WriteFile(input map[string]any, cwd, scope string) any {
 	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 		return map[string]string{"error": err.Error()}
 	}
+	markCodeIndexDirty(cwd, p)
 	return map[string]any{"ok": true, "path": p, "lines": strings.Count(content, "\n") + 1}
 }
 
@@ -146,6 +149,7 @@ func EditFile(input map[string]any, cwd, scope string) any {
 	if err := os.WriteFile(p, []byte(updated), 0o644); err != nil {
 		return map[string]string{"error": err.Error()}
 	}
+	markCodeIndexDirty(cwd, p)
 	return map[string]any{"ok": true, "path": p, "replacements": reps}
 }
 
@@ -172,4 +176,32 @@ func asBool(v any, d bool) bool {
 		return b
 	}
 	return d
+}
+
+// markCodeIndexDirty flags the freshly-written file in .acorn/index.db
+// so the next /index call re-parses it. Best-effort: silently no-ops
+// when the index doesn't exist or the path is outside cwd. Never
+// blocks the calling write — every file op that might've broken the
+// index now signals the indexer rather than letting the index drift
+// silently.
+func markCodeIndexDirty(cwd, absPath string) {
+	if cwd == "" || absPath == "" {
+		return
+	}
+	rel, err := filepath.Rel(cwd, absPath)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return // outside cwd → not in our index
+	}
+	relPosix := filepath.ToSlash(rel)
+	// Cheap existence check — if .acorn/index.db isn't there, we
+	// haven't bootstrapped the index yet and there's nothing to dirty.
+	if _, err := os.Stat(filepath.Join(cwd, ".acorn", "index.db")); err != nil {
+		return
+	}
+	store, err := codeindex.Open(cwd)
+	if err != nil {
+		return
+	}
+	defer store.Close()
+	_ = store.MarkDirty(relPosix)
 }
