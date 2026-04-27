@@ -3,6 +3,7 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,7 +38,15 @@ var localTools = map[string]bool{
 	"edit_file":  true,
 	"glob":       true,
 	"grep":       true,
-	// web_serve / web_fetch left to server for now (mirrors Python's web_fetch).
+	// web_serve runs locally so the user's LAN actually reaches the
+	// hosted dir. The server-side version serves /workspace inside
+	// the SPORE container — useless for "show me a QR code on my
+	// phone" workflows. Local action=start/stop/status only;
+	// action=backend (vault-key injection / Traefik proxy) stays
+	// server-only and falls back when the user explicitly requests
+	// that flavor (or has no acorn CLI connected).
+	"web_serve": true,
+	// web_fetch left to server.
 
 	// codeindex (M1): structural code search backed by a per-project
 	// SQLite index at <cwd>/.acorn/index.db. See internal/codeindex/.
@@ -202,6 +211,16 @@ func (e *Executor) Execute(name string, inputRaw json.RawMessage) (result any, c
 		return Grep(input, e.CWD), true
 	case "exec":
 		return Exec(input, e.CWD, e.LogDir, e.BG, e.Hooks.OnExecLine), true
+	case "web_serve":
+		// Special case: action=backend stays server-side (it needs
+		// vault keys + Traefik). Falling through to the server keeps
+		// that one shape working; everything else (start/stop/status)
+		// is claimed locally.
+		input2 := input
+		if a, _ := input2["action"].(string); strings.EqualFold(a, "backend") {
+			return nil, false
+		}
+		return WebServe(input2, e.CWD, e.Scope), true
 
 	// codeindex (M1)
 	case "index_codebase":
