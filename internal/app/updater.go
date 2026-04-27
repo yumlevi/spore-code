@@ -155,6 +155,25 @@ func fetchAllReleasesCmd() tea.Cmd {
 		if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
 			return releaseListResult{Err: err.Error()}
 		}
+		// Defend against GitHub's /releases list endpoint silently
+		// omitting valid releases: if the running version isn't in the
+		// list, probe the direct tag endpoint and prepend it. Same
+		// quirk we hit with v0.9.0-pre-verify — the release exists at
+		// /releases/tags/<tag> but is missing from the list.
+		if Version != "" && Version != "dev" {
+			seen := false
+			for _, r := range releases {
+				if r.TagName == Version {
+					seen = true
+					break
+				}
+			}
+			if !seen {
+				if rel, ok := fetchTagDirect(Version); ok {
+					releases = append([]releaseInfo{rel}, releases...)
+				}
+			}
+		}
 		return releaseListResult{Releases: releases}
 	}
 }
@@ -220,10 +239,47 @@ func resolveAndInstallCmd(query string) tea.Cmd {
 			picked = filter(func(r releaseInfo) bool { return strings.Contains(strings.ToLower(r.TagName), ql) || strings.Contains(strings.ToLower(r.Name), ql) })
 		}
 		if picked == nil {
+			// Fall back to the direct tag endpoint. The GitHub /releases
+			// list endpoint occasionally omits valid published releases
+			// (we hit this with v0.9.0-pre-verify in 04/26 — release was
+			// public, all assets uploaded, but missing from the list).
+			// Probe `/releases/tags/<query>` and `/releases/tags/v<query>`
+			// before giving up so users aren't blocked by GitHub flakiness.
+			if rel, ok := fetchTagDirect(query); ok {
+				return installUpdateCmd(rel.TagName)()
+			}
+			if rel, ok := fetchTagDirect("v" + query); ok {
+				return installUpdateCmd(rel.TagName)()
+			}
 			return updateInstallResult{Err: fmt.Sprintf("no release matches %q (try /update list)", query)}
 		}
 		return installUpdateCmd(picked.TagName)()
 	}
+}
+
+// fetchTagDirect hits /releases/tags/<tag> as a fallback path when the
+// /releases list endpoint omits a release. Returns (rel, true) only on
+// HTTP 200 + non-draft.
+func fetchTagDirect(tag string) (releaseInfo, bool) {
+	client := &http.Client{Timeout: 6 * time.Second}
+	req, _ := http.NewRequest("GET", "https://api.github.com/repos/yumlevi/acorn-cli/releases/tags/"+tag, nil)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return releaseInfo{}, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return releaseInfo{}, false
+	}
+	var rel releaseInfo
+	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
+		return releaseInfo{}, false
+	}
+	if rel.Draft || rel.TagName == "" {
+		return releaseInfo{}, false
+	}
+	return rel, true
 }
 
 // checkUpdateCmd pings GitHub for the latest release tag.
