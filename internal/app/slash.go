@@ -98,6 +98,17 @@ var slashCatalog = []slashEntry{
 	{"/test", "run a UI / behavior test (try /test list)"},
 	{"/test list", "list available UI tests"},
 	{"/test all", "run all UI tests"},
+
+	// codeindex (v0.3.0+) — structural code search backed by the
+	// per-project SQLite index at .acorn/index.db.
+	{"/index", "build/refresh the per-project code index (.acorn/index.db)"},
+	{"/index force", "rebuild every file regardless of mtime"},
+	{"/architecture", "show clusters / hot paths / entry points / tech stack"},
+	{"/arch", "alias for /architecture"},
+	{"/why", "/why <symbol> — show callers of a symbol (depth 3)"},
+	{"/calls", "/calls <symbol> — show callees of a symbol (depth 3)"},
+	{"/impact", "show transitive caller blast-radius for current git diff"},
+	{"/scripts", "/scripts [name] — list saved project scripts (graph-backed)"},
 }
 
 // refreshSuggest recomputes matches for the current input buffer.

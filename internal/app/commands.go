@@ -353,6 +353,15 @@ func cmdDelegate(m *Model, args []string) (tea.Model, tea.Cmd) {
 }
 
 func init() {
+	// /help — registry-backed so any command added via register() shows
+	// up automatically. The static fallback in update.go exists for
+	// older callers but the registered version takes priority via
+	// dispatchSlash.
+	register(&slashCmd{
+		Name:    "/help",
+		Help:    "Show the full list of slash commands and what each does",
+		Handler: cmdHelp,
+	})
 	register(&slashCmd{
 		Name:    "/context",
 		Help:    "Show the project context block (add 'refresh' to re-send next turn)",

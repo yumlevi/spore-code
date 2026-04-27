@@ -683,7 +683,11 @@ func (m *Model) handleSlashCommand(text string) (tea.Model, tea.Cmd) {
 
 	switch cmd {
 	case "/help":
-		m.pushChat("system", SlashHelp())
+		// Use the registry-backed renderer so any command added via
+		// register() in commands.go shows up here automatically. The
+		// static SlashHelp() below is kept for tests that want the
+		// canonical list.
+		m.pushChat("system", SlashHelpFromRegistry())
 	case "/clear":
 		m.messages = m.messages[:0]
 		m.historyDirty = true
