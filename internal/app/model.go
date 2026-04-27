@@ -137,6 +137,17 @@ type Model struct {
 	renderedHistory string
 	historyDirty    bool
 	historyWidth    int // width the cache was rendered against
+	// viewportDirty: set whenever m.messages or stream tail changes. View()
+	// only calls rerenderViewport when set (or width changed), then clears
+	// it. Without this flag, every keystroke/mouse-motion/tick rebuilt the
+	// full viewport content (lipgloss render of the streaming tail +
+	// SetContent line-split of the whole transcript), blocking the input
+	// loop. ~10× fewer rebuilds per second during a stream.
+	viewportDirty bool
+	// questionsScanOff: how far into msg.Text we've already scanned for
+	// the QUESTIONS: marker. Avoids re-scanning the entire accumulated
+	// streaming text on each delta (was O(N²) total).
+	questionsScanOff int
 
 	// followBottom — when true, every render snaps the viewport to the
 	// last line so streaming text stays visible. Set to false the moment
@@ -488,6 +499,8 @@ func (m *Model) startStream() {
 	m.messages = append(m.messages, chatMsg{Role: "assistant", Text: "", Timestamp: time.Now(), Streaming: true})
 	m.currentStreamIdx = len(m.messages) - 1
 	m.historyDirty = true
+	m.viewportDirty = true
+	m.questionsScanOff = 0
 }
 
 func (m *Model) appendDelta(t string) {
@@ -508,30 +521,34 @@ func (m *Model) appendDelta(t string) {
 	// malformed emission isn't lost silently.
 	if msg.InQuestionsBlock {
 		msg.QuestionsBuf += t
-		m.rerenderViewport()
+		m.viewportDirty = true
 		return
 	}
+	// Only scan the new tail (with a small overlap to catch a marker
+	// that straddles two deltas — len("QUESTIONS:")=10 bytes is enough).
+	// Was O(N) per delta over the full accumulated text → quadratic over
+	// the stream. Now O(len(t) + 10).
+	scanStart := m.questionsScanOff
+	if scanStart > len(msg.Text) {
+		scanStart = 0
+	}
+	if scanStart > 10 {
+		scanStart -= 10
+	} else {
+		scanStart = 0
+	}
 	combined := msg.Text + t
-	if idx := findQuestionsMarker(combined); idx >= 0 {
-		// Split: everything up to (and including) the QUESTIONS: line
-		// prefix stays in Text; the rest goes into QuestionsBuf.
-		// findQuestionsMarker returns the index of the 'Q' in
-		// QUESTIONS:, so split AT that index (drop the marker from
-		// visible chat too — it's UI noise once we're extracting).
-		// Keep the preceding newline so the text reads naturally.
+	if idx := findQuestionsMarkerFrom(combined, scanStart); idx >= 0 {
 		msg.Text = strings.TrimRight(combined[:idx], " \t")
-		// Strip a trailing newline so the visible lead-in doesn't
-		// end with a dangling blank line.
 		msg.Text = strings.TrimRight(msg.Text, "\n")
-		// Buffer starts from the marker onward (including
-		// "QUESTIONS:" line) so the existing parser sees its expected
-		// input shape.
 		msg.QuestionsBuf = combined[idx:]
 		msg.InQuestionsBlock = true
+		m.questionsScanOff = 0
 	} else {
 		msg.Text += t
+		m.questionsScanOff = len(msg.Text)
 	}
-	m.rerenderViewport()
+	m.viewportDirty = true
 }
 
 // findQuestionsMarker scans s for the left-anchored QUESTIONS: marker
@@ -539,23 +556,22 @@ func (m *Model) appendDelta(t string) {
 // of the 'Q' in "QUESTIONS:", or -1 if not present. The marker is
 // recognized only when it appears at the start of a line (so it
 // doesn't fire on references to the word inside prose).
-func findQuestionsMarker(s string) int {
+func findQuestionsMarker(s string) int { return findQuestionsMarkerFrom(s, 0) }
+
+func findQuestionsMarkerFrom(s string, start int) int {
 	const marker = "QUESTIONS:"
-	// Fast-path: single-scan using index + anchor check.
-	start := 0
+	if start < 0 {
+		start = 0
+	}
 	for {
 		i := strings.Index(s[start:], marker)
 		if i < 0 {
 			return -1
 		}
 		abs := start + i
-		// Left-anchor check: either at the very start of s, or
-		// preceded by a newline. Tolerate leading spaces/tabs too
-		// (indented markers happen).
 		if abs == 0 {
 			return abs
 		}
-		// Walk back through horizontal whitespace; must hit a newline.
 		j := abs - 1
 		for j >= 0 && (s[j] == ' ' || s[j] == '\t') {
 			j--
@@ -592,7 +608,8 @@ func (m *Model) endStream() {
 	// History changed — the just-finished assistant message goes from
 	// "streaming" to "done", which may render differently (no cursor).
 	m.historyDirty = true
-	m.rerenderViewport()
+	m.viewportDirty = true
+	m.questionsScanOff = 0
 }
 
 // Broadcast sends a typed message to observers (companion app) with
