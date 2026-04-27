@@ -258,10 +258,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case hookCodeViewMsg:
 		m.pushCodeView(msg.path, msg.content, msg.isNew)
+		// Auto-save helpers — when the agent has just written a file
+		// that matches a helper pattern (.acorn/scratch/*, gen_*.{py,
+		// sh,js,ts}, *_helper.*), ship the body to SPORE as a
+		// save_project_script:from_file WS frame so the next session
+		// can re-use it without the agent having to remember
+		// save_project_script. msg.isNew=true means write_file just
+		// created the file (not a read_file echo).
+		if msg.isNew {
+			go autoSaveHelperIfMatch(m.client, m.cwd, m.sess, m.cfg.Connection.User, msg.path, msg.content)
+		}
 		return m, nil
 
 	case hookCodeDiffMsg:
 		m.pushCodeDiff(msg.path, msg.oldT, msg.newT)
+		// edit_file too — same auto-save check on the new content.
+		go autoSaveHelperIfMatch(m.client, m.cwd, m.sess, m.cfg.Connection.User, msg.path, msg.newT)
 		return m, nil
 
 	case hookToolDoneMsg:

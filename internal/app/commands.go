@@ -468,6 +468,193 @@ func runCodeindexAsync(label, cwd string, fn func(string) any) tea.Cmd {
 	}
 }
 
+// helperPathPatterns returns true when `path` (repo-relative or
+// absolute, both accepted) looks like a helper script the agent
+// wrote and should be saved to the graph for re-use across sessions.
+// Matches:
+//   - anything under `.acorn/scratch/` (the explicit helper dir)
+//   - `gen_*.{py,sh,js,ts,go,rb}` at the project root
+//   - `*-helper.*` / `*_helper.*` / `print_*.{py,sh}` / `dump_*.{py,sh}`
+//
+// The check is intentionally conservative — only files that look
+// strongly like one-off helpers, never anything that could be real
+// project source. Misses are fine; false positives would clutter
+// the graph with project files masquerading as scripts.
+func helperPathPatterns(path string) bool {
+	p := filepath.ToSlash(path)
+	base := filepath.Base(p)
+	dir := filepath.ToSlash(filepath.Dir(p))
+
+	// .acorn/scratch/* — definitive.
+	if strings.Contains(dir, "/.acorn/scratch") || strings.HasSuffix(dir, ".acorn/scratch") {
+		return true
+	}
+
+	// Helper-name patterns (the file extension list mirrors the
+	// languages we already index — adding here is cheap if the user
+	// works in a different language).
+	helperExt := func(s string) bool {
+		switch strings.ToLower(filepath.Ext(s)) {
+		case ".py", ".sh", ".bash", ".js", ".ts", ".mjs", ".cjs", ".go", ".rb":
+			return true
+		}
+		return false
+	}
+	if !helperExt(base) {
+		return false
+	}
+	lower := strings.ToLower(base)
+	if strings.HasPrefix(lower, "gen_") || strings.HasPrefix(lower, "gen-") {
+		return true
+	}
+	if strings.HasPrefix(lower, "print_") || strings.HasPrefix(lower, "print-") {
+		return true
+	}
+	if strings.HasPrefix(lower, "dump_") || strings.HasPrefix(lower, "dump-") {
+		return true
+	}
+	stem := strings.TrimSuffix(lower, filepath.Ext(lower))
+	if strings.HasSuffix(stem, "-helper") || strings.HasSuffix(stem, "_helper") {
+		return true
+	}
+	if strings.HasSuffix(stem, "-helpers") || strings.HasSuffix(stem, "_helpers") {
+		return true
+	}
+	return false
+}
+
+// languageForHelperPath returns the codeindex / scripts language
+// constant for a path's extension. Used as the `language` field of
+// the auto-saved script entry.
+func languageForHelperPath(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".py":
+		return "py"
+	case ".js", ".mjs", ".cjs":
+		return "js"
+	case ".ts":
+		return "ts"
+	case ".sh", ".bash":
+		return "sh"
+	case ".go":
+		return "go"
+	case ".rb":
+		return "rb"
+	}
+	return ""
+}
+
+// helperNameFromPath produces a stable lowercase-dashed name from a
+// helper file path. Strips the extension and any leading
+// `gen_`/`print_`/`dump_` so the name reads cleanly in the graph
+// (`gen_qr.py` → `qr` rather than `gen-qr`).
+func helperNameFromPath(path string) string {
+	stem := strings.ToLower(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
+	for _, prefix := range []string{"gen_", "gen-", "print_", "print-", "dump_", "dump-"} {
+		if strings.HasPrefix(stem, prefix) {
+			stem = stem[len(prefix):]
+			break
+		}
+	}
+	stem = strings.ReplaceAll(stem, "_", "-")
+	return stem
+}
+
+// helperDescriptionFromBody pulls a one-liner out of the file's
+// content to use as the script's description. Looks at the first 30
+// lines for a Python docstring, a leading shell/JS/TS comment, or a
+// shebang+description pair. Falls back to "(no description)" so the
+// auto-save still records the script.
+func helperDescriptionFromBody(body, language string) string {
+	lines := strings.Split(body, "\n")
+	max := 30
+	if len(lines) < max {
+		max = len(lines)
+	}
+	for i := 0; i < max; i++ {
+		l := strings.TrimSpace(lines[i])
+		if l == "" || strings.HasPrefix(l, "#!") {
+			continue
+		}
+		switch language {
+		case "py":
+			if strings.HasPrefix(l, "\"\"\"") {
+				inside := strings.TrimPrefix(l, "\"\"\"")
+				if j := strings.Index(inside, "\"\"\""); j >= 0 {
+					return strings.TrimSpace(inside[:j])
+				}
+				if strings.TrimSpace(inside) != "" {
+					return strings.TrimSpace(inside)
+				}
+				if i+1 < len(lines) {
+					return strings.TrimSpace(lines[i+1])
+				}
+			}
+			if strings.HasPrefix(l, "#") {
+				return strings.TrimSpace(strings.TrimPrefix(l, "#"))
+			}
+		case "sh":
+			if strings.HasPrefix(l, "#") && !strings.HasPrefix(l, "#!") {
+				return strings.TrimSpace(strings.TrimPrefix(l, "#"))
+			}
+		case "js", "ts":
+			if strings.HasPrefix(l, "//") {
+				return strings.TrimSpace(strings.TrimPrefix(l, "//"))
+			}
+			if strings.HasPrefix(l, "/*") {
+				inside := strings.TrimPrefix(l, "/*")
+				if j := strings.Index(inside, "*/"); j >= 0 {
+					return strings.TrimSpace(inside[:j])
+				}
+			}
+		}
+		// Stop scanning once we've hit a non-comment line.
+		break
+	}
+	return "(auto-saved helper)"
+}
+
+// autoSaveHelperIfMatch fires after every successful write_file /
+// edit_file when the path looks like a helper. Sends a
+// `save_project_script:from_file` WS frame so the SPORE-side plugin
+// can persist the body to the graph as a project-scoped script. The
+// agent doesn't need to remember save_project_script — the CLI does
+// it deterministically based on path patterns.
+func autoSaveHelperIfMatch(client *conn.Client, cwd, sessionID, userName, path, content string) {
+	if client == nil || path == "" || content == "" {
+		return
+	}
+	if !helperPathPatterns(path) {
+		return
+	}
+	// Cap the body so a runaway write doesn't ship MBs over WS.
+	if len(content) > 64*1024 {
+		return
+	}
+	lang := languageForHelperPath(path)
+	if lang == "" {
+		return
+	}
+	name := helperNameFromPath(path)
+	if name == "" {
+		return
+	}
+	desc := helperDescriptionFromBody(content, lang)
+	_ = client.Send(map[string]any{
+		"type":        "save_project_script:from_file",
+		"sessionId":   sessionID,
+		"userName":    userName,
+		"cwd":         cwd,
+		"path":        path,
+		"name":        name,
+		"description": desc,
+		"language":    lang,
+		"body":        content,
+		"tags":        []string{"auto-saved"},
+		"force":       false, // honor the secret-pattern guard
+	})
+}
+
 // autoMirrorCodeGraph computes the architecture summary from the
 // freshly-updated .acorn/index.db and pushes it to the SPORE-side
 // acorn-cli plugin via a `code_graph:summary` WS frame. The plugin
