@@ -19,7 +19,7 @@ import (
 // version is overrideable at link time:
 //   go build -ldflags "-X main.version=v0.1.1" ./cmd/acorn
 // Falls back to the in-source default for plain `go build`.
-var version = "v0.8.0"
+var version = "v0.9.0-pre-verify"
 
 func main() {
 	var (

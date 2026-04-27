@@ -57,6 +57,12 @@ var localTools = map[string]bool{
 	// codeindex (M2): call graph + change-impact analysis.
 	"trace_calls": true,
 	"impact":      true,
+
+	// codeindex (v0.9): goal-backward implementation verification.
+	// Adapted from the GSD spec-driven workflow's 4-level artifact
+	// check (exists → substantive → wired → export-level), powered
+	// by the existing per-project SQLite index + symbol body reads.
+	"verify_implementation": true,
 }
 
 // DelegationMode controls what the agent may delegate via delegate_task.
@@ -234,6 +240,8 @@ func (e *Executor) Execute(name string, inputRaw json.RawMessage) (result any, c
 		return TraceCalls(input, e.CWD), true
 	case "impact":
 		return Impact(input, e.CWD), true
+	case "verify_implementation":
+		return VerifyImplementation(input, e.CWD), true
 	}
 	return nil, false
 }
