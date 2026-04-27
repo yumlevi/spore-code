@@ -3,7 +3,6 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -212,15 +211,13 @@ func (e *Executor) Execute(name string, inputRaw json.RawMessage) (result any, c
 	case "exec":
 		return Exec(input, e.CWD, e.LogDir, e.BG, e.Hooks.OnExecLine), true
 	case "web_serve":
-		// Special case: action=backend stays server-side (it needs
-		// vault keys + Traefik). Falling through to the server keeps
-		// that one shape working; everything else (start/stop/status)
-		// is claimed locally.
-		input2 := input
-		if a, _ := input2["action"].(string); strings.EqualFold(a, "backend") {
-			return nil, false
-		}
-		return WebServe(input2, e.CWD, e.Scope), true
+		// Disabled for acorn sessions — claim ALL actions (including
+		// action=backend) and refuse with a clear "use exec instead"
+		// error. Letting action=backend fall through would route to
+		// SPORE's server-side _webServeTool which runs inside the
+		// container — meaningless when the agent's intent is to host
+		// something on the user's machine.
+		return WebServe(input, e.CWD, e.Scope), true
 
 	// codeindex (M1)
 	case "index_codebase":
