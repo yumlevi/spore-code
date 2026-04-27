@@ -116,8 +116,39 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Keyed on `first` so we don't re-trigger across reconnects
 		// in the same TUI process. Slash command `/index` still
 		// works for explicit re-indexing.
-		if !pc.HasCodeIndex && first {
-			m.pushChat("system", "Auto-indexing this project so the agent can use structural search (search_symbols, trace_calls, architecture, impact). One-time, takes a few seconds; progress every 2s.")
+		if first {
+			if !pc.HasCodeIndex {
+				m.pushChat("system", "Auto-indexing this project so the agent can use structural search (search_symbols, trace_calls, architecture, impact). One-time, takes a few seconds; progress every 2s.")
+				send := m.sendProgramMsg
+				cwd := m.cwd
+				return m, func() tea.Msg {
+					var onProgress tools.IndexProgressFn
+					if send != nil {
+						onProgress = func(p tools.IndexProgress) {
+							send(CodeindexProgressMsg{
+								FilesScanned: p.FilesScanned, FilesParsed: p.FilesParsed,
+								FilesSkipped: p.FilesSkipped, Symbols: p.Symbols, Calls: p.Calls,
+								ElapsedMs: p.ElapsedMs, Note: p.Note,
+							})
+						}
+					}
+					r := tools.IndexCodebaseWithProgress(map[string]any{}, cwd, onProgress)
+					return CodeindexResultMsg{Label: "/index (auto-bootstrap)", Result: r}
+				}
+			}
+			// Index already present from a prior session. Surface the
+			// stats inline so the user can see at a glance that
+			// structural tools are available — and so "/index never
+			// runs" doesn't look like a silent regression. Also kick
+			// a background re-index that respects mtime/dirty flags
+			// so files edited outside acorn (or in a previous session
+			// after fileops marked them dirty) get refreshed without
+			// the user having to type /index.
+			head := pc.IndexHead
+			if head == "" {
+				head = "(no git head recorded)"
+			}
+			m.pushChat("system", "Code index ready (head "+head+") — search_symbols / trace_calls / architecture / impact / get_snippet are available. Refreshing dirty/changed files in the background…")
 			send := m.sendProgramMsg
 			cwd := m.cwd
 			return m, func() tea.Msg {
@@ -131,8 +162,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						})
 					}
 				}
+				// Non-force run: the existing mtime+dirty-flag check
+				// fast-paths unchanged files in microseconds, so on
+				// an up-to-date project this completes in milliseconds.
 				r := tools.IndexCodebaseWithProgress(map[string]any{}, cwd, onProgress)
-				return CodeindexResultMsg{Label: "/index (auto-bootstrap)", Result: r}
+				return CodeindexResultMsg{Label: "/index (auto-refresh)", Result: r}
 			}
 		}
 		return m, nil

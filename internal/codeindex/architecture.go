@@ -361,22 +361,14 @@ func computeHotPaths(s *Store) []HotSymbol {
 
 // computeCoverageNotes flags partial-coverage situations the agent should
 // know about so the plan-mode prompt's "fall back to grep on misses"
-// hint applies in the right places.
+// hint applies in the right places. As of v0.6.0 all extractors use
+// real grammars (Go via stdlib go/ast, TS/JS/Python/Rust via
+// tree-sitter), so the only remaining note is the "no CALLS yet"
+// state when an index is brand-new.
 func computeCoverageNotes(a *Architecture) []string {
 	var notes []string
 	if a.Stats.Calls == 0 && (a.Stats.Functions+a.Stats.Methods) > 0 {
-		notes = append(notes, "no CALLS edges yet — trace_calls returns empty until the index pass adds call extraction (M2)")
-	}
-	hasOnlyRegexLangs := false
-	for _, l := range a.TechStack {
-		if l.Language == "ts" || l.Language == "js" {
-			if l.Files > 0 {
-				hasOnlyRegexLangs = true
-			}
-		}
-	}
-	if hasOnlyRegexLangs {
-		notes = append(notes, "ts/js extractor is regex-based in v1: nested classes, decorators, and inline object methods may be missed — fall back to read_file/grep for those")
+		notes = append(notes, "no CALLS edges in this index — trace_calls / impact will return empty until the next /index pass populates them")
 	}
 	return notes
 }

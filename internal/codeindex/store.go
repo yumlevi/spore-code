@@ -19,10 +19,19 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// SchemaVersion bumps whenever the on-disk shape changes. A mismatched
-// db is dropped and rebuilt on the next index call rather than migrated;
+// SchemaVersion bumps whenever the on-disk shape changes OR when the
+// extractor implementation changes in a way that would produce
+// different symbols/calls for the same source. A mismatched db is
+// dropped and rebuilt on the next index call rather than migrated —
 // the index is always derivable from source.
-const SchemaVersion = 1
+//
+// History:
+//   v1 — initial schema, regex extractors for TS/JS/Python.
+//   v2 — v0.6.0: tree-sitter for TS/JS/Python, new Rust extractor.
+//        Bumped so existing v1 indexes (regex-era symbols) get
+//        rebuilt on the next index pass without forcing the user
+//        to remember `/index force`.
+const SchemaVersion = 2
 
 // Symbol is one identifier extracted from source.
 type Symbol struct {
