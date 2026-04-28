@@ -152,7 +152,11 @@ func (m *Model) planExecute(text string) (tea.Model, tea.Cmd) {
 	// about to actually do the writes. With it, the agent sees a fresh
 	// system prompt where the plan-mode rules are gone and the regular
 	// tool set (write_file, edit_file, exec) is unrestricted.
-	return m, m.sendChatWithMode(PlanExecuteMsg, "execute")
+	// Batch with spinnerTickCmd so the activity spinner kicks back on for
+	// this turn — without it, the spinner ticker stopped at the previous
+	// chat:done and there's no UI signal that the agent is actually
+	// working through the plan.
+	return m, tea.Batch(m.sendChatWithMode(PlanExecuteMsg, "execute"), spinnerTickCmd())
 }
 
 func (m *Model) planReviseWithFeedback(fb string) (tea.Model, tea.Cmd) {
@@ -168,7 +172,7 @@ func (m *Model) planReviseWithFeedback(fb string) (tea.Model, tea.Cmd) {
 	m.Broadcast("plan:decided", map[string]any{"action": "revise", "feedback": fb})
 	// Stay in plan mode — projectContext.mode='plan' so the system
 	// prompt keeps emitting the plan-mode block on the revise turn.
-	return m, m.sendChatWithMode("[PLAN FEEDBACK: Revise the plan. Stay in plan mode.]\n\n"+fb, "plan")
+	return m, tea.Batch(m.sendChatWithMode("[PLAN FEEDBACK: Revise the plan. Stay in plan mode.]\n\n"+fb, "plan"), spinnerTickCmd())
 }
 
 // sendChatWithMode is the plan-flow equivalent of update.go's enter

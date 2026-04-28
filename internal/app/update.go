@@ -1500,7 +1500,7 @@ func (m *Model) postStreamChecks() tea.Cmd {
 			fixup := "Your previous response had a `QUESTIONS:` marker but the JSON couldn't be parsed (likely streaming corruption — chars got dropped between fields). Re-emit ONLY the QUESTIONS: block as valid JSON, in this exact shape:\n\nQUESTIONS:\n```json\n[\n  {\"text\": \"Question text?\", \"type\": \"single|multi|open\", \"options\": [\"A\", \"B\", \"C\"]}\n]\n```\n\nNo prose before or after. Just the marker line and the JSON array. Each item needs `text` (string), `type` (\"single\" / \"multi\" / \"open\"), and — for non-open — an `options` array of strings."
 			m.generating = true
 			m.status = "asking agent to fix questions…"
-			return m.sendChatWithMode(fixup, "plan")
+			return tea.Batch(m.sendChatWithMode(fixup, "plan"), spinnerTickCmd())
 		}
 	}
 	if hasPlan {
@@ -1513,7 +1513,7 @@ func (m *Model) postStreamChecks() tea.Cmd {
 		m.pushChat("system", "No interview needed — starting research…")
 		m.generating = true
 		m.status = "researching…"
-		return m.sendChatWithMode("[RESEARCH] Proceed to research+code phase.", "plan")
+		return tea.Batch(m.sendChatWithMode("[RESEARCH] Proceed to research+code phase.", "plan"), spinnerTickCmd())
 	}
 	if hasResearch {
 		// RESEARCH phase done. Auto-fire ROUTER 2 (post-research review)
@@ -1522,14 +1522,14 @@ func (m *Model) postStreamChecks() tea.Cmd {
 		m.pushChat("system", "Research complete — reviewing for any follow-up questions…")
 		m.generating = true
 		m.status = "reviewing research…"
-		return m.sendChatWithMode("[REVIEW] Review the RESEARCH_DONE block from your previous turn and decide if any follow-up questions are needed.", "plan")
+		return tea.Batch(m.sendChatWithMode("[REVIEW] Review the RESEARCH_DONE block from your previous turn and decide if any follow-up questions are needed.", "plan"), spinnerTickCmd())
 	}
 	if hasNoFollowup {
 		// ROUTER 2 decided no follow-ups → auto-fire BUILDING.
 		m.pushChat("system", "No follow-up questions — building the plan…")
 		m.generating = true
 		m.status = "building plan…"
-		return m.sendChatWithMode("[BUILD_PLAN] Build the plan from the RESEARCH_DONE block in the conversation history.", "plan")
+		return tea.Batch(m.sendChatWithMode("[BUILD_PLAN] Build the plan from the RESEARCH_DONE block in the conversation history.", "plan"), spinnerTickCmd())
 	}
 	return nil
 }

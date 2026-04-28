@@ -761,7 +761,11 @@ func (m *Model) finishQuestions() (tea.Model, tea.Cmd) {
 		built := BuildProjectContextWithScope(m.cwd, mode, m.scope)
 		pc = &built
 	}
-	return m, m.sendChat(answerBody, answerBody, pc)
+	// Batch with spinnerTickCmd so the activity spinner kicks back on
+	// for the post-answer turn — the previous chat:done stopped the
+	// ticker, and without restarting it the user would see no spinner /
+	// status while the agent processes their answers.
+	return m, tea.Batch(m.sendChat(answerBody, answerBody, pc), spinnerTickCmd())
 }
 
 // itoa avoids importing strconv for small ints in hot view paths.
