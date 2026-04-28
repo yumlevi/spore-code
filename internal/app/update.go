@@ -68,8 +68,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Modal intercept.
+	// Modal intercept. Modals consume keystrokes (so the user can pick
+	// Execute / Revise / Cancel without typing flowing into the input
+	// bar), but mouse wheel scroll still needs to reach the chat
+	// viewport — otherwise the user can't read a plan that's longer
+	// than the visible area before deciding what to do with it.
 	if m.modal != modalNone {
+		if mm, ok := msg.(tea.MouseMsg); ok && (mm.Type == tea.MouseWheelUp || mm.Type == tea.MouseWheelDown) {
+			return m.handleMouse(mm)
+		}
 		return m.updateModal(msg)
 	}
 
