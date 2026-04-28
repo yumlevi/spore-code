@@ -719,13 +719,18 @@ func (m *Model) finishQuestions() (tea.Model, tea.Cmd) {
 
 	// Prose path: format all answers into a follow-up chat message.
 	var lines []string
-	// In plan mode, the ROUTER turn's QUESTIONS: block is the interview
-	// stage of the 3-stage workflow (router → research+code → building).
-	// Prefix the answer body with [RESEARCH] so the server-side phase
-	// detector flips to the RESEARCH prompt for the next turn (instead
-	// of routing back to ROUTER and asking again).
+	// In plan mode, QUESTIONS: blocks come from one of two routers:
+	//   - ROUTER 1 (initial interview-or-skip), before research → next
+	//     stage is RESEARCH+CODE → prefix answers with [RESEARCH]
+	//   - ROUTER 2 (post-research review), after RESEARCH_DONE → next
+	//     stage is BUILDING → prefix answers with [BUILD_PLAN]
+	// Disambiguate by scanning history for an earlier RESEARCH_DONE block.
 	if m.planMode {
-		lines = append(lines, "[RESEARCH] Interview answers — proceed to research+code phase:")
+		if m.hasResearchDoneInHistory() {
+			lines = append(lines, "[BUILD_PLAN] Follow-up answers — proceed to build the plan:")
+		} else {
+			lines = append(lines, "[RESEARCH] Interview answers — proceed to research+code phase:")
+		}
 	} else {
 		lines = append(lines, "Here are my answers to your questions:")
 	}

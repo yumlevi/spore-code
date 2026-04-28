@@ -1402,6 +1402,21 @@ func truncateForLog(s string, n int) string {
 	return s[:n-1] + "…"
 }
 
+// hasResearchDoneInHistory scans m.messages for an assistant turn
+// containing RESEARCH_DONE:. Used by the plan-mode QUESTIONS: answer
+// dispatcher to tell ROUTER 1 questions from ROUTER 2 questions —
+// router 2 fires AFTER research, so its answers must enter BUILDING,
+// not back into RESEARCH.
+func (m *Model) hasResearchDoneInHistory() bool {
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		msg := m.messages[i]
+		if msg.Role == "assistant" && strings.Contains(msg.Text, "RESEARCH_DONE:") {
+			return true
+		}
+	}
+	return false
+}
+
 // postStreamChecks runs after chat:done to detect QUESTIONS: / PLAN_READY.
 // Returns a tea.Cmd ONLY when we need to send an auto-retry to the agent
 // (malformed QUESTIONS: block on the first attempt). Caller in handleFrame
@@ -1419,21 +1434,23 @@ func (m *Model) postStreamChecks() tea.Cmd {
 	if hasPlan {
 		m.stashedPlan = last.Text
 	}
-	// RESEARCH_DONE: the new pronged plan-mode RESEARCH phase emits this
+	// RESEARCH_DONE: the pronged plan-mode RESEARCH phase emits this
 	// marker when external + codebase pre-identification are complete.
-	// Auto-fire the BUILDING phase by sending [BUILD_PLAN] back as the
-	// next user message — server-side buildPlanModeSection detects the
-	// sentinel and switches to the BUILDING prompt, which consumes the
-	// just-emitted RESEARCH_DONE block from history. Same auto-trigger
-	// pattern as plan-execute.
+	// Auto-fire ROUTER 2 (post-research review) by sending [REVIEW] —
+	// the agent gets one more chance to ask follow-up questions that
+	// surfaced from the research output before the plan is built.
 	hasResearch := m.planMode && strings.Contains(last.Text, "RESEARCH_DONE:") && !strings.Contains(last.Text, "PLAN_READY")
-	// NO_INTERVIEW_NEEDED: ROUTER stage's "skip interview" decision.
+	// NO_INTERVIEW_NEEDED: ROUTER 1 stage's "skip interview" decision.
 	// Agent reviewed the request and decided no interview is required;
-	// auto-fire [RESEARCH] to enter the research+code phase. The router
-	// alternative — emit a QUESTIONS: block — is handled by the existing
-	// parseQuestionsBlock branch above (and questions.go now prefixes
-	// answer bodies with [RESEARCH] so they also enter that phase).
+	// auto-fire [RESEARCH] to enter the research+code phase. The
+	// alternative — emit a QUESTIONS: block — is handled by the
+	// parseQuestionsBlock branch above (questions.go prefixes answers
+	// with [RESEARCH] when no RESEARCH_DONE is in history yet).
 	hasNoInterview := m.planMode && strings.Contains(last.Text, "NO_INTERVIEW_NEEDED:") && !strings.Contains(last.Text, "RESEARCH_DONE:") && !strings.Contains(last.Text, "PLAN_READY")
+	// NO_FOLLOWUP_QUESTIONS: ROUTER 2 stage's "skip follow-up questions"
+	// decision. Research surfaced no real forks in the road; agent is
+	// ready to build. Auto-fire [BUILD_PLAN].
+	hasNoFollowup := m.planMode && strings.Contains(last.Text, "NO_FOLLOWUP_QUESTIONS:") && !strings.Contains(last.Text, "PLAN_READY")
 	// If we intercepted a QUESTIONS: block during streaming, the
 	// JSON body lives on `last.QuestionsBuf` (not `last.Text`).
 	// Feed the parser from the buffer when present. On parse success
@@ -1492,22 +1509,27 @@ func (m *Model) postStreamChecks() tea.Cmd {
 		return nil
 	}
 	if hasNoInterview {
-		// ROUTER decided no interview needed → auto-fire RESEARCH.
+		// ROUTER 1 decided no interview needed → auto-fire RESEARCH.
 		m.pushChat("system", "No interview needed — starting research…")
 		m.generating = true
 		m.status = "researching…"
 		return m.sendChatWithMode("[RESEARCH] Proceed to research+code phase.", "plan")
 	}
 	if hasResearch {
-		// RESEARCH phase done. Fire BUILDING immediately — the user
-		// already approved the plan-mode workflow by being in plan
-		// mode at all; the research output is visible in the
-		// transcript so they can see what was found before the plan
-		// itself appears in the next turn.
-		m.pushChat("system", "Research complete — building the plan…")
+		// RESEARCH phase done. Auto-fire ROUTER 2 (post-research review)
+		// so the agent can flag any follow-up questions that surfaced
+		// from the research output before the plan is built.
+		m.pushChat("system", "Research complete — reviewing for any follow-up questions…")
 		m.generating = true
-		m.status = "building plan from research…"
-		return m.sendChatWithMode("[BUILD_PLAN] Build the plan from the RESEARCH_DONE block in your previous turn.", "plan")
+		m.status = "reviewing research…"
+		return m.sendChatWithMode("[REVIEW] Review the RESEARCH_DONE block from your previous turn and decide if any follow-up questions are needed.", "plan")
+	}
+	if hasNoFollowup {
+		// ROUTER 2 decided no follow-ups → auto-fire BUILDING.
+		m.pushChat("system", "No follow-up questions — building the plan…")
+		m.generating = true
+		m.status = "building plan…"
+		return m.sendChatWithMode("[BUILD_PLAN] Build the plan from the RESEARCH_DONE block in the conversation history.", "plan")
 	}
 	return nil
 }
