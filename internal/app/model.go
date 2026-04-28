@@ -594,7 +594,14 @@ func (m *Model) endStream() {
 		// drop the entry instead of leaving an empty bordered box in
 		// the transcript. The tool indicator that follows is enough
 		// to mark "the agent did something here."
-		if text == "" {
+		//
+		// EXCEPTION: don't drop when QuestionsBuf is populated. The
+		// plan-mode ROUTER prompts instruct the agent to emit ONLY a
+		// QUESTIONS: block (no preamble) — appendDelta then redirects
+		// the entire response into QuestionsBuf, leaving Text empty.
+		// Dropping here would erase the buffer that postStreamChecks
+		// needs to parse, so the questions modal never opens.
+		if text == "" && msg.QuestionsBuf == "" {
 			idx := m.currentStreamIdx
 			m.messages = append(m.messages[:idx], m.messages[idx+1:]...)
 		} else {

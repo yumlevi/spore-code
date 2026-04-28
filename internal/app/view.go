@@ -551,6 +551,16 @@ func (m *Model) renderHistoryPrefix() string {
 // renderMessage draws a single chat panel. Styled to match the Python Rich
 // look: bordered box per message, role label in the top-left.
 func renderMessage(c chatMsg, width int, t Theme) string {
+	// Suppress empty assistant bubbles. A finished assistant turn with
+	// no visible text happens when the agent emitted only a QUESTIONS:
+	// block (plan-mode ROUTER 1/2) — the marker is intercepted into
+	// QuestionsBuf, the visible Text is empty, but the message is kept
+	// in history so postStreamChecks can parse the buffer. Rendering it
+	// would leave a tiny empty bordered box in the transcript after the
+	// questions modal closes.
+	if c.Role == "assistant" && !c.Streaming && strings.TrimSpace(c.Text) == "" {
+		return ""
+	}
 	if c.Role == "system" {
 		return lipgloss.NewStyle().
 			Foreground(t.System).Italic(true).
