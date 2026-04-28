@@ -719,7 +719,16 @@ func (m *Model) finishQuestions() (tea.Model, tea.Cmd) {
 
 	// Prose path: format all answers into a follow-up chat message.
 	var lines []string
-	lines = append(lines, "Here are my answers to your questions:")
+	// In plan mode, the ROUTER turn's QUESTIONS: block is the interview
+	// stage of the 3-stage workflow (router → research+code → building).
+	// Prefix the answer body with [RESEARCH] so the server-side phase
+	// detector flips to the RESEARCH prompt for the next turn (instead
+	// of routing back to ROUTER and asking again).
+	if m.planMode {
+		lines = append(lines, "[RESEARCH] Interview answers — proceed to research+code phase:")
+	} else {
+		lines = append(lines, "Here are my answers to your questions:")
+	}
 	for i, q := range qm.questions {
 		ans := qm.answers[i]
 		if ans == "" {

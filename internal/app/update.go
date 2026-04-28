@@ -1427,6 +1427,13 @@ func (m *Model) postStreamChecks() tea.Cmd {
 	// just-emitted RESEARCH_DONE block from history. Same auto-trigger
 	// pattern as plan-execute.
 	hasResearch := m.planMode && strings.Contains(last.Text, "RESEARCH_DONE:") && !strings.Contains(last.Text, "PLAN_READY")
+	// NO_INTERVIEW_NEEDED: ROUTER stage's "skip interview" decision.
+	// Agent reviewed the request and decided no interview is required;
+	// auto-fire [RESEARCH] to enter the research+code phase. The router
+	// alternative — emit a QUESTIONS: block — is handled by the existing
+	// parseQuestionsBlock branch above (and questions.go now prefixes
+	// answer bodies with [RESEARCH] so they also enter that phase).
+	hasNoInterview := m.planMode && strings.Contains(last.Text, "NO_INTERVIEW_NEEDED:") && !strings.Contains(last.Text, "RESEARCH_DONE:") && !strings.Contains(last.Text, "PLAN_READY")
 	// If we intercepted a QUESTIONS: block during streaming, the
 	// JSON body lives on `last.QuestionsBuf` (not `last.Text`).
 	// Feed the parser from the buffer when present. On parse success
@@ -1483,6 +1490,13 @@ func (m *Model) postStreamChecks() tea.Cmd {
 		m.openPlanModal(m.stashedPlan)
 		m.stashedPlan = ""
 		return nil
+	}
+	if hasNoInterview {
+		// ROUTER decided no interview needed → auto-fire RESEARCH.
+		m.pushChat("system", "No interview needed — starting research…")
+		m.generating = true
+		m.status = "researching…"
+		return m.sendChatWithMode("[RESEARCH] Proceed to research+code phase.", "plan")
 	}
 	if hasResearch {
 		// RESEARCH phase done. Fire BUILDING immediately — the user
