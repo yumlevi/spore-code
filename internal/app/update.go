@@ -1419,6 +1419,14 @@ func (m *Model) postStreamChecks() tea.Cmd {
 	if hasPlan {
 		m.stashedPlan = last.Text
 	}
+	// RESEARCH_DONE: the new pronged plan-mode RESEARCH phase emits this
+	// marker when external + codebase pre-identification are complete.
+	// Auto-fire the BUILDING phase by sending [BUILD_PLAN] back as the
+	// next user message — server-side buildPlanModeSection detects the
+	// sentinel and switches to the BUILDING prompt, which consumes the
+	// just-emitted RESEARCH_DONE block from history. Same auto-trigger
+	// pattern as plan-execute.
+	hasResearch := m.planMode && strings.Contains(last.Text, "RESEARCH_DONE:") && !strings.Contains(last.Text, "PLAN_READY")
 	// If we intercepted a QUESTIONS: block during streaming, the
 	// JSON body lives on `last.QuestionsBuf` (not `last.Text`).
 	// Feed the parser from the buffer when present. On parse success
@@ -1474,6 +1482,18 @@ func (m *Model) postStreamChecks() tea.Cmd {
 	if hasPlan {
 		m.openPlanModal(m.stashedPlan)
 		m.stashedPlan = ""
+		return nil
+	}
+	if hasResearch {
+		// RESEARCH phase done. Fire BUILDING immediately — the user
+		// already approved the plan-mode workflow by being in plan
+		// mode at all; the research output is visible in the
+		// transcript so they can see what was found before the plan
+		// itself appears in the next turn.
+		m.pushChat("system", "Research complete — building the plan…")
+		m.generating = true
+		m.status = "building plan from research…"
+		return m.sendChatWithMode("[BUILD_PLAN] Build the plan from the RESEARCH_DONE block in your previous turn.", "plan")
 	}
 	return nil
 }
