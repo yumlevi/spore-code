@@ -307,6 +307,7 @@ func IndexCodebaseWithProgress(input map[string]any, cwd string, onProgress Inde
 //   exported:    bool     — restrict to exported symbols
 //   limit:       int      — default 200, hard cap returned
 func SearchSymbols(input map[string]any, cwd string) any {
+	refreshed, oldHead, newHead := ensureIndexFresh(cwd)
 	store, err := codeindex.Open(cwd)
 	if err != nil {
 		return errMap("open index: " + err.Error())
@@ -354,7 +355,11 @@ func SearchSymbols(input map[string]any, cwd string) any {
 			"exported":  r.Exported,
 		})
 	}
-	return map[string]any{"ok": true, "count": len(out), "results": out}
+	r := map[string]any{"ok": true, "count": len(out), "results": out}
+	if note := freshnessNote(refreshed, oldHead, newHead); note != nil {
+		r["index_refreshed"] = note
+	}
+	return r
 }
 
 // GetSnippet returns the source body for a symbol or a file:line range.
@@ -367,6 +372,7 @@ func SearchSymbols(input map[string]any, cwd string) any {
 //   start_line:  int
 //   end_line:    int
 func GetSnippet(input map[string]any, cwd string) any {
+	refreshed, oldHead, newHead := ensureIndexFresh(cwd)
 	store, err := codeindex.Open(cwd)
 	if err != nil {
 		return errMap("open index: " + err.Error())
@@ -406,18 +412,23 @@ func GetSnippet(input map[string]any, cwd string) any {
 	if err != nil {
 		return errMap("read snippet: " + err.Error())
 	}
-	return map[string]any{
+	r := map[string]any{
 		"ok":         true,
 		"file":       file,
 		"start_line": startLine,
 		"end_line":   endLine,
 		"content":    body,
 	}
+	if note := freshnessNote(refreshed, oldHead, newHead); note != nil {
+		r["index_refreshed"] = note
+	}
+	return r
 }
 
 // Architecture returns the index summary used by /architecture and the
 // agent's pre-plan orientation.
 func Architecture(input map[string]any, cwd string) any {
+	refreshed, oldHead, newHead := ensureIndexFresh(cwd)
 	store, err := codeindex.Open(cwd)
 	if err != nil {
 		return errMap("open index: " + err.Error())
@@ -428,7 +439,7 @@ func Architecture(input map[string]any, cwd string) any {
 	if err != nil {
 		return errMap("compute architecture: " + err.Error())
 	}
-	return map[string]any{
+	r := map[string]any{
 		"ok":           true,
 		"index_head":   arch.IndexHead,
 		"tech_stack":   arch.TechStack,
@@ -438,6 +449,10 @@ func Architecture(input map[string]any, cwd string) any {
 		"stats":        arch.Stats,
 		"notes":        arch.Notes,
 	}
+	if note := freshnessNote(refreshed, oldHead, newHead); note != nil {
+		r["index_refreshed"] = note
+	}
+	return r
 }
 
 // MaxTraceCallsEdges caps the total edges returned by trace_calls so a
@@ -457,6 +472,7 @@ const MaxTraceCallsEdges = 200
 //   depth:      1..5 (default: 3)
 //   limit:      total edge cap; default and max 200
 func TraceCalls(input map[string]any, cwd string) any {
+	refreshed, oldHead, newHead := ensureIndexFresh(cwd)
 	store, err := codeindex.Open(cwd)
 	if err != nil {
 		return errMap("open index: " + err.Error())
@@ -603,7 +619,7 @@ func TraceCalls(input map[string]any, cwd string) any {
 		return errMap("direction must be one of: callers, callees, both")
 	}
 
-	return map[string]any{
+	r := map[string]any{
 		"ok":         true,
 		"root_name":  name,
 		"root_qname": qname,
@@ -613,6 +629,10 @@ func TraceCalls(input map[string]any, cwd string) any {
 		"truncated":  truncated,
 		"count":      len(edges),
 	}
+	if note := freshnessNote(refreshed, oldHead, newHead); note != nil {
+		r["index_refreshed"] = note
+	}
+	return r
 }
 
 // Impact maps a list of paths (or the current git diff) to affected
@@ -624,6 +644,7 @@ func TraceCalls(input map[string]any, cwd string) any {
 //   depth:     1..3 (default: 2) — caller transitive depth
 //   limit:     total symbol cap (default 100)
 func Impact(input map[string]any, cwd string) any {
+	refreshed, oldHead, newHead := ensureIndexFresh(cwd)
 	store, err := codeindex.Open(cwd)
 	if err != nil {
 		return errMap("open index: " + err.Error())
@@ -704,13 +725,17 @@ func Impact(input map[string]any, cwd string) any {
 		totalCallers += s.transitiveCallers
 	}
 
-	return map[string]any{
+	r := map[string]any{
 		"ok":               true,
 		"paths":            paths,
 		"depth":            depth,
 		"affected_symbols": out,
 		"total_callers":    totalCallers,
 	}
+	if note := freshnessNote(refreshed, oldHead, newHead); note != nil {
+		r["index_refreshed"] = note
+	}
+	return r
 }
 
 // countTransitiveCallers BFS-counts unique callers up to depth.
@@ -885,4 +910,69 @@ func readGitHead(cwd string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// ensureIndexFresh detects branch switches / pulls / rebases by comparing
+// the git HEAD recorded at last index time to the current HEAD. On a
+// mismatch, runs a non-force reindex (existing mtime fast-path skips
+// unchanged files, so even a 500-file repo refreshes in ~2-5s) and
+// stamps the new HEAD on the store. Returns (true, oldHead, newHead)
+// when a refresh occurred, (false, "", "") otherwise.
+//
+// Called at the top of every read-side codeindex tool (search_symbols,
+// get_snippet, trace_calls, impact, architecture, verify_implementation)
+// so the agent never returns stale line numbers from a different branch.
+//
+// Skipped silently when:
+//   - The repo has no git (readGitHead returns "")
+//   - The index has no recorded head yet (first ever run on the project)
+//   - The store can't be queried for any reason
+//
+// Errors during reindex are non-fatal — we log + return (false, "", "")
+// so the caller falls through with the (possibly stale) existing index
+// rather than blocking the user's request.
+func ensureIndexFresh(cwd string) (refreshed bool, oldHead, newHead string) {
+	current := readGitHead(cwd)
+	if current == "" {
+		return false, "", "" // not a git repo, or git missing
+	}
+	store, err := codeindex.Open(cwd)
+	if err != nil {
+		return false, "", ""
+	}
+	indexed, err := store.IndexHead()
+	store.Close() // release before the indexer reopens it below
+	if err != nil || indexed == "" {
+		return false, "", "" // no recorded head — leave alone
+	}
+	if indexed == current {
+		return false, "", "" // up-to-date
+	}
+	// HEAD diverged — branch switch, pull, rebase, or reset. Re-run the
+	// indexer with force=false; the existing mtime + dirty-flag fast-path
+	// skips files that didn't actually change between branches, so the
+	// real cost is parsing only the files that diverged. Errors are
+	// non-fatal: we fall through and let the read-side tool answer with
+	// the existing (now stale) index rather than blocking the request.
+	res := IndexCodebaseWithProgress(map[string]any{}, cwd, nil)
+	if m, ok := res.(map[string]any); ok && m["ok"] == true {
+		return true, indexed, current
+	}
+	return false, "", ""
+}
+
+// freshnessNote returns a short refreshed-marker map to splice into a
+// tool's result envelope, OR nil when no refresh happened. Lets every
+// read-side tool surface "we re-indexed before answering" in a uniform
+// shape without each tool's success path branching.
+func freshnessNote(refreshed bool, oldHead, newHead string) map[string]any {
+	if !refreshed {
+		return nil
+	}
+	return map[string]any{
+		"refreshed":  true,
+		"old_head":   oldHead,
+		"new_head":   newHead,
+		"reason":     "git HEAD changed since last index — auto-reindexed before answering",
+	}
 }
