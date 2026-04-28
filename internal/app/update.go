@@ -1396,6 +1396,27 @@ func (m *Model) handleStatus(v proto.ChatStatus) {
 		m.status = "waiting…"
 	case "truncated":
 		m.pushChat("system", "[agent] response hit max_tokens — retrying with smaller output")
+	case "compaction-start":
+		// Server is summarizing older turns. Without this signal, the
+		// CLI just looks frozen for ~5s while the summarizer LLM call
+		// runs. Surface it on the status bar AND in the transcript so
+		// the user knows it's actual work, not a hang.
+		if v.Count > 0 {
+			m.status = fmt.Sprintf("⟳ compacting %d earlier turns…", v.Count)
+			m.pushChat("system", fmt.Sprintf("⟳ Compacting %d earlier turns to free context space…", v.Count))
+		} else {
+			m.status = "⟳ compacting earlier turns…"
+			m.pushChat("system", "⟳ Compacting earlier turns to free context space…")
+		}
+	case "compaction-done":
+		// Pair to compaction-start. Clear the status; surface a brief
+		// transcript line summarizing what happened.
+		m.status = ""
+		if v.Count > 0 {
+			m.pushChat("system", fmt.Sprintf("✓ Compaction done — %d turns summarized.", v.Count))
+		} else {
+			m.pushChat("system", "✓ Compaction done.")
+		}
 	}
 }
 
