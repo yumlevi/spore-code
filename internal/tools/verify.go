@@ -33,6 +33,7 @@ import (
 //
 // Both can be combined; results merge.
 func VerifyImplementation(input map[string]any, cwd string) any {
+	refreshed, oldHead, newHead := ensureIndexFresh(cwd)
 	store, err := codeindex.Open(cwd)
 	if err != nil {
 		return errMap("open index: " + err.Error())
@@ -104,7 +105,7 @@ func VerifyImplementation(input map[string]any, cwd string) any {
 		})
 	}
 
-	return map[string]any{
+	resp := map[string]any{
 		"ok":           true,
 		"count":        len(out),
 		"passed":       overallPassed,
@@ -112,6 +113,10 @@ func VerifyImplementation(input map[string]any, cwd string) any {
 		"results":      out,
 		"hint":         "exists=symbol in index; substantive=body isn't a stub; wired=≥1 caller; export_level=caller in a different file. A failed level usually means the implementation is incomplete or the symbol isn't actually used.",
 	}
+	if note := freshnessNote(refreshed, oldHead, newHead); note != nil {
+		resp["index_refreshed"] = note
+	}
+	return resp
 }
 
 type verifyResult struct {
