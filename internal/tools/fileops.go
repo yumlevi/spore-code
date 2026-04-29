@@ -46,9 +46,26 @@ func ResolvePathScoped(raw, cwd, scope string) (string, error) {
 	return resolved, nil
 }
 
+// MaxReadFileBytes caps the on-disk size we'll attempt to scan. Files
+// larger than this return an error pointing at offset+limit or `exec
+// head/tail` for unbounded log digging. Without a cap a 5 GB log
+// would be quietly read end-to-end just to compute totalLines.
+const MaxReadFileBytes int64 = 100 * 1024 * 1024 // 100 MB
+
 // ReadFile implements the read_file tool. Input keys: path, offset, limit.
 // scope governs sandboxing — empty/"strict" enforces cwd containment,
 // "expanded" allows any absolute path.
+//
+// Memory profile: O(limit) string allocations regardless of file size.
+// A 5 GB log with `offset: 5000000, limit: 50` allocates 50 strings,
+// not 5 million — earlier implementations buffered every line of the
+// file before slicing, which OOMed on big logs. The full-file scan
+// still happens (we count `totalLines` so the agent knows whether to
+// fetch more), but unselected lines are dropped after counting.
+//
+// Special offset values:
+//   offset >= 0      — start at line `offset` (0-based)
+//   offset < 0       — "last |offset| lines" (tail mode, ring-buffered)
 func ReadFile(input map[string]any, cwd, scope string) any {
 	pathRaw, _ := input["path"].(string)
 	p, err := ResolvePathScoped(pathRaw, cwd, scope)
@@ -62,6 +79,12 @@ func ReadFile(input map[string]any, cwd, scope string) any {
 	if info.IsDir() {
 		return map[string]string{"error": p + " is a directory"}
 	}
+	if info.Size() > MaxReadFileBytes {
+		return map[string]string{
+			"error": fmt.Sprintf("file too large: %d bytes > cap %d (%d MB). For huge logs, use `exec head -N` / `exec tail -N` / `exec sed -n 'a,bp'`, or grep_files for pattern-based extraction.",
+				info.Size(), MaxReadFileBytes, MaxReadFileBytes/(1024*1024)),
+		}
+	}
 	f, err := os.Open(p)
 	if err != nil {
 		return map[string]string{"error": err.Error()}
@@ -70,27 +93,67 @@ func ReadFile(input map[string]any, cwd, scope string) any {
 
 	offset := asInt(input["offset"], 0)
 	limit := asInt(input["limit"], 2000)
+	if limit <= 0 {
+		limit = 2000
+	}
 
-	var lines []string
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64<<10), 4<<20)
-	for sc.Scan() {
-		lines = append(lines, sc.Text())
-	}
-	total := len(lines)
-	end := offset + limit
-	if end > total {
-		end = total
-	}
+
+	// tail mode: offset < 0 means "the last N lines". We don't know
+	// totalLines up front (we'd need a full scan to count), so use a
+	// ring buffer sized to the requested tail. O(N) memory where N is
+	// the tail size, not the file size.
 	if offset < 0 {
-		offset = 0
+		tailN := -offset
+		if tailN > limit {
+			limit = tailN
+		}
+		ring := make([]string, 0, tailN)
+		total := 0
+		for sc.Scan() {
+			total++
+			if len(ring) < tailN {
+				ring = append(ring, sc.Text())
+			} else {
+				// Shift left, append new (cheap for small N).
+				copy(ring, ring[1:])
+				ring[tailN-1] = sc.Text()
+			}
+		}
+		startLine := total - len(ring) + 1
+		var b strings.Builder
+		for i, ln := range ring {
+			fmt.Fprintf(&b, "%d\t%s\n", startLine+i, ln)
+		}
+		return map[string]any{
+			"content":    b.String(),
+			"totalLines": total,
+			"firstLine":  startLine,
+		}
+	}
+
+	// Forward mode: only collect lines in [offset, offset+limit).
+	// Continue scanning after we have enough lines so totalLines is
+	// accurate — useful for the agent deciding whether to call again.
+	end := offset + limit
+	var collected []string
+	if limit > 0 {
+		collected = make([]string, 0, limit)
+	}
+	total := 0
+	for sc.Scan() {
+		if total >= offset && total < end {
+			collected = append(collected, sc.Text())
+		}
+		total++
 	}
 	if offset > total {
 		offset = total
 	}
 	var b strings.Builder
-	for i := offset; i < end; i++ {
-		fmt.Fprintf(&b, "%d\t%s\n", i+1, lines[i])
+	for i, ln := range collected {
+		fmt.Fprintf(&b, "%d\t%s\n", offset+i+1, ln)
 	}
 	return map[string]any{"content": b.String(), "totalLines": total}
 }
