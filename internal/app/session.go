@@ -28,15 +28,6 @@ func gitBranch(cwd string) string {
 	return strings.TrimSpace(out)
 }
 
-// projectName mirrors acorn/session.py:project_name — git root basename or cwd basename.
-func projectName(cwd string) string {
-	root := findGitRoot(cwd)
-	if root == "" {
-		root = cwd
-	}
-	return filepath.Base(root)
-}
-
 // ComputeSessionID returns a STABLE session id for a (user, cwd) pair:
 //
 //	cli:<user>@<project-name>-<pathhash>

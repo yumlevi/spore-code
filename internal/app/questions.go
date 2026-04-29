@@ -13,12 +13,6 @@ import (
 	"github.com/yumlevi/acorn-cli/internal/proto"
 )
 
-// lightweight style helpers shared by modals (defined once so each modal
-// file doesn't re-declare accent/muted).
-func accentBold(t Theme) lipgloss.Style  { return lipgloss.NewStyle().Foreground(t.Accent).Bold(true) }
-func mutedStyleT(t Theme) lipgloss.Style { return lipgloss.NewStyle().Foreground(t.Muted).Faint(true) }
-func bodyStyleT(t Theme) lipgloss.Style  { return lipgloss.NewStyle().Foreground(t.Fg) }
-
 // question represents a single question in a QUESTIONS: block or an
 // ask_user tool call. Open-ended questions have Options == nil.
 type question struct {

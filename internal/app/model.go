@@ -422,7 +422,6 @@ type connErrorMsg struct{ err string }
 type connClosedMsg struct{}
 type wsFrameMsg struct{ frame conn.Frame }
 type toolHandledMsg struct{ name string }
-type permDecisionMsg struct{ allowed bool }
 type spinnerTickMsg struct{}
 type sizePollMsg struct{}
 
@@ -551,13 +550,13 @@ func (m *Model) appendDelta(t string) {
 	m.viewportDirty = true
 }
 
-// findQuestionsMarker scans s for the left-anchored QUESTIONS: marker
-// that plan mode uses to signal a questions block. Returns the index
-// of the 'Q' in "QUESTIONS:", or -1 if not present. The marker is
-// recognized only when it appears at the start of a line (so it
-// doesn't fire on references to the word inside prose).
-func findQuestionsMarker(s string) int { return findQuestionsMarkerFrom(s, 0) }
-
+// findQuestionsMarkerFrom scans s for the left-anchored QUESTIONS:
+// marker plan mode uses to signal a questions block, starting at
+// `start`. Returns the index of the 'Q' in "QUESTIONS:", or -1.
+// The marker is recognized only when it appears at the start of a
+// line (so prose references to the word don't fire). The `start`
+// offset lets streaming callers re-scan only new bytes plus a small
+// overlap window — avoids the O(N²) per-delta full re-scan.
 func findQuestionsMarkerFrom(s string, start int) int {
 	const marker = "QUESTIONS:"
 	if start < 0 {
@@ -676,5 +675,3 @@ func dirTag(cwd string) string {
 	cwd = strings.TrimRight(cwd, string(filepath.Separator))
 	return filepath.Base(cwd)
 }
-
-func _fmtBytes(n int) string { return fmt.Sprintf("%d bytes", n) }

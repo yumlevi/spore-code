@@ -1,4 +1,6 @@
-// Command acorn — Go port of acorn-cli. See /go/README.md.
+// Command acorn — acorn-cli, a Go TUI that talks to a SPORE instance
+// over WebSocket and runs local file/exec/index tools on the user's
+// machine. See README.md for setup.
 package main
 
 import (

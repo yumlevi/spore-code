@@ -912,12 +912,6 @@ func truncateStr(s string, n int) string {
 	return s
 }
 
-func tailN(xs []string, n int) []string {
-	if len(xs) <= n {
-		return xs
-	}
-	return xs[len(xs)-n:]
-}
 
 func asString(v any, def string) string {
 	if s, ok := v.(string); ok {

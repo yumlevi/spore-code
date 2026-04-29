@@ -75,8 +75,6 @@ type bootUpdateMsg struct {
 	URL     string
 }
 
-func (r updateCheckResult) teaMsg() tea.Msg { return r }
-
 // bootCheckUpdateCmd pings GitHub once at startup. Returns bootUpdateMsg
 // with Version set ONLY when a newer release exists; up-to-date and any
 // network/HTTP error return an empty msg so the handler stays quiet.

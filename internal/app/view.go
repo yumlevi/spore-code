@@ -113,7 +113,6 @@ var (
 
 	accentStyle = lipgloss.NewStyle().Foreground(themeDark.Accent).Bold(true)
 	mutedStyle  = lipgloss.NewStyle().Foreground(themeDark.Muted).Faint(true)
-	botStyle    = lipgloss.NewStyle().Foreground(themeDark.BotPanel)
 )
 
 func (m *Model) View() string {
@@ -457,14 +456,6 @@ func (m *Model) renderFooter() string {
 		Width(m.width).
 		MaxWidth(m.width).
 		Render(status)
-}
-
-// layout is now a thin notify — the real layout runs in View() each
-// frame because heights depend on suggest visibility and side-panel
-// presence which can change without a window resize.
-func (m *Model) layout() {
-	m.input.SetWidth(m.width - 2)
-	m.rerenderViewport()
 }
 
 // rerenderViewport composes the chat content for the viewport. It uses a

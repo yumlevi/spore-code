@@ -66,31 +66,3 @@ func scrollbar(vp *viewport.Model, height int, t Theme) string {
 	return strings.Join(lines, "\n")
 }
 
-// verticalProgressBadge gives a tiny "42%" or "▲▼" marker for scroll
-// status — used in the header / footer when a full-column scrollbar is
-// overkill. Not currently wired but kept for future compact widgets.
-func verticalProgressBadge(vp *viewport.Model) string {
-	total := vp.TotalLineCount()
-	visible := vp.VisibleLineCount()
-	if total <= visible {
-		return ""
-	}
-	maxOffset := total - visible
-	if maxOffset <= 0 {
-		return "100%"
-	}
-	pct := (vp.YOffset * 100) / maxOffset
-	if vp.YOffset == 0 {
-		return "top"
-	}
-	if vp.YOffset >= maxOffset {
-		return "end"
-	}
-	if pct < 1 {
-		pct = 1
-	}
-	if pct > 99 {
-		pct = 99
-	}
-	return itoa(pct) + "%"
-}
