@@ -175,6 +175,13 @@ func (m *Model) renderCodePanel(width, maxH int) string {
 	// used up bodyH. Each block: 1 header line + N preview lines + 1
 	// blank separator (the separator is only counted between blocks,
 	// so we subtract the trailing one when computing fit).
+	//
+	// SPECIAL CASE for the newest block (always added regardless of
+	// whether it fits): if its rendered preview is taller than bodyH,
+	// keep only its TAIL so the latest words of the live thinking
+	// stream are visible at the bottom of the panel. Without this the
+	// hard-truncate below could shave lines from the bottom of the
+	// last block when measurement disagrees by 1.
 	type block struct{ lines []string }
 	var blocks []block
 	used := 0
@@ -182,15 +189,33 @@ func (m *Model) renderCodePanel(width, maxH int) string {
 		e := &m.codeViews[i]
 		header := renderActivityHeader(*e, m.theme, innerW)
 		preview := renderActivityPreview(e, m.theme, innerW)
-		blockH := 1 + len(preview)
+		isNewest := len(blocks) == 0
+		blockLines := append([]string{header}, preview...)
+		blockH := len(blockLines)
+		// Newest block gets the whole panel if it doesn't fit.
+		if isNewest && blockH >= bodyH {
+			// Keep header + as much preview as fits. Prefer the tail
+			// of the preview (most recent thinking words).
+			keep := bodyH - 1 // -1 for the header
+			if keep < 0 {
+				keep = 0
+			}
+			if len(preview) > keep {
+				preview = preview[len(preview)-keep:]
+			}
+			blockLines = append([]string{header}, preview...)
+			blocks = append(blocks, block{lines: blockLines})
+			used = len(blockLines)
+			break // can't fit anything else; the newest fills the panel
+		}
 		sep := 0
-		if len(blocks) > 0 {
+		if !isNewest {
 			sep = 1
 		}
-		if used+sep+blockH > bodyH && len(blocks) > 0 {
+		if used+sep+blockH > bodyH && !isNewest {
 			break
 		}
-		blocks = append(blocks, block{lines: append([]string{header}, preview...)})
+		blocks = append(blocks, block{lines: blockLines})
 		used += sep + blockH
 	}
 
@@ -219,13 +244,20 @@ func (m *Model) renderCodePanel(width, maxH int) string {
 	}
 	inner := titleRow + "\n\n" + strings.Join(bodyLines, "\n")
 
+	// Drop MaxHeight: it caused last-line shaving when the inner
+	// content's measured height disagreed with our \n-split count
+	// (ANSI escape codes in styled lines + lipgloss display-width
+	// counting). Height(maxH-2) sets a min/target; the hard truncate
+	// above is what actually clamps overflow. Without MaxHeight, if
+	// a stray escape sequence inflates the count, lipgloss pads
+	// (visible blank line at top) instead of cutting (lost newest
+	// thinking line). Padding-not-cutting is the safer failure mode.
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(m.theme.Accent2).
 		Padding(0, 1).
 		Width(width - 2).
 		Height(maxH - 2).
-		MaxHeight(maxH).
 		Render(inner)
 }
 
@@ -835,6 +867,13 @@ func (m *Model) renderExpandedPanel() string {
 
 // buildExpandedPanelBody composes the content string — separate function
 // so the viewport can re-content when data changes.
+//
+// Renders the FULL content per entry — this is the "open the activity
+// panel and actually read what happened" view. The compact side panel
+// truncates to fit the column; this one has the whole window so it
+// shouldn't. For thinking entries that means the full accumulated
+// thought (up to the 4 KB store cap), for file entries the preview/diff
+// stripe, and for tool execs the detail line.
 func (m *Model) buildExpandedPanelBody() string {
 	var sections []string
 	codeTitle := lipgloss.NewStyle().Bold(true).Foreground(m.theme.Accent).Render(
@@ -843,15 +882,58 @@ func (m *Model) buildExpandedPanelBody() string {
 	if len(m.codeViews) == 0 {
 		sections = append(sections, lipgloss.NewStyle().Faint(true).Render("  (none yet)"))
 	} else {
+		mutedItalic := lipgloss.NewStyle().Foreground(m.theme.Muted).Italic(true)
+		muted := lipgloss.NewStyle().Foreground(m.theme.Muted)
+		// Width budget for inner wraps. Leaves room for the 4-char
+		// indent we prepend to body lines so wrap matches the visible
+		// column.
+		bodyW := m.width - 12
+		if bodyW < 40 {
+			bodyW = 40
+		}
 		for _, e := range m.codeViews {
 			icon := "📄"
-			if e.IsDiff {
+			if e.Thinking {
+				icon = "💭"
+			} else if e.IsDiff {
 				icon = "✏️ "
 			} else if e.IsNew {
 				icon = "🆕"
+			} else if e.Tool != "" {
+				icon = "⚙ "
+			}
+			label := e.Path
+			if label == "" && e.Tool != "" {
+				label = e.Tool
+			} else if label == "" && e.Thinking {
+				label = "thinking"
 			}
 			sections = append(sections, fmt.Sprintf("  %s %s · %s · %s",
-				icon, e.Path, e.When.Format("15:04:05"), e.Text))
+				icon, label, e.When.Format("15:04:05"), e.Text))
+			// Body content per entry type.
+			if e.Thinking && strings.TrimSpace(e.Content) != "" {
+				for _, ln := range wordWrap(e.Content, bodyW) {
+					sections = append(sections, mutedItalic.Render("    "+ln))
+				}
+			} else if e.Preview != "" {
+				for _, ln := range strings.Split(e.Preview, "\n") {
+					if len(ln) > bodyW {
+						ln = ln[:bodyW-1] + "…"
+					}
+					sections = append(sections, muted.Render("    "+ln))
+				}
+			} else if e.ExecCmd != "" {
+				for _, ln := range wordWrap(e.ExecCmd, bodyW) {
+					sections = append(sections, muted.Render("    "+ln))
+				}
+				for _, ln := range e.ExecOut {
+					if len(ln) > bodyW {
+						ln = ln[:bodyW-1] + "…"
+					}
+					sections = append(sections, muted.Render("    "+ln))
+				}
+			}
+			sections = append(sections, "") // blank line between entries
 		}
 	}
 	sections = append(sections, "")
