@@ -32,7 +32,8 @@ type ChatThinking struct {
 
 // ChatStatus — heartbeat / progress indicator during a turn.
 // status ∈ {thinking_start, thinking, thinking_done,
-//          tool_exec_start, tool_exec_done, interjection, interjected, waiting}
+//
+//	tool_exec_start, tool_exec_done, interjection, interjected, waiting}
 type ChatStatus struct {
 	Type        string `json:"type"`
 	Status      string `json:"status"`
@@ -62,9 +63,9 @@ type ChatDone struct {
 }
 
 type Usage struct {
-	InputTokens            int `json:"input_tokens,omitempty"`
-	OutputTokens           int `json:"output_tokens,omitempty"`
-	CacheReadInputTokens   int `json:"cache_read_input_tokens,omitempty"`
+	InputTokens              int `json:"input_tokens,omitempty"`
+	OutputTokens             int `json:"output_tokens,omitempty"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
 }
 
@@ -89,7 +90,9 @@ type HistoryMessage struct {
 }
 
 // ChatBusy — server tells us the session is currently mid-turn (e.g. another tab started one).
-type ChatBusy struct{ Type string `json:"type"` }
+type ChatBusy struct {
+	Type string `json:"type"`
+}
 
 // ProjectContext is the structured "stuff the agent needs to know about
 // the user's project" that we send as a sibling field on every chat:submit.
@@ -175,8 +178,23 @@ type ServerCapabilities struct {
 }
 
 // ChatStopped / ChatCleared — /stop and /clear roundtrips.
-type ChatStopped struct{ Type string `json:"type"` }
-type ChatCleared struct{ Type string `json:"type"` }
+type ChatStopped struct {
+	Type string `json:"type"`
+}
+type ChatCleared struct {
+	Type string `json:"type"`
+}
+
+// GraphEvent — server-side graphEvents.emit('change', ...) forwarded
+// over WS. Acorn-cli only receives the read-path subset (recall:* —
+// see web.js CLI_FORWARD_OPS). Web clients get the full firehose
+// (node:create, edge:delete, etc.) which the TUI doesn't surface.
+type GraphEvent struct {
+	Type   string `json:"type"`             // "graph:event"
+	Op     string `json:"op,omitempty"`     // "recall:start" / "recall:decompose" / ...
+	Source string `json:"source,omitempty"` // "recall"
+	Detail string `json:"detail,omitempty"` // free-form payload string
+}
 
 // SessionStart — graphcorn lifecycle frame. Fired by acorn after a
 // successful WS connect, BEFORE the first chat:submit. SPORE's
@@ -217,9 +235,9 @@ type ToolAck struct {
 
 // ToolResult — CLI → server with the executed result.
 type ToolResult struct {
-	Type   string      `json:"type"`
-	ID     string      `json:"id"`
-	Result any         `json:"result"`
+	Type   string `json:"type"`
+	ID     string `json:"id"`
+	Result any    `json:"result"`
 }
 
 // CodeView / CodeDiff — optional code viewer events streamed alongside

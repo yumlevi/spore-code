@@ -1116,6 +1116,28 @@ func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 		m.status = ""
 	case "chat:busy":
 		m.pushChat("system", "Server: session busy (another client may be running it)")
+	case "graph:event":
+		// Server forwards a filtered subset of graph events to CLI clients
+		// — see web.js CLI_FORWARD_OPS. Currently just recall:* (decompose
+		// pipeline visibility). Routes through the activity log so the
+		// user can see recall actually firing per turn instead of greping
+		// SPORE logs to confirm.
+		var v proto.GraphEvent
+		_ = json.Unmarshal(f.Raw, &v)
+		if strings.HasPrefix(v.Op, "recall:") {
+			label := strings.TrimPrefix(v.Op, "recall:")
+			detail := v.Detail
+			if detail == "" {
+				detail = label
+			}
+			m.appendActivity(codeViewEntry{
+				Tool:    "recall",
+				ExecCmd: label,
+				Preview: trimTo(detail, 240),
+				Text:    label,
+				When:    time.Now(),
+			})
+		}
 	case "code:view":
 		var v proto.CodeView
 		_ = json.Unmarshal(f.Raw, &v)
