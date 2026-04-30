@@ -39,11 +39,11 @@ func gitBranch(cwd string) string {
 // History — the Python port (and earlier Go versions) baked the launch
 // timestamp into the id so every run was fresh, relying on `-c` /
 // load_last_session for resume. For coding work that's the wrong
-// default: relaunching acorn in the same project created a new
+// default: relaunching the binary in the same project created a new
 // server-side session every time, losing the agent's recollection
 // of the conversation you were still visibly reading in the UI.
 // Combined with SPORE's 60-minute idle-timeout sweep (now also
-// acorn-aware, see anima-new/src/agent/sessions.js), sessions were
+// cli-aware, see anima-new/src/agent/sessions.js), sessions were
 // getting silently reset under the user.
 func ComputeSessionID(user, cwd string) string {
 	root := findGitRoot(cwd)

@@ -55,9 +55,9 @@ func runSetupWizard() (*config.Config, error) {
 	fmt.Println()
 
 	// 1. Host + port
-	fmt.Println("1. Connect to Anima")
-	fmt.Println("   Enter your Anima server address.")
-	fmt.Println("   Examples: 192.168.1.78 · https://acorn.example.com")
+	fmt.Println("1. Connect to Spore Core")
+	fmt.Println("   Enter your Spore Core server address.")
+	fmt.Println("   Examples: 192.168.1.78 · https://spore.example.com")
 	host := prompt(rd, "   Host", "localhost")
 	port := 18810
 	if !strings.Contains(host, "://") {
@@ -82,7 +82,7 @@ func runSetupWizard() (*config.Config, error) {
 
 	// 3. Team key
 	fmt.Println("3. Authentication")
-	fmt.Println("   Enter the team key from your Anima server (.env ANIMA_ACORN_KEY value).")
+	fmt.Println("   Enter the invite key from your Spore Core server (.env SPORE_INVITE_KEY value).")
 	key := ""
 	for key == "" {
 		key = strings.TrimSpace(prompt(rd, "   Team key", ""))

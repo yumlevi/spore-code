@@ -462,7 +462,7 @@ func GatherContext(cwd string) string {
 	parts = append(parts, fmt.Sprintf(
 		"[CWD ENFORCEMENT: ALL file operations (read_file, write_file, edit_file, exec) "+
 			"are sandboxed to %s. Paths outside %s will be REJECTED by the tool executor. "+
-			"Do NOT use /workspace/ or any server-side path — those are inside the Anima container "+
+			"Do NOT use /workspace/ or any server-side path — those are inside the Spore Core container "+
 			"and will be lost on restart. Write everything to %s on the user's machine.]",
 		cwd, cwd, cwd))
 	parts = append(parts,
