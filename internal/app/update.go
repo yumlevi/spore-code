@@ -326,7 +326,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pushChat("system", "Update install failed: "+msg.Err)
 			return m, nil
 		}
-		m.pushChat("system", fmt.Sprintf("Installed %s at %s — restart acorn to use the new binary.", msg.Version, msg.Path))
+		m.pushChat("system", fmt.Sprintf("Installed %s at %s — restart spore to use the new binary.", msg.Version, msg.Path))
 		return m, nil
 
 	case releaseListResult:
@@ -372,7 +372,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Version == "" {
 			return m, nil
 		}
-		m.pushChat("system", fmt.Sprintf("✨ acorn %s is available (you're on %s) — run /update install to upgrade.\n   %s", msg.Version, Version, msg.URL))
+		m.pushChat("system", fmt.Sprintf("✨ spore %s is available (you're on %s) — run /update install to upgrade.\n   %s", msg.Version, Version, msg.URL))
 		return m, nil
 	}
 

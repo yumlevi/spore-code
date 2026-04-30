@@ -107,7 +107,7 @@ func installUpdateCmd(version string) tea.Cmd {
 
 func fetchLatestTag() (string, string, error) {
 	client := &http.Client{Timeout: 8 * time.Second}
-	req, _ := http.NewRequest("GET", "https://api.github.com/repos/yumlevi/acorn-cli/releases/latest", nil)
+	req, _ := http.NewRequest("GET", "https://api.github.com/repos/yumlevi/spore-code/releases/latest", nil)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := client.Do(req)
 	if err != nil {

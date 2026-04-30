@@ -31,7 +31,7 @@ func OpenDebug(globalDir, sessionID, user, cwd string) *DebugLogger {
 		return nil
 	}
 	l := &DebugLogger{file: f}
-	l.raw("=== Acorn Session Log ===")
+	l.raw("=== Spore Code Session Log ===")
 	l.raw("Session:  " + sessionID)
 	l.raw("User:     " + user)
 	l.raw("CWD:      " + cwd)

@@ -74,7 +74,7 @@ func main() {
 		fail("no user — set `user` in ~/.spore-code/config.toml [connection] or pass --user", nil)
 	}
 	if cfg.Connection.Key == "" {
-		fail("no acorn team key — set `key` in ~/.spore-code/config.toml [connection]", nil)
+		fail("no Spore Core invite key — set `key` in ~/.spore-code/config.toml [connection]", nil)
 	}
 
 	// Create .spore-code/{plans,logs}/ in cwd so tools have somewhere to write.

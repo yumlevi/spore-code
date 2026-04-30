@@ -92,7 +92,7 @@ func Open(root string) (*Store, error) {
 	}
 	dir := filepath.Join(root, ".spore-code")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("codeindex: mkdir .acorn: %w", err)
+		return nil, fmt.Errorf("codeindex: mkdir .spore-code: %w", err)
 	}
 	path := filepath.Join(dir, "index.db")
 	db, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=foreign_keys(on)&_pragma=busy_timeout(5000)")

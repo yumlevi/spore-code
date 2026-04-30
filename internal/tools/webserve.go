@@ -1,6 +1,6 @@
 package tools
 
-// web_serve has been intentionally disabled for acorn sessions. The
+// web_serve has been intentionally disabled for Spore Code sessions. The
 // server-side flavor hosts files from /workspace inside the SPORE
 // container — useless when the agent's intent is "let me reach a file
 // from my phone over LAN". For a minute we shipped a local
@@ -29,7 +29,7 @@ func WebServe(input map[string]any, cwd, scope string) any {
 	_ = scope
 	return map[string]any{
 		"ok": false,
-		"error": "web_serve is disabled for acorn sessions. " +
+		"error": "web_serve is disabled for Spore Code sessions. " +
 			"For local file serving use `exec`: e.g. `python3 -m http.server 8000` " +
 			"in the directory you want to host, then share the LAN URL " +
 			"(get the user's IP via `exec` calling `ipconfig` on Windows or " +

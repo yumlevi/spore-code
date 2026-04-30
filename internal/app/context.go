@@ -452,7 +452,7 @@ func GatherContext(cwd string) string {
 	}
 
 	var parts []string
-	parts = append(parts, fmt.Sprintf("[Acorn Context — %s]", project))
+	parts = append(parts, fmt.Sprintf("[Spore Code Context — %s]", project))
 	parts = append(parts, "CWD: "+cwd)
 	parts = append(parts, fmt.Sprintf(
 		"[SCOPE: You are working on the %q project at %s. "+
