@@ -187,7 +187,7 @@ func contains(xs []string, s string) bool {
 	return false
 }
 
-// testAuth POSTs to /api/acorn/auth just to validate credentials. Mirrors
+// testAuth POSTs to /api/spore-code/auth just to validate credentials. Mirrors
 // connection.py:_sync_auth without establishing the WS.
 func testAuth(host string, port int, user, key string) error {
 	base := host
@@ -197,7 +197,7 @@ func testAuth(host string, port int, user, key string) error {
 	base = strings.TrimRight(base, "/")
 	payload, _ := json.Marshal(map[string]string{"username": user, "key": key})
 	req, _ := http.NewRequestWithContext(
-		context.Background(), "POST", base+"/api/acorn/auth", bytes.NewReader(payload))
+		context.Background(), "POST", base+"/api/spore-code/auth", bytes.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	client := &http.Client{Timeout: 8 * time.Second}
 	resp, err := client.Do(req)

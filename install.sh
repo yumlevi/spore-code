@@ -13,7 +13,7 @@
 set -eu
 
 REPO="yumlevi/spore-code"
-VERSION="${SPORE_CODE_VERSION:-${ACORN_VERSION:-latest}}"  # ACORN_VERSION accepted as legacy fallback
+VERSION="${SPORE_CODE_VERSION:-latest}"
 BIN="spore"
 
 # ── pretty output (best-effort; falls back to plain text without TTY) ──
@@ -75,7 +75,7 @@ asset_url="https://github.com/$REPO/releases/download/$VERSION/$BIN-$os-$arch"
 [ "$VERSION" = "latest" ] && asset_url="https://github.com/$REPO/releases/latest/download/$BIN-$os-$arch"
 
 # ── pick install dir ──
-dest_dir="${SPORE_CODE_DIR:-${ACORN_DIR:-$HOME/.local/bin}}"
+dest_dir="${SPORE_CODE_DIR:-$HOME/.local/bin}"
 mkdir -p "$dest_dir" || die "Cannot create $dest_dir"
 dest="$dest_dir/$BIN"
 

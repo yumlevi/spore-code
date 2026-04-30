@@ -2,7 +2,7 @@
 // Mirrors acorn/connection.py.
 //
 // Flow:
-//  1. HTTP POST {host}/api/acorn/auth with {username, key} → {token}.
+//  1. HTTP POST {host}/api/spore-code/auth with {username, key} → {token}.
 //  2. WebSocket connect to {ws_host}/ws?token={token}.
 //  3. Inbound messages fan out into Client.In.
 //  4. On disconnect, transparent reconnect with exponential backoff,
@@ -36,7 +36,7 @@ type Frame struct {
 	Raw  json.RawMessage `json:"-"`
 }
 
-// Authed response from /api/acorn/auth.
+// Authed response from /api/spore-code/auth.
 type authResp struct {
 	Token string `json:"token"`
 	Error string `json:"error,omitempty"`
@@ -96,11 +96,11 @@ func New(host string, port int, user, key string) *Client {
 	}
 }
 
-// Authenticate POSTs to /api/acorn/auth and stashes the token.
+// Authenticate POSTs to /api/spore-code/auth and stashes the token.
 func (c *Client) Authenticate(ctx context.Context) error {
 	payload := map[string]string{"username": c.user, "key": c.key}
 	data, _ := json.Marshal(payload)
-	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/acorn/auth", bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/spore-code/auth", bytes.NewReader(data))
 	if err != nil {
 		return err
 	}

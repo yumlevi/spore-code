@@ -12,9 +12,7 @@ $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $Repo    = 'yumlevi/spore-code'
-$Version = if ($env:SPORE_CODE_VERSION) { $env:SPORE_CODE_VERSION }
-           elseif ($env:ACORN_VERSION) { $env:ACORN_VERSION }   # legacy fallback
-           else { 'latest' }
+$Version = if ($env:SPORE_CODE_VERSION) { $env:SPORE_CODE_VERSION } else { 'latest' }
 $BinName = 'spore.exe'
 
 function Write-Step([string]$msg) { Write-Host "→ $msg" -ForegroundColor Cyan }
@@ -43,8 +41,6 @@ if ($Version -eq 'latest') {
 # ── pick install dir ──
 if ($env:SPORE_CODE_DIR) {
   $DestDir = $env:SPORE_CODE_DIR
-} elseif ($env:ACORN_DIR) {
-  $DestDir = $env:ACORN_DIR  # legacy fallback
 } else {
   $DestDir = Join-Path $env:USERPROFILE '.spore-code\bin'
 }
