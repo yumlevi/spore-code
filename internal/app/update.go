@@ -11,10 +11,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"golang.org/x/term"
 
-	"github.com/yumlevi/spore-code/internal/config"
 	"github.com/yumlevi/spore-code/internal/conn"
 	"github.com/yumlevi/spore-code/internal/proto"
-	"github.com/yumlevi/spore-code/internal/sessionlog"
 	"github.com/yumlevi/spore-code/internal/tools"
 )
 
@@ -754,277 +752,22 @@ func (m *Model) handleSlashCommand(text string) (tea.Model, tea.Cmd) {
 	if len(parts) == 0 {
 		return m, nil
 	}
-	// Registry first — phase-7 commands (/context, /tree, /init) live there.
+	// All slash commands now flow through the registry (commands.go,
+	// tests.go, legacy_cmds.go all register via init()). dispatchSlash
+	// returns true on hit; on miss we render the unknown-command help.
 	if mm, c, ok := dispatchSlash(m, text); ok {
 		return mm, c
 	}
 	cmd := parts[0]
-
-	switch cmd {
-	case "/help":
-		// Use the registry-backed renderer so any command added via
-		// register() in commands.go shows up here automatically. The
-		// static SlashHelp() below is kept for tests that want the
-		// canonical list.
-		m.pushChat("system", SlashHelpFromRegistry())
-	case "/clear":
-		m.messages = m.messages[:0]
-		m.historyDirty = true
-		m.rerenderViewport()
-		_ = m.client.Send(map[string]any{"type": "chat:clear", "sessionId": m.sess})
-	case "/new":
-		prev := m.sess
-		// Always use the fresh (timestamped) variant so the new session
-		// is genuinely distinct on the server side, even when AutoResume
-		// is on. The old session is preserved on disk + server and stays
-		// reachable via `/resume <id>` or `acorn -c`.
-		m.sess = ComputeSessionIDFresh(m.cfg.Connection.User, m.cwd)
-		m.messages = m.messages[:0]
-		m.contextSent = false
-		m.historyDirty = true
-		// Rotate the JSONL session writer + debug log so the new turns
-		// land in their own files. Without this, /new conversations
-		// would keep appending to the old session's log.
-		if m.writer != nil {
-			m.writer.Close()
-		}
-		if w, err := sessionlog.Open(m.cfg.GlobalDir, m.sess); err == nil {
-			m.writer = w
-		} else {
-			m.writer = nil
-		}
-		if m.dlog != nil {
-			m.dlog.Close()
-		}
-		m.dlog = sessionlog.OpenDebug(m.cfg.GlobalDir, m.sess, m.cfg.Connection.User, m.cwd)
-		m.rerenderViewport()
-		m.pushChat("system", "New session: "+m.sess)
-		if prev != "" && prev != m.sess {
-			m.pushChat("system", "Previous session preserved: "+prev+"  (use /resume "+prev+" to return)")
-		}
-	case "/resume":
-		if len(parts) < 2 {
-			m.pushChat("system", "Usage: /resume <sessionId>")
-			return m, nil
-		}
-		m.sess = parts[1]
-		m.messages = m.messages[:0]
-		m.historyDirty = true
-		// Load local JSONL history first so the user sees their previous
-		// turns even if the server doesn't know the session. Server's
-		// chat:history reply (if any) will append after.
-		m.loadLocalHistory()
-		_ = m.client.Send(map[string]any{"type": "chat:history-request", "sessionId": m.sess, "userName": m.cfg.Connection.User})
-		m.pushChat("system", "Resumed: "+m.sess)
-	case "/quit":
-		if m.exec != nil && m.exec.BG != nil {
-			m.exec.BG.KillAll()
-		}
-		// graphcorn: tell SPORE we're closing so it can finalize the
-		// session node (set ended_at, count turns, dispatch the
-		// summary turn). Send before Close() so the frame actually
-		// goes out. Old SPOREs ignore unknown types.
-		_ = m.client.Send(map[string]any{
-			"type":      "session:end",
-			"sessionId": m.sess,
-			"endedAt":   time.Now().UTC().Format(time.RFC3339),
-		})
-		m.client.Close()
-		if m.dlog != nil {
-			m.dlog.Close()
-		}
-		if m.writer != nil {
-			m.writer.Close()
-		}
-		return m, tea.Quit
-	case "/stop":
-		m.exec.AbortCurrent()
-		_ = m.client.Send(map[string]any{"type": "chat:stop", "sessionId": m.sess})
-		m.pushChat("system", "Stop requested.")
-	case "/plan":
-		m.planMode = !m.planMode
-		label := "execute"
-		if m.planMode {
-			label = "plan"
-		}
-		m.pushChat("system", "Mode → "+label)
-	case "/status":
-		m.pushChat("system", fmt.Sprintf("server=%s:%d user=%s session=%s planMode=%t mode=%s",
-			m.cfg.Connection.Host, m.cfg.Connection.Port, m.cfg.Connection.User, m.sess, m.planMode, m.perms.Mode()))
-	case "/theme":
-		if len(parts) >= 2 {
-			m.theme = themeForName(parts[1])
-			// Persist so the next `acorn` launch comes up in the
-			// same theme. Update the in-memory cfg first then write
-			// the global config.toml. Save errors aren't fatal —
-			// the theme still applies for this session.
-			m.cfg.Display.Theme = m.theme.Name
-			if err := config.Save(m.cfg); err != nil {
-				m.pushChat("system", "Theme → "+m.theme.Name+"  (save failed: "+err.Error()+")")
-			} else {
-				m.pushChat("system", "Theme → "+m.theme.Name+"  (saved)")
-			}
-			m.historyDirty = true
-			m.rerenderViewport()
-		} else {
-			m.pushChat("system", "Current: "+m.theme.Name+"\nAvailable: "+strings.Join(ThemeNames(), ", "))
-		}
-	case "/mode":
-		if len(parts) < 2 {
-			m.pushChat("system", "Usage: /mode <auto|ask|locked|yolo|rules>")
-			return m, nil
-		}
-		switch parts[1] {
-		case "auto":
-			m.perms.SetMode(PermAuto)
-			m.pushChat("system", "Perms → auto (non-dangerous auto-approved)")
-		case "ask":
-			m.perms.SetMode(PermAsk)
-			m.pushChat("system", "Perms → ask (prompt per call)")
-		case "locked":
-			m.perms.SetMode(PermLocked)
-			m.pushChat("system", "Perms → locked (deny all writes/exec)")
-		case "yolo":
-			m.perms.SetMode(PermYolo)
-			m.pushChat("system", "Perms → yolo (approve everything)")
-		case "rules":
-			rs := m.perms.Rules()
-			if len(rs) == 0 {
-				m.pushChat("system", "No session allow rules")
-			} else {
-				m.pushChat("system", "Allow rules:\n"+strings.Join(rs, "\n"))
-			}
-		default:
-			m.pushChat("system", "Unknown mode: "+parts[1])
-		}
-	case "/approve-all":
-		m.perms.SetMode(PermAuto)
-		m.pushChat("system", "Perms → auto")
-	case "/approve-all-dangerous":
-		m.perms.SetMode(PermYolo)
-		m.pushChat("system", "Perms → yolo")
-	case "/update":
-		switch {
-		case len(parts) >= 2 && parts[1] == "install":
-			query := ""
-			if len(parts) >= 3 {
-				query = strings.Join(parts[2:], " ")
-			}
-			if query == "" {
-				m.pushChat("system", "Installing latest stable release… will replace the running binary in place.")
-				return m, installUpdateCmd("")
-			}
-			// Anything else routes through resolveAndInstall: handles
-			// exact tags, "pre" / "experimental" keywords, and fuzzy
-			// substring matches like /update install graphcorn.
-			m.pushChat("system", fmt.Sprintf("Resolving release for %q… will install in place when found.", query))
-			return m, resolveAndInstallCmd(query)
-		case len(parts) >= 2 && parts[1] == "check":
-			m.pushChat("system", "Checking GitHub releases…")
-			return m, checkUpdateCmd(true)
-		case len(parts) >= 2 && (parts[1] == "list" || parts[1] == "channels"):
-			m.pushChat("system", "Fetching release list from GitHub (includes pre-releases)…")
-			return m, fetchAllReleasesCmd()
-		default:
-			m.pushChat("system", strings.Join([]string{
-				"Usage:",
-				"  /update check                       check the stable channel for a newer release",
-				"  /update install                     install the latest STABLE release",
-				"  /update install <tag>               install an exact tag (e.g. v0.2.0-graphcorn)",
-				"  /update install pre                 install the latest pre-release (any kind)",
-				"  /update install <substring>         install latest tag containing this substring (e.g. /update install graphcorn)",
-				"  /update list                        list recent releases (stable + pre-release)",
-				"You're on " + Version + ".",
-			}, "\n"))
-			return m, nil
-		}
-	case "/bg":
-		if m.exec == nil || m.exec.BG == nil {
-			m.pushChat("system", "Background manager not available")
-			return m, nil
-		}
-		if len(parts) < 2 || parts[1] == "list" {
-			procs := m.exec.BG.List()
-			if len(procs) == 0 {
-				m.pushChat("system", "No background processes")
-				return m, nil
-			}
-			var lines []string
-			for _, p := range procs {
-				st := "running"
-				if !p.Running {
-					st = fmt.Sprintf("exited (%d)", p.ExitCode)
-				}
-				cmd := p.Command
-				if len(cmd) > 80 {
-					cmd = cmd[:80]
-				}
-				lines = append(lines, fmt.Sprintf("  #%d  %s  %s  %s", p.ID, st, p.Elapsed(), cmd))
-			}
-			m.pushChat("system", strings.Join(lines, "\n"))
-			return m, nil
-		}
-		sub := parts[1]
-		if sub == "kill" && len(parts) >= 3 {
-			var id int
-			fmt.Sscanf(parts[2], "%d", &id)
-			if m.exec.BG.Kill(id) {
-				m.pushChat("system", fmt.Sprintf("Killed #%d", id))
-			} else {
-				m.pushChat("system", fmt.Sprintf("Process #%d not found or already stopped", id))
-			}
-			return m, nil
-		}
-		if sub == "run" && len(parts) >= 3 {
-			cmd := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(text, "/bg"), " run"))
-			if p, err := m.exec.BG.Launch(cmd, m.cwd); err != nil {
-				m.pushChat("system", "Launch failed: "+err.Error())
-			} else {
-				m.pushChat("system", fmt.Sprintf("Launched #%d — log: %s", p.ID, p.LogPath))
-			}
-			return m, nil
-		}
-		// /bg <id> — show output
-		var id int
-		if _, err := fmt.Sscanf(sub, "%d", &id); err == nil {
-			p := m.exec.BG.Get(id)
-			if p == nil {
-				m.pushChat("system", fmt.Sprintf("Process #%d not found", id))
-				return m, nil
-			}
-			out := strings.Join(p.Output(), "\n")
-			if len(out) > 4000 {
-				out = "…" + out[len(out)-4000:]
-			}
-			m.pushChat("system", fmt.Sprintf("#%d  %s\n%s", p.ID, p.Elapsed(), out))
-			return m, nil
-		}
-		m.pushChat("system", "Usage: /bg [list|<id>|run <command>|kill <id>]")
-	case "/sessions":
-		root := findGitRoot(m.cwd)
-		if root == "" {
-			root = m.cwd
-		}
-		list := sessionlog.ListProjectSessions(m.cfg.GlobalDir, m.cfg.Connection.User, root)
-		if len(list) == 0 {
-			m.pushChat("system", "No saved sessions for this project")
-			return m, nil
-		}
-		var lines []string
-		lines = append(lines, fmt.Sprintf("Sessions for this project (%d):", len(list)))
-		for i, s := range list {
-			if i >= 15 {
-				break
-			}
-			lines = append(lines, fmt.Sprintf("  %2d. %-12s %3d msgs  %s", i+1, s.TimeAgo, s.MessageCount, truncateFor(s.Preview, 60)))
-		}
-		lines = append(lines, "", "/resume <sessionId> to pick one")
-		m.pushChat("system", strings.Join(lines, "\n"))
-	default:
-		m.pushChat("system", "Unknown command: "+cmd+"  (type /help)")
-	}
+	m.pushChat("system", "Unknown command: "+cmd+"  (type /help)")
 	return m, nil
 }
+
+// (The pre-registry inline switch lived here. /clear, /new, /resume,
+// /quit, /stop, /plan, /status, /theme, /mode, /approve-all,
+// /approve-all-dangerous, /update, /bg, /sessions, /help all migrated
+// to legacy_cmds.go's registry init() — see git log if you're chasing
+// an old reference to this block.)
 
 func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 	switch f.Type {

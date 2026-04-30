@@ -32,6 +32,7 @@ var slashCatalog = []slashEntry{
 	{"/resume", "resume a specific session"},
 	{"/sessions", "list saved sessions for this project"},
 	{"/quit", "exit"},
+	{"/logout", "clear saved credentials and exit (next launch re-runs first-time wizard)"},
 	{"/stop", "stop the current generation"},
 	{"/plan", "toggle plan/execute mode (same as Shift+Tab)"},
 	{"/status", "connection + session info"},
@@ -65,7 +66,6 @@ var slashCatalog = []slashEntry{
 	{"/update check", "check the stable channel for a newer release"},
 	{"/update install", "install the latest stable release"},
 	{"/update install pre", "install the latest pre-release (any kind)"},
-	{"/update install graphcorn", "install latest tag matching 'graphcorn' (fuzzy)"},
 	{"/update list", "list recent releases (stable + pre-release)"},
 
 	// Background delegation policy. Backend lives in tools/executor.go;
@@ -109,6 +109,10 @@ var slashCatalog = []slashEntry{
 	{"/calls", "/calls <symbol> — show callees of a symbol (depth 3)"},
 	{"/impact", "show transitive caller blast-radius for current git diff"},
 	{"/scripts", "/scripts [name] — list saved project scripts (graph-backed)"},
+	{"/decisions", "list / create / get project decisions (ADRs) — graph-backed"},
+	{"/decisions list", "list project decisions"},
+	{"/decisions new", "/decisions new <title> — record a new ADR"},
+	{"/decisions get", "/decisions get <id> — fetch a specific decision"},
 }
 
 // refreshSuggest recomputes matches for the current input buffer.
