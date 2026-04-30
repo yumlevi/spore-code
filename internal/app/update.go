@@ -95,8 +95,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if first {
 			m.pushChat("system", LogoFull)
 		}
-		m.pushChat("system", fmt.Sprintf("Connected to %s:%d as %s (session %s)",
-			m.cfg.Connection.Host, m.cfg.Connection.Port, m.cfg.Connection.User, m.sess))
+		// Format the connection target: if Host is a full URL (contains
+		// "://"), it already carries the scheme + port the user typed —
+		// appending :Port would render "https://spore.hyrule.vip:18810:18810".
+		// For plain hostnames, append Port as before.
+		connTarget := m.cfg.Connection.Host
+		if !strings.Contains(connTarget, "://") {
+			connTarget = fmt.Sprintf("%s:%d", connTarget, m.cfg.Connection.Port)
+		}
+		m.pushChat("system", fmt.Sprintf("Connected to %s as %s (session %s)",
+			connTarget, m.cfg.Connection.User, m.sess))
 		_ = m.client.Send(map[string]any{
 			"type": "chat:history-request", "sessionId": m.sess, "userName": m.cfg.Connection.User,
 		})
