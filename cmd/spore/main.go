@@ -70,11 +70,25 @@ func main() {
 	if *user != "" {
 		cfg.Connection.User = *user
 	}
-	if cfg.Connection.User == "" {
-		fail("no user — set `user` in ~/.spore-code/config.toml [connection] or pass --user", nil)
-	}
-	if cfg.Connection.Key == "" {
-		fail("no Spore Core invite key — set `key` in ~/.spore-code/config.toml [connection]", nil)
+	if cfg.Connection.User == "" || cfg.Connection.Key == "" {
+		// Missing credentials — most often after /logout, which clears the
+		// key but leaves config.toml in place. Re-run the wizard instead of
+		// dying with a hand-edit-the-toml hint.
+		fmt.Fprintln(os.Stderr, "missing credentials — running setup wizard")
+		fresh, werr := runSetupWizard()
+		if werr != nil {
+			fail("setup wizard failed:", werr)
+		}
+		cfg = fresh
+		if *host != "" {
+			cfg.Connection.Host = *host
+		}
+		if *port != 0 {
+			cfg.Connection.Port = *port
+		}
+		if *user != "" {
+			cfg.Connection.User = *user
+		}
 	}
 
 	// Create .spore-code/{plans,logs}/ in cwd so tools have somewhere to write.
