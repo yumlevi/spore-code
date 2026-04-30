@@ -237,7 +237,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Auto-mirror to the SPORE graph after every successful index pass
 		// (auto-bootstrap, auto-refresh, or explicit /index). Compute
 		// architecture locally and ship a `code_graph:summary` WS frame
-		// to the SPORE-side acorn-cli plugin, which writes the summary
+		// to the SPORE-side spore-code plugin, which writes the summary
 		// onto the project node's `code_graph` aspect. No agent turn
 		// wasted; the graph aspect populates silently.
 		if okFlag, _ := msg.Result.(map[string]any); okFlag != nil && okFlag["ok"] == true {

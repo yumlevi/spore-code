@@ -85,7 +85,7 @@ type bootUpdateMsg struct {
 func bootCheckUpdateCmd() tea.Cmd {
 	return func() tea.Msg {
 		client := &http.Client{Timeout: 8 * time.Second}
-		req, _ := http.NewRequest("GET", "https://api.github.com/repos/yumlevi/acorn-cli/releases/latest", nil)
+		req, _ := http.NewRequest("GET", "https://api.github.com/repos/yumlevi/spore-code/releases/latest", nil)
 		req.Header.Set("Accept", "application/vnd.github+json")
 		resp, err := client.Do(req)
 		if err != nil {
@@ -139,7 +139,7 @@ type releaseListResult struct {
 func fetchAllReleasesCmd() tea.Cmd {
 	return func() tea.Msg {
 		client := &http.Client{Timeout: 10 * time.Second}
-		req, _ := http.NewRequest("GET", "https://api.github.com/repos/yumlevi/acorn-cli/releases?per_page=25", nil)
+		req, _ := http.NewRequest("GET", "https://api.github.com/repos/yumlevi/spore-code/releases?per_page=25", nil)
 		req.Header.Set("Accept", "application/vnd.github+json")
 		resp, err := client.Do(req)
 		if err != nil {
@@ -197,7 +197,7 @@ func resolveAndInstallCmd(query string) tea.Cmd {
 
 		// Need the full list to pick from for everything else.
 		client := &http.Client{Timeout: 10 * time.Second}
-		req, _ := http.NewRequest("GET", "https://api.github.com/repos/yumlevi/acorn-cli/releases?per_page=50", nil)
+		req, _ := http.NewRequest("GET", "https://api.github.com/repos/yumlevi/spore-code/releases?per_page=50", nil)
 		req.Header.Set("Accept", "application/vnd.github+json")
 		resp, err := client.Do(req)
 		if err != nil {
@@ -260,7 +260,7 @@ func resolveAndInstallCmd(query string) tea.Cmd {
 // HTTP 200 + non-draft.
 func fetchTagDirect(tag string) (releaseInfo, bool) {
 	client := &http.Client{Timeout: 6 * time.Second}
-	req, _ := http.NewRequest("GET", "https://api.github.com/repos/yumlevi/acorn-cli/releases/tags/"+tag, nil)
+	req, _ := http.NewRequest("GET", "https://api.github.com/repos/yumlevi/spore-code/releases/tags/"+tag, nil)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := client.Do(req)
 	if err != nil {
@@ -285,7 +285,7 @@ func checkUpdateCmd(checkOnly bool) tea.Cmd {
 	_ = checkOnly // no distinction for now — we never install in-process.
 	return func() tea.Msg {
 		client := &http.Client{Timeout: 8 * time.Second}
-		req, _ := http.NewRequest("GET", "https://api.github.com/repos/yumlevi/acorn-cli/releases/latest", nil)
+		req, _ := http.NewRequest("GET", "https://api.github.com/repos/yumlevi/spore-code/releases/latest", nil)
 		req.Header.Set("Accept", "application/vnd.github+json")
 		resp, err := client.Do(req)
 		if err != nil {

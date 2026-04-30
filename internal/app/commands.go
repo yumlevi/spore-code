@@ -770,7 +770,7 @@ func isExecResultOK(result any) bool {
 
 // autoMirrorCodeGraph computes the architecture summary from the
 // freshly-updated .spore-code/index.db and pushes it to the SPORE-side
-// acorn-cli plugin via a `code_graph:summary` WS frame. The plugin
+// spore-code plugin via a `code_graph:summary` WS frame. The plugin
 // writes the summary onto the project node's `code_graph` aspect,
 // so subsequent sessions on this project (or fresh laptops, or
 // session distillation) see the codebase shape without anyone

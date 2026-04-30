@@ -176,7 +176,7 @@ func testPermission(m *Model) error {
 	m.modal = modalPermission
 	m.permission = &permissionModal{
 		name:      "exec",
-		summary:   "rm -rf /tmp/test-acorn-permission",
+		summary:   "rm -rf /tmp/test-spore-permission",
 		rule:      "exec:rm -rf*",
 		dangerous: true,
 	}

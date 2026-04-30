@@ -49,7 +49,7 @@ func installUpdateCmd(version string) tea.Cmd {
 			tag, _ = t, u
 		}
 		url := fmt.Sprintf(
-			"https://github.com/yumlevi/spore-code/releases/download/%s/acorn-%s-%s",
+			"https://github.com/yumlevi/spore-code/releases/download/%s/spore-%s-%s",
 			tag, runtime.GOOS, runtime.GOARCH,
 		)
 		if runtime.GOOS == "windows" {
@@ -67,7 +67,7 @@ func installUpdateCmd(version string) tea.Cmd {
 			return updateInstallResult{Err: fmt.Sprintf("download HTTP %d at %s", resp.StatusCode, url)}
 		}
 		dir := filepath.Dir(exePath)
-		tmp, err := os.CreateTemp(dir, ".acorn-update-*")
+		tmp, err := os.CreateTemp(dir, ".spore-update-*")
 		if err != nil {
 			return updateInstallResult{Err: "cannot create temp file in " + dir + ": " + err.Error()}
 		}

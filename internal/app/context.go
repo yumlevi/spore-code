@@ -78,7 +78,7 @@ func BuildProjectContextWithScope(cwd, mode, scope string) proto.ProjectContext 
 		pc.Hardware = hw
 	}
 	// codeindex (M2): advertise the local index so the SPORE-side
-	// acorn-cli plugin's Plan Mode Phase 2 prompt can branch.
+	// spore-code plugin's Plan Mode Phase 2 prompt can branch.
 	if has, head := codeindexState(root); has {
 		pc.HasCodeIndex = true
 		pc.IndexHead = head
