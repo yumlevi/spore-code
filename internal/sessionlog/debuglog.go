@@ -11,7 +11,7 @@ import (
 )
 
 // DebugLogger writes a verbose diagnostic log for a single session to
-// ~/.acorn/logs/<ts>_<safe-id>.log. Port of acorn/session_log.py.
+// ~/.spore-code/logs/<ts>_<safe-id>.log. Port of acorn/session_log.py.
 type DebugLogger struct {
 	mu   sync.Mutex
 	file *os.File

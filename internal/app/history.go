@@ -12,7 +12,7 @@ func historyPath(globalDir string) string {
 	return filepath.Join(globalDir, "history")
 }
 
-// loadHistory reads ~/.acorn/history into a slice. Newest entries last.
+// loadHistory reads ~/.spore-code/history into a slice. Newest entries last.
 // Lines beginning with `#` are skipped (matches some prompt_toolkit
 // FileHistory variants); blank lines too.
 func loadHistory(globalDir string) []string {

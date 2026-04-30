@@ -10,7 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/yumlevi/acorn-cli/internal/proto"
+	"github.com/yumlevi/spore-code/internal/proto"
 )
 
 type planModal struct {
@@ -134,7 +134,7 @@ func (m *Model) planExecute(text string) (tea.Model, tea.Cmd) {
 	if path := savePlan(m.cwd, text); path != "" {
 		m.pushChat("system", "Plan saved to "+path)
 	} else {
-		m.pushChat("system", "Plan save FAILED — check permissions on .acorn/plans/")
+		m.pushChat("system", "Plan save FAILED — check permissions on .spore-code/plans/")
 	}
 	m.planMode = false
 	m.modal = modalNone
@@ -193,9 +193,9 @@ func (m *Model) sendChatWithMode(content, mode string) tea.Cmd {
 }
 
 // savePlan mirrors acorn/cli.py:_save_plan — writes the plan to
-// {cwd}/.acorn/plans/plan-<ts>.md. Returns empty string on failure.
+// {cwd}/.spore-code/plans/plan-<ts>.md. Returns empty string on failure.
 func savePlan(cwd, text string) string {
-	dir := filepath.Join(cwd, ".acorn", "plans")
+	dir := filepath.Join(cwd, ".spore-code", "plans")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		fmt.Fprintln(os.Stderr, "[plan-save] mkdir:", err)
 		return ""

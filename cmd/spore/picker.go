@@ -6,7 +6,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/yumlevi/acorn-cli/internal/sessionlog"
+	"github.com/yumlevi/spore-code/internal/sessionlog"
 )
 
 // sessionPicker is a small standalone Bubble Tea program shown before

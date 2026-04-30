@@ -12,11 +12,11 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/yumlevi/acorn-cli/internal/config"
-	"github.com/yumlevi/acorn-cli/internal/conn"
-	"github.com/yumlevi/acorn-cli/internal/proto"
-	"github.com/yumlevi/acorn-cli/internal/sessionlog"
-	"github.com/yumlevi/acorn-cli/internal/tools"
+	"github.com/yumlevi/spore-code/internal/config"
+	"github.com/yumlevi/spore-code/internal/conn"
+	"github.com/yumlevi/spore-code/internal/proto"
+	"github.com/yumlevi/spore-code/internal/sessionlog"
+	"github.com/yumlevi/spore-code/internal/tools"
 )
 
 type modalKind int
@@ -111,10 +111,10 @@ type Model struct {
 	sendProgramMsg func(msg tea.Msg)
 
 	// Session writer — appends every user/assistant/tool turn to a JSONL
-	// file under ~/.acorn/sessions/ for crash recovery + /resume picker.
+	// file under ~/.spore-code/sessions/ for crash recovery + /resume picker.
 	writer *sessionlog.Writer
 
-	// Diagnostic log at ~/.acorn/logs/<ts>_<session>.log — matches Python's
+	// Diagnostic log at ~/.spore-code/logs/<ts>_<session>.log — matches Python's
 	// session_log.py output for parity across acorn variants.
 	dlog *sessionlog.DebugLogger
 
@@ -156,7 +156,7 @@ type Model struct {
 	followBottom bool
 
 	// Command history — Up/Down in input cycles through prior sends.
-	// Persisted to ~/.acorn/history (plain text, one entry per line) so
+	// Persisted to ~/.spore-code/history (plain text, one entry per line) so
 	// it survives restarts. Mirrors prompt_toolkit's FileHistory.
 	cmdHistory  []string
 	histIdx     int    // -1 = not browsing; 0..len-1 = position
@@ -238,7 +238,7 @@ func New(cfg *config.Config, cwd, sess string, planMode, isContinue bool) *Model
 		theme:    themeForName(cfg.Display.Theme),
 	}
 	m.perms = newTUIPerms(m)
-	m.exec = tools.New(m.perms, cwd, filepath.Join(cwd, ".acorn", "logs"))
+	m.exec = tools.New(m.perms, cwd, filepath.Join(cwd, ".spore-code", "logs"))
 	m.cmdHistory = loadHistory(cfg.GlobalDir)
 	m.histIdx = -1
 	m.followBottom = true

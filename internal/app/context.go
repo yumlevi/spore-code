@@ -12,8 +12,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/yumlevi/acorn-cli/internal/codeindex"
-	"github.com/yumlevi/acorn-cli/internal/proto"
+	"github.com/yumlevi/spore-code/internal/codeindex"
+	"github.com/yumlevi/spore-code/internal/proto"
 )
 
 // BuildProjectContext returns the structured project metadata that gets
@@ -61,12 +61,12 @@ func BuildProjectContextWithScope(cwd, mode, scope string) proto.ProjectContext 
 	if pt := detectProjectType(gitRoot, cwd); pt != "" && pt != "Unknown" {
 		pc.ProjectType = pt
 	}
-	if data, err := os.ReadFile(filepath.Join(root, "ACORN.md")); err == nil {
+	if data, err := os.ReadFile(filepath.Join(root, "SPORE.md")); err == nil {
 		s := string(data)
 		if len(s) > 4096 {
 			s = s[:4096]
 		}
-		pc.AcornMd = s
+		pc.SporeMd = s
 	}
 	if tree := projectTreeList(root, 2, 100); len(tree) > 0 {
 		pc.Tree = tree
@@ -86,11 +86,11 @@ func BuildProjectContextWithScope(cwd, mode, scope string) proto.ProjectContext 
 	return pc
 }
 
-// codeindexState reports whether <root>/.acorn/index.db is present and
+// codeindexState reports whether <root>/.spore-code/index.db is present and
 // has at least one indexed file, plus the recorded git sha. Best-effort:
 // any error returns (false, "") so we never block context build.
 func codeindexState(root string) (bool, string) {
-	dbPath := filepath.Join(root, ".acorn", "index.db")
+	dbPath := filepath.Join(root, ".spore-code", "index.db")
 	if _, err := os.Stat(dbPath); err != nil {
 		return false, ""
 	}
@@ -113,7 +113,7 @@ func codeindexState(root string) (bool, string) {
 func projectTreeList(root string, maxDepth, maxEntries int) []string {
 	skip := map[string]struct{}{
 		".git": {}, "node_modules": {}, ".venv": {}, "venv": {},
-		"__pycache__": {}, "dist": {}, "build": {}, ".acorn": {},
+		"__pycache__": {}, "dist": {}, "build": {}, ".spore-code": {},
 		"target": {}, ".next": {}, ".cache": {},
 	}
 	var out []string
@@ -434,10 +434,9 @@ func detectToolsList() []string {
 	return toolsCache
 }
 
-// GatherContext produces the first-message context block acorn/context.py
-// injects before the user's initial prompt. This is a near-verbatim port
-// of acorn/context.py:gather_context — same scope/sandbox/work-style
-// instructions, same git/env/tree blocks, same ACORN.md inclusion.
+// GatherContext produces the first-message context block injected
+// before the user's initial prompt. Same scope/sandbox/work-style
+// instructions, same git/env/tree blocks, same SPORE.md inclusion.
 //
 // Why the parity matters: the agent on the SPORE server uses these
 // blocks to decide which tools to use, where to write files, and how
@@ -506,12 +505,12 @@ func GatherContext(cwd string) string {
 	if root == "" {
 		root = cwd
 	}
-	if data, err := os.ReadFile(filepath.Join(root, "ACORN.md")); err == nil {
+	if data, err := os.ReadFile(filepath.Join(root, "SPORE.md")); err == nil {
 		s := string(data)
 		if len(s) > 4000 {
 			s = s[:4000]
 		}
-		parts = append(parts, "--- ACORN.md ---\n"+s+"\n--- end ---")
+		parts = append(parts, "--- SPORE.md ---\n"+s+"\n--- end ---")
 	}
 
 	if tree := projectTree(root, 2, 50); tree != "" {
@@ -575,7 +574,7 @@ func detectProjectType(gitRoot, cwd string) string {
 func projectTree(root string, maxDepth, maxEntries int) string {
 	skip := map[string]struct{}{
 		".git": {}, "node_modules": {}, ".venv": {}, "venv": {},
-		"__pycache__": {}, "dist": {}, "build": {}, ".acorn": {},
+		"__pycache__": {}, "dist": {}, "build": {}, ".spore-code": {},
 		"target": {}, ".next": {}, ".cache": {},
 	}
 	var b strings.Builder

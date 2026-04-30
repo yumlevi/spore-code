@@ -347,7 +347,7 @@ func (m *Model) renderHeader() string {
 	logoBox := lipgloss.NewStyle().
 		Foreground(m.theme.Accent).Bold(true).
 		Background(hdrBg).
-		Padding(0, 1).Render("🌰 acorn " + Version)
+		Padding(0, 1).Render("🍄 spore " + Version)
 
 	user := lipgloss.NewStyle().
 		Foreground(m.theme.PromptUser).Background(hdrBg).Bold(true).

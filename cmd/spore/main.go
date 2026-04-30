@@ -13,9 +13,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/yumlevi/acorn-cli/internal/app"
-	"github.com/yumlevi/acorn-cli/internal/config"
-	"github.com/yumlevi/acorn-cli/internal/sessionlog"
+	"github.com/yumlevi/spore-code/internal/app"
+	"github.com/yumlevi/spore-code/internal/config"
+	"github.com/yumlevi/spore-code/internal/sessionlog"
 )
 
 // version is overrideable at link time:
@@ -37,7 +37,7 @@ func main() {
 	flag.Parse()
 
 	if *showVer {
-		fmt.Printf("acorn %s (go port)\n", version)
+		fmt.Printf("spore %s\n", version)
 		return
 	}
 	app.SetVersion(version)
@@ -50,7 +50,7 @@ func main() {
 	cfg, err := config.Load(cwd)
 	if err != nil {
 		if err == config.ErrNoGlobalConfig {
-			fmt.Fprintln(os.Stderr, "no global config at ~/.acorn/config.toml — running first-time setup")
+			fmt.Fprintln(os.Stderr, "no global config at ~/.spore-code/config.toml — running first-time setup")
 			fresh, werr := runSetupWizard()
 			if werr != nil {
 				fail("setup wizard failed:", werr)
@@ -71,15 +71,15 @@ func main() {
 		cfg.Connection.User = *user
 	}
 	if cfg.Connection.User == "" {
-		fail("no user — set `user` in ~/.acorn/config.toml [connection] or pass --user", nil)
+		fail("no user — set `user` in ~/.spore-code/config.toml [connection] or pass --user", nil)
 	}
 	if cfg.Connection.Key == "" {
-		fail("no acorn team key — set `key` in ~/.acorn/config.toml [connection]", nil)
+		fail("no acorn team key — set `key` in ~/.spore-code/config.toml [connection]", nil)
 	}
 
-	// Create .acorn/{plans,logs}/ in cwd so tools have somewhere to write.
+	// Create .spore-code/{plans,logs}/ in cwd so tools have somewhere to write.
 	_ = config.EnsureLocalDir(cwd)
-	_ = os.MkdirAll(filepath.Join(cwd, ".acorn", "logs"), 0o755)
+	_ = os.MkdirAll(filepath.Join(cwd, ".spore-code", "logs"), 0o755)
 
 	// Session resolution.
 	//
@@ -87,7 +87,7 @@ func main() {
 	//   explicit --session=<id>   → use it
 	//   -c with 1 project session → auto-resume, print a line
 	//   -c with >1 project sessions → interactive picker
-	//   -c with 0 project sessions → fall back to ~/.acorn/last_session
+	//   -c with 0 project sessions → fall back to ~/.spore-code/last_session
 	//   otherwise                 → fresh session id
 	sess := *sessionID
 	if sess == "" && *cont {

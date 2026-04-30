@@ -28,10 +28,10 @@ func TestEndToEndIndexAcornCli(t *testing.T) {
 		t.Skip("repo root with go.mod not found above test dir; skipping")
 	}
 
-	// Use a throwaway store dir so the test doesn't pollute .acorn/.
+	// Use a throwaway store dir so the test doesn't pollute .spore-code/.
 	tmp := t.TempDir()
 
-	// Write a minimal stub layout: the Open() helper expects a .acorn/
+	// Write a minimal stub layout: the Open() helper expects a .spore-code/
 	// dir under the project root. We pass tmp as root so the walker
 	// only sees the test's symlink, but that's not what we want — we
 	// want to walk the real repo. So: open store at tmp, but feed Walk

@@ -10,7 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"golang.org/x/term"
 
-	"github.com/yumlevi/acorn-cli/internal/proto"
+	"github.com/yumlevi/spore-code/internal/proto"
 )
 
 // question represents a single question in a QUESTIONS: block or an

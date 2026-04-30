@@ -1,5 +1,5 @@
 // Package codeindex implements a per-project code graph: symbols, calls,
-// imports, and files. The index lives at <projectRoot>/.acorn/index.db
+// imports, and files. The index lives at <projectRoot>/.spore-code/index.db
 // and is the authoritative source for search_symbols / trace_calls /
 // get_snippet / architecture / impact tools the agent calls over WS.
 //
@@ -83,14 +83,14 @@ type Store struct {
 	root string
 }
 
-// Open opens (or creates) <root>/.acorn/index.db. If the existing file
+// Open opens (or creates) <root>/.spore-code/index.db. If the existing file
 // has a stale schema version, it is dropped and recreated so the agent
 // never sees half-migrated data.
 func Open(root string) (*Store, error) {
 	if root == "" {
 		return nil, errors.New("codeindex: root is required")
 	}
-	dir := filepath.Join(root, ".acorn")
+	dir := filepath.Join(root, ".spore-code")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("codeindex: mkdir .acorn: %w", err)
 	}

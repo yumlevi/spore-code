@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/yumlevi/acorn-cli/internal/codeindex"
+	"github.com/yumlevi/spore-code/internal/codeindex"
 )
 
 // ResolvePath enforces the cwd sandbox — tools may only touch paths inside
@@ -241,7 +241,7 @@ func asBool(v any, d bool) bool {
 	return d
 }
 
-// markCodeIndexDirty flags the freshly-written file in .acorn/index.db
+// markCodeIndexDirty flags the freshly-written file in .spore-code/index.db
 // so the next /index call re-parses it. Best-effort: silently no-ops
 // when the index doesn't exist or the path is outside cwd. Never
 // blocks the calling write — every file op that might've broken the
@@ -256,9 +256,9 @@ func markCodeIndexDirty(cwd, absPath string) {
 		return // outside cwd → not in our index
 	}
 	relPosix := filepath.ToSlash(rel)
-	// Cheap existence check — if .acorn/index.db isn't there, we
+	// Cheap existence check — if .spore-code/index.db isn't there, we
 	// haven't bootstrapped the index yet and there's nothing to dirty.
-	if _, err := os.Stat(filepath.Join(cwd, ".acorn", "index.db")); err != nil {
+	if _, err := os.Stat(filepath.Join(cwd, ".spore-code", "index.db")); err != nil {
 		return
 	}
 	store, err := codeindex.Open(cwd)

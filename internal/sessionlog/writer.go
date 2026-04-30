@@ -1,5 +1,5 @@
 // Package sessionlog ports acorn/session_writer.py — per-session JSONL at
-// ~/.acorn/sessions/<safe-id>.jsonl. Matches the Python file format so a
+// ~/.spore-code/sessions/<safe-id>.jsonl. Matches the Python file format so a
 // user can switch between the Python and Go CLIs and still see their
 // history in /resume.
 package sessionlog

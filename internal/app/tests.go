@@ -8,8 +8,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/yumlevi/acorn-cli/internal/proto"
-	"github.com/yumlevi/acorn-cli/internal/tools"
+	"github.com/yumlevi/spore-code/internal/proto"
+	"github.com/yumlevi/spore-code/internal/tools"
 )
 
 // /test exists so the user can exercise UI features that normally require

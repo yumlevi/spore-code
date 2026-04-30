@@ -82,7 +82,7 @@ var slashCatalog = []slashEntry{
 	{"/context refresh", "re-send project context on next message"},
 
 	{"/tree", "print the project file tree (default depth 3)"},
-	{"/init", "create ACORN.md template + add .acorn/ to .gitignore"},
+	{"/init", "create SPORE.md template + add .spore-code/ to .gitignore"},
 
 	// Panel visibility.
 	{"/panel", "toggle the right-column activity panel"},
@@ -100,8 +100,8 @@ var slashCatalog = []slashEntry{
 	{"/test all", "run all UI tests"},
 
 	// codeindex (v0.3.0+) — structural code search backed by the
-	// per-project SQLite index at .acorn/index.db.
-	{"/index", "build/refresh the per-project code index (.acorn/index.db)"},
+	// per-project SQLite index at .spore-code/index.db.
+	{"/index", "build/refresh the per-project code index (.spore-code/index.db)"},
 	{"/index force", "rebuild every file regardless of mtime"},
 	{"/architecture", "show clusters / hot paths / entry points / tech stack"},
 	{"/arch", "alias for /architecture"},

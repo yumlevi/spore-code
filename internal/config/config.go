@@ -1,6 +1,6 @@
 // Package config mirrors acorn/config.py — a global config at
-// ~/.acorn/config.toml with [connection] and [display] sections, plus an
-// optional per-project override at ./.acorn/config.toml.
+// ~/.spore-code/config.toml with [connection] and [display] sections, plus an
+// optional per-project override at ./.spore-code/config.toml.
 package config
 
 import (
@@ -63,14 +63,14 @@ func Load(cwd string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("home dir: %w", err)
 	}
-	globalDir := filepath.Join(home, ".acorn")
+	globalDir := filepath.Join(home, ".spore-code")
 	globalPath := filepath.Join(globalDir, "config.toml")
 
 	cfg := &Config{
 		Connection: ConnectionSection{Host: DefaultHost, Port: DefaultPort},
 		Display:    DisplaySection{Theme: DefaultTheme},
 		GlobalDir:  globalDir,
-		LocalDir:   filepath.Join(cwd, ".acorn"),
+		LocalDir:   filepath.Join(cwd, ".spore-code"),
 	}
 
 	if _, err := os.Stat(globalPath); err != nil {
@@ -140,10 +140,10 @@ auto_resume = %t
 	return os.WriteFile(path, []byte(out), 0o600)
 }
 
-// EnsureLocalDir creates ./.acorn/ with plans/ subdir, matching Python's
+// EnsureLocalDir creates ./.spore-code/ with plans/ subdir, matching Python's
 // ensure_local_dir.
 func EnsureLocalDir(cwd string) error {
-	p := filepath.Join(cwd, ".acorn", "plans")
+	p := filepath.Join(cwd, ".spore-code", "plans")
 	return os.MkdirAll(p, 0o755)
 }
 

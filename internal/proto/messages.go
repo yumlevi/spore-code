@@ -113,7 +113,7 @@ type ProjectContext struct {
 	GitStatus   string   `json:"gitStatus,omitempty"`   // git status --short, capped at 1KB
 	GitHash     string   `json:"gitHash,omitempty"`     // HEAD short hash, used as cache key
 	ProjectType string   `json:"projectType,omitempty"` // "Go", "Node.js", etc.
-	AcornMd     string   `json:"acornMd,omitempty"`     // ACORN.md contents, capped at 4KB
+	SporeMd     string   `json:"sporeMd,omitempty"`     // SPORE.md contents, capped at 4KB
 	Tree        []string `json:"tree,omitempty"`        // depth-2 paths only, no contents
 	Tools       []string `json:"tools,omitempty"`       // ["node", "go", "git", ...]
 	Mode        string   `json:"mode,omitempty"`        // "plan" | "execute" — replaces PlanPrefix glue
@@ -127,7 +127,7 @@ type ProjectContext struct {
 	// warning in the prompt. Toggled via /scope.
 	Scope string `json:"scope,omitempty"` // "strict" | "expanded"
 
-	// HasCodeIndex is true when <cwd>/.acorn/index.db exists and has
+	// HasCodeIndex is true when <cwd>/.spore-code/index.db exists and has
 	// rows. Drives the plan-mode Phase 2 prompt branch in the
 	// acorn-cli plugin: when true, agent prefers structural queries
 	// (search_symbols, trace_calls, get_snippet, architecture, impact)

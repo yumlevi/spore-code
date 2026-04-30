@@ -11,11 +11,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"golang.org/x/term"
 
-	"github.com/yumlevi/acorn-cli/internal/config"
-	"github.com/yumlevi/acorn-cli/internal/conn"
-	"github.com/yumlevi/acorn-cli/internal/proto"
-	"github.com/yumlevi/acorn-cli/internal/sessionlog"
-	"github.com/yumlevi/acorn-cli/internal/tools"
+	"github.com/yumlevi/spore-code/internal/config"
+	"github.com/yumlevi/spore-code/internal/conn"
+	"github.com/yumlevi/spore-code/internal/proto"
+	"github.com/yumlevi/spore-code/internal/sessionlog"
+	"github.com/yumlevi/spore-code/internal/tools"
 )
 
 // PlanPrefix — port of acorn/constants.py:PLAN_PREFIX. Prepended to the
@@ -266,7 +266,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case hookCodeViewMsg:
 		m.pushCodeView(msg.path, msg.content, msg.isNew)
 		// Auto-save helpers — when the agent has just written a file
-		// that matches a helper pattern (.acorn/scratch/*, gen_*.{py,
+		// that matches a helper pattern (.spore-code/scratch/*, gen_*.{py,
 		// sh,js,ts}, *_helper.*), ship the body to SPORE as a
 		// save_project_script:from_file WS frame so the next session
 		// can re-use it without the agent having to remember
@@ -1610,7 +1610,7 @@ func SlashHelp() string {
 		"/sessions — list saved sessions for this project",
 		"/context — show project context block (refresh: re-send next turn)",
 		"/tree [depth] — print the project file tree",
-		"/init — create ACORN.md + add .acorn/ to .gitignore",
+		"/init — create SPORE.md + add .spore-code/ to .gitignore",
 		"/panel [hide|show|toggle] — toggle the right-column activity panel",
 		"/scope [strict|expanded] — file-op sandbox (strict=cwd only, expanded=any path)",
 		"/delegate [default|off|research|code|all] — background delegation policy",

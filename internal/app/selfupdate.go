@@ -49,7 +49,7 @@ func installUpdateCmd(version string) tea.Cmd {
 			tag, _ = t, u
 		}
 		url := fmt.Sprintf(
-			"https://github.com/yumlevi/acorn-cli/releases/download/%s/acorn-%s-%s",
+			"https://github.com/yumlevi/spore-code/releases/download/%s/acorn-%s-%s",
 			tag, runtime.GOOS, runtime.GOARCH,
 		)
 		if runtime.GOOS == "windows" {

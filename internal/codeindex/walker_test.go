@@ -38,7 +38,7 @@ func TestWalkerSkipsNoiseDirs(t *testing.T) {
 		".pnpm-store/v3/foo.js",
 		"bower_components/jquery/jquery.js",
 		".turbo/cache/foo.ts",
-		".acorn/index.db",
+		".spore-code/index.db",
 		".gradle/caches/x.go",
 	}
 
@@ -105,14 +105,14 @@ func TestWalkerSkipsNoiseDirs(t *testing.T) {
 	}
 }
 
-// TestWalkerHonorsAcornignore confirms .acornignore overrides emit
+// TestWalkerHonorsSporeignore confirms .sporeignore overrides emit
 // the listed paths.
-func TestWalkerHonorsAcornignore(t *testing.T) {
+func TestWalkerHonorsSporeignore(t *testing.T) {
 	root := t.TempDir()
 	for _, p := range []string{"main.go", "secret.go"} {
 		_ = os.WriteFile(filepath.Join(root, p), []byte("package x\n"), 0o644)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".acornignore"), []byte("secret.go\n# comment\n\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".sporeignore"), []byte("secret.go\n# comment\n\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	var seen []string
@@ -122,6 +122,6 @@ func TestWalkerHonorsAcornignore(t *testing.T) {
 	})
 	sort.Strings(seen)
 	if len(seen) != 1 || seen[0] != "main.go" {
-		t.Errorf("expected only main.go (secret.go in .acornignore), got %v", seen)
+		t.Errorf("expected only main.go (secret.go in .sporeignore), got %v", seen)
 	}
 }

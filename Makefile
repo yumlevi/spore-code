@@ -1,16 +1,16 @@
-# Cross-compiles the acorn CLI for every supported target. Output goes to
-# ./dist/ as `acorn-<os>-<arch>[.exe]`. Strip debug info for smaller binaries.
+# Cross-compiles the Spore Code CLI for every supported target. Output
+# goes to ./dist/ as `spore-<os>-<arch>[.exe]`. Strip debug info for
+# smaller binaries.
 #
-# v0.6.0+ requires cgo (tree-sitter language grammars are vendored C
-# code that the smacker bindings link in). We use `zig cc` as the
-# C cross-compiler so a single Linux dev box can produce all 6 release
-# binaries without per-target gcc/clang toolchains. Linux targets link
-# against musl and emit fully-static binaries; macOS and Windows
-# targets emit standard cgo binaries (statically linked at the C-rt
-# layer; macOS still needs the host libSystem at runtime, but every
-# Mac ships it).
+# Requires cgo (tree-sitter language grammars are vendored C code that
+# the smacker bindings link in). We use `zig cc` as the C cross-compiler
+# so a single Linux dev box can produce all 6 release binaries without
+# per-target gcc/clang toolchains. Linux targets link against musl and
+# emit fully-static binaries; macOS and Windows targets emit standard
+# cgo binaries (statically linked at the C-rt layer; macOS still needs
+# the host libSystem at runtime, but every Mac ships it).
 
-BIN = acorn
+BIN = spore
 VERSION ?= 0.1.0
 LDFLAGS = -s -w -X main.version=$(VERSION)
 LDFLAGS_STATIC = $(LDFLAGS) -extldflags '-static'
@@ -33,7 +33,7 @@ all: build
 # Local dev build — uses host gcc/cc + cgo. zig works too if you set
 # CC=zig cc explicitly.
 build:
-	CGO_ENABLED=1 go build -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/acorn
+	CGO_ENABLED=1 go build -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/spore
 
 run: build
 	./$(BIN)
@@ -69,7 +69,7 @@ release-one:
 	GOOS=$(GOOS) GOARCH=$(GOARCH) CGO_ENABLED=1 \
 	    CC="zig cc -target $(ZIG_TARGET)" \
 	    CXX="zig c++ -target $(ZIG_TARGET)" \
-	    go build -ldflags "$(LDFLAGS) $$extflags" -o $$out ./cmd/acorn
+	    go build -ldflags "$(LDFLAGS) $$extflags" -o $$out ./cmd/spore
 
 install: build
 	install -Dm755 $(BIN) $${HOME}/.local/bin/$(BIN)

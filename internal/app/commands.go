@@ -10,9 +10,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/yumlevi/acorn-cli/internal/codeindex"
-	"github.com/yumlevi/acorn-cli/internal/conn"
-	"github.com/yumlevi/acorn-cli/internal/tools"
+	"github.com/yumlevi/spore-code/internal/codeindex"
+	"github.com/yumlevi/spore-code/internal/conn"
+	"github.com/yumlevi/spore-code/internal/tools"
 )
 
 // slashHandler is the signature every slash command implements. The
@@ -95,7 +95,7 @@ func SlashHelpFromRegistry() string {
 //
 // /context — show the gathered project context block + offer to refresh.
 // /tree    — print a depth-limited file tree.
-// /init    — write ACORN.md template + add .acorn/ to .gitignore.
+// /init    — write SPORE.md template + add .spore-code/ to .gitignore.
 // /help    — overrides update.go's static /help with the registry view.
 
 func cmdContext(m *Model, args []string) (tea.Model, tea.Cmd) {
@@ -120,27 +120,27 @@ func cmdTree(m *Model, args []string) (tea.Model, tea.Cmd) {
 }
 
 func cmdInit(m *Model, args []string) (tea.Model, tea.Cmd) {
-	path := filepath.Join(m.cwd, "ACORN.md")
+	path := filepath.Join(m.cwd, "SPORE.md")
 	if _, err := os.Stat(path); err == nil {
-		m.pushChat("system", "ACORN.md already exists at "+path)
+		m.pushChat("system", "SPORE.md already exists at "+path)
 		return m, nil
 	}
-	body := "# Project Instructions for Acorn\n\n" +
-		"<!-- Add project-specific context here. Acorn sends this to the agent. -->\n\n" +
+	body := "# Project Instructions for Spore Code\n\n" +
+		"<!-- Add project-specific context here. Spore Code sends this to the agent. -->\n\n" +
 		"## Overview\n\n## Conventions\n\n## Important files\n"
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		m.pushChat("system", "Failed to write ACORN.md: "+err.Error())
+		m.pushChat("system", "Failed to write SPORE.md: "+err.Error())
 		return m, nil
 	}
 	m.pushChat("system", "Created "+path)
 	gi := filepath.Join(m.cwd, ".gitignore")
 	if _, err := os.Stat(gi); err == nil {
-		if cur, err := os.ReadFile(gi); err == nil && !strings.Contains(string(cur), ".acorn/") {
+		if cur, err := os.ReadFile(gi); err == nil && !strings.Contains(string(cur), ".spore-code/") {
 			f, err := os.OpenFile(gi, os.O_WRONLY|os.O_APPEND, 0o644)
 			if err == nil {
-				_, _ = f.WriteString("\n# Acorn local data\n.acorn/\n")
+				_, _ = f.WriteString("\n# Spore Code local data\n.spore-code/\n")
 				_ = f.Close()
-				m.pushChat("system", "Added .acorn/ to .gitignore")
+				m.pushChat("system", "Added .spore-code/ to .gitignore")
 			}
 		}
 	}
@@ -157,7 +157,7 @@ func cmdHelp(m *Model, _ []string) (tea.Model, tea.Cmd) {
 func treeString(root string, maxDepth, maxEntries int) string {
 	skipDirs := map[string]struct{}{
 		".git": {}, "node_modules": {}, ".venv": {}, "venv": {},
-		"__pycache__": {}, "dist": {}, "build": {}, ".acorn": {},
+		"__pycache__": {}, "dist": {}, "build": {}, ".spore-code": {},
 		"target": {}, ".next": {}, ".cache": {},
 	}
 	var b strings.Builder
@@ -376,7 +376,7 @@ func init() {
 	})
 	register(&slashCmd{
 		Name:    "/init",
-		Help:    "Create ACORN.md template + add .acorn/ to .gitignore",
+		Help:    "Create SPORE.md template + add .spore-code/ to .gitignore",
 		Handler: cmdInit,
 	})
 	register(&slashCmd{
@@ -397,10 +397,10 @@ func init() {
 
 	// codeindex slash commands — thin wrappers over the local tools
 	// dispatched by Executor.Execute. All are read/index-only against
-	// .acorn/index.db.
+	// .spore-code/index.db.
 	register(&slashCmd{
 		Name:    "/index",
-		Help:    "Build the per-project code index (.acorn/index.db). 'force' re-indexes everything.",
+		Help:    "Build the per-project code index (.spore-code/index.db). 'force' re-indexes everything.",
 		Handler: cmdIndex,
 	})
 	register(&slashCmd{
@@ -472,7 +472,7 @@ func runCodeindexAsync(label, cwd string, fn func(string) any) tea.Cmd {
 // absolute, both accepted) looks like a helper script the agent
 // wrote and should be saved to the graph for re-use across sessions.
 // Matches:
-//   - anything under `.acorn/scratch/` (the explicit helper dir)
+//   - anything under `.spore-code/scratch/` (the explicit helper dir)
 //   - `gen_*.{py,sh,js,ts,go,rb}` at the project root
 //   - `*-helper.*` / `*_helper.*` / `print_*.{py,sh}` / `dump_*.{py,sh}`
 //
@@ -485,8 +485,8 @@ func helperPathPatterns(path string) bool {
 	base := filepath.Base(p)
 	dir := filepath.ToSlash(filepath.Dir(p))
 
-	// .acorn/scratch/* — definitive.
-	if strings.Contains(dir, "/.acorn/scratch") || strings.HasSuffix(dir, ".acorn/scratch") {
+	// .spore-code/scratch/* — definitive.
+	if strings.Contains(dir, "/.spore-code/scratch") || strings.HasSuffix(dir, ".spore-code/scratch") {
 		return true
 	}
 
@@ -657,7 +657,7 @@ func autoSaveHelperIfMatch(client *conn.Client, cwd, sessionID, userName, path, 
 
 // autoRecordScriptOutcome inspects an `exec` tool call's input +
 // result. If the command line references a saved-helper path
-// (.acorn/scratch/<name>.<ext>, gen_<name>.<ext>, etc.), the CLI
+// (.spore-code/scratch/<name>.<ext>, gen_<name>.<ext>, etc.), the CLI
 // fires a `record_script_outcome:from_exec` WS frame so the
 // matching script: node's success_count / fail_count tracks
 // reality without the agent having to call record_script_outcome.
@@ -711,8 +711,8 @@ func scriptNamesInCommand(cmd string) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, t := range toks {
-		// Strip leading "./" or "/" prefixes so .acorn/scratch/foo.py
-		// matches both ".acorn/scratch/foo.py" and "./.acorn/scratch/foo.py".
+		// Strip leading "./" or "/" prefixes so .spore-code/scratch/foo.py
+		// matches both ".spore-code/scratch/foo.py" and "./.spore-code/scratch/foo.py".
 		clean := strings.TrimPrefix(strings.TrimPrefix(t, "./"), "/")
 		if !helperPathPatterns(clean) {
 			continue
@@ -769,7 +769,7 @@ func isExecResultOK(result any) bool {
 }
 
 // autoMirrorCodeGraph computes the architecture summary from the
-// freshly-updated .acorn/index.db and pushes it to the SPORE-side
+// freshly-updated .spore-code/index.db and pushes it to the SPORE-side
 // acorn-cli plugin via a `code_graph:summary` WS frame. The plugin
 // writes the summary onto the project node's `code_graph` aspect,
 // so subsequent sessions on this project (or fresh laptops, or

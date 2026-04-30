@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/yumlevi/acorn-cli/internal/codeindex"
+	"github.com/yumlevi/spore-code/internal/codeindex"
 )
 
 // verify_implementation — goal-backward check of "is this symbol

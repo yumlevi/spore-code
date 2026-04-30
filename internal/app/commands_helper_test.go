@@ -13,21 +13,21 @@ func TestScriptNamesInCommand(t *testing.T) {
 		want []string
 	}{
 		// Linux-style paths.
-		{"python3 .acorn/scratch/gen_qr.py", []string{"qr"}},
+		{"python3 .spore-code/scratch/gen_qr.py", []string{"qr"}},
 		{"./gen_qr.py", []string{"qr"}},
-		{"bash .acorn/scratch/lan_helper.sh", []string{"lan-helper"}}, // _helper suffix kept; only gen_/print_/dump_ prefixes are stripped
+		{"bash .spore-code/scratch/lan_helper.sh", []string{"lan-helper"}}, // _helper suffix kept; only gen_/print_/dump_ prefixes are stripped
 		// Windows-style paths get normalized via ReplaceAll.
 		{`C:\Users\esfle\proj\.acorn\scratch\gen_qr.py`, []string{"qr"}},
 		{`uv run --with qrcode python .acorn\scratch\gen_qr.py`, []string{"qr"}},
 		// Multiple helpers in one command line.
-		{`python3 .acorn/scratch/gen_qr.py && bash dump_logs.sh`, []string{"qr", "logs"}}, // gen_ + dump_ prefixes stripped
+		{`python3 .spore-code/scratch/gen_qr.py && bash dump_logs.sh`, []string{"qr", "logs"}}, // gen_ + dump_ prefixes stripped
 		// Same helper twice → deduped.
-		{`python3 .acorn/scratch/gen_qr.py; python3 .acorn/scratch/gen_qr.py`, []string{"qr"}},
+		{`python3 .spore-code/scratch/gen_qr.py; python3 .spore-code/scratch/gen_qr.py`, []string{"qr"}},
 		// Non-helper paths → no matches.
 		{"npx expo start --lan", nil},
 		{"netstat -ano | findstr :8081", nil},
 		{"curl http://localhost:8081/status", nil},
-		{`type C:\Users\esfle\proj\.acorn\logs\bg-3.log`, nil}, // .acorn/logs ≠ .acorn/scratch
+		{`type C:\Users\esfle\proj\.acorn\logs\bg-3.log`, nil}, // .spore-code/logs ≠ .spore-code/scratch
 		// Edge: empty / whitespace.
 		{"", nil},
 		{"   ", nil},

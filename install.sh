@@ -1,20 +1,20 @@
 #!/usr/bin/env sh
-# acorn — one-liner installer for Linux & macOS.
+# Spore Code — one-liner installer for Linux & macOS.
 #
-#   curl -fsSL https://acorn.yumlevi.com/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/yumlevi/spore-code/main/install.sh | sh
 #
 # Optional overrides (pass before the pipe):
-#   ACORN_VERSION=v0.4.2  pin a specific release tag
-#   ACORN_DIR=/usr/local/bin  install to a different directory
+#   SPORE_CODE_VERSION=v1.0.0    pin a specific release tag
+#   SPORE_CODE_DIR=/usr/local/bin install to a different directory
 #
 # Re-running upgrades in place. Same script handles a fresh install
-# and an upgrade — no extra `acorn upgrade` command needed.
+# and an upgrade — no extra `spore upgrade` command needed.
 
 set -eu
 
-REPO="yumlevi/acorn-cli"
-VERSION="${ACORN_VERSION:-latest}"
-BIN="acorn"
+REPO="yumlevi/spore-code"
+VERSION="${SPORE_CODE_VERSION:-${ACORN_VERSION:-latest}}"  # ACORN_VERSION accepted as legacy fallback
+BIN="spore"
 
 # ── pretty output (best-effort; falls back to plain text without TTY) ──
 if [ -t 1 ]; then
@@ -39,7 +39,7 @@ case "$os" in
   darwin)  ;;
   msys*|mingw*|cygwin*)
     die "Detected Git-Bash / WSL — use the PowerShell installer instead:
-     irm https://acorn.yumlevi.com/install.ps1 | iex" ;;
+     irm https://raw.githubusercontent.com/yumlevi/spore-code/main/install.ps1 | iex" ;;
   *) die "Unsupported OS: $os" ;;
 esac
 
@@ -75,7 +75,7 @@ asset_url="https://github.com/$REPO/releases/download/$VERSION/$BIN-$os-$arch"
 [ "$VERSION" = "latest" ] && asset_url="https://github.com/$REPO/releases/latest/download/$BIN-$os-$arch"
 
 # ── pick install dir ──
-dest_dir="${ACORN_DIR:-$HOME/.local/bin}"
+dest_dir="${SPORE_CODE_DIR:-${ACORN_DIR:-$HOME/.local/bin}}"
 mkdir -p "$dest_dir" || die "Cannot create $dest_dir"
 dest="$dest_dir/$BIN"
 
@@ -84,7 +84,7 @@ dest="$dest_dir/$BIN"
 tmp="$(mktemp "${TMPDIR:-/tmp}/$BIN.XXXXXX")" || die "mktemp failed"
 trap 'rm -f "$tmp"' EXIT INT TERM
 
-say "Downloading acorn ${C_BOLD}$VERSION${C_RESET} for $os/$arch"
+say "Downloading spore ${C_BOLD}$VERSION${C_RESET} for $os/$arch"
 warn "$asset_url"
 if ! fetch "$asset_url" "$tmp"; then
   die "Download failed — check the URL above and your network."
@@ -110,7 +110,7 @@ chmod +x "$tmp"
 if [ -e "$dest" ]; then
   say "Replacing existing $dest"
 fi
-mv -f "$tmp" "$dest" || die "Could not write $dest (try: ACORN_DIR=/usr/local/bin sudo …)"
+mv -f "$tmp" "$dest" || die "Could not write $dest (try: SPORE_CODE_DIR=/usr/local/bin sudo …)"
 trap - EXIT
 
 ok "Installed to $dest"
@@ -131,5 +131,5 @@ case ":$PATH:" in
     ;;
 esac
 
-printf "\n%sRun %sacorn%s to start. First launch walks you through setup.%s\n" \
+printf "\n%sRun %sspore%s to start. First launch walks you through setup.%s\n" \
   "$C_DIM" "$C_BOLD" "$C_RESET$C_DIM" "$C_RESET"

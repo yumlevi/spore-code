@@ -1,4 +1,4 @@
-module github.com/yumlevi/acorn-cli
+module github.com/yumlevi/spore-code
 
 go 1.25.0
 

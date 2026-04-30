@@ -1,19 +1,21 @@
-# acorn — one-liner installer for Windows.
+# Spore Code — one-liner installer for Windows.
 #
-#   irm https://acorn.yumlevi.com/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/yumlevi/spore-code/main/install.ps1 | iex
 #
 # Optional overrides (set before the pipe):
-#   $env:ACORN_VERSION = 'v0.4.2'   # pin a specific release tag
-#   $env:ACORN_DIR     = 'C:\tools' # install to a different directory
+#   $env:SPORE_CODE_VERSION = 'v1.0.0'  # pin a specific release tag
+#   $env:SPORE_CODE_DIR     = 'C:\tools' # install to a different directory
 #
 # Re-running upgrades in place. Same script handles install + upgrade.
 
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$Repo    = 'yumlevi/acorn-cli'
-$Version = if ($env:ACORN_VERSION) { $env:ACORN_VERSION } else { 'latest' }
-$BinName = 'acorn.exe'
+$Repo    = 'yumlevi/spore-code'
+$Version = if ($env:SPORE_CODE_VERSION) { $env:SPORE_CODE_VERSION }
+           elseif ($env:ACORN_VERSION) { $env:ACORN_VERSION }   # legacy fallback
+           else { 'latest' }
+$BinName = 'spore.exe'
 
 function Write-Step([string]$msg) { Write-Host "→ $msg" -ForegroundColor Cyan }
 function Write-Ok  ([string]$msg) { Write-Host "✓ $msg" -ForegroundColor Green }
@@ -31,7 +33,7 @@ switch -regex ($env:PROCESSOR_ARCHITECTURE) {
 if ($Version -eq 'latest') {
   try {
     $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" `
-      -Headers @{ 'User-Agent' = 'acorn-installer' }
+      -Headers @{ 'User-Agent' = 'spore-code-installer' }
     if ($rel.tag_name) { $Version = $rel.tag_name }
   } catch {
     Write-Hint "Could not resolve 'latest' tag — will use the latest-redirect URL anyway."
@@ -39,28 +41,30 @@ if ($Version -eq 'latest') {
 }
 
 # ── pick install dir ──
-if ($env:ACORN_DIR) {
-  $DestDir = $env:ACORN_DIR
+if ($env:SPORE_CODE_DIR) {
+  $DestDir = $env:SPORE_CODE_DIR
+} elseif ($env:ACORN_DIR) {
+  $DestDir = $env:ACORN_DIR  # legacy fallback
 } else {
-  $DestDir = Join-Path $env:USERPROFILE '.acorn\bin'
+  $DestDir = Join-Path $env:USERPROFILE '.spore-code\bin'
 }
 [void](New-Item -ItemType Directory -Path $DestDir -Force)
 $DestPath = Join-Path $DestDir $BinName
 
 $AssetUrl = if ($Version -eq 'latest') {
-  "https://github.com/$Repo/releases/latest/download/acorn-windows-$arch.exe"
+  "https://github.com/$Repo/releases/latest/download/spore-windows-$arch.exe"
 } else {
-  "https://github.com/$Repo/releases/download/$Version/acorn-windows-$arch.exe"
+  "https://github.com/$Repo/releases/download/$Version/spore-windows-$arch.exe"
 }
 
 # ── download → temp → verify → atomic move ──
-$Tmp = Join-Path $env:TEMP ("acorn-" + [Guid]::NewGuid().ToString('N') + '.exe')
+$Tmp = Join-Path $env:TEMP ("spore-" + [Guid]::NewGuid().ToString('N') + '.exe')
 
-Write-Step "Downloading acorn $Version for windows/$arch"
+Write-Step "Downloading spore $Version for windows/$arch"
 Write-Hint $AssetUrl
 
 try {
-  Invoke-WebRequest -Uri $AssetUrl -OutFile $Tmp -UseBasicParsing -Headers @{ 'User-Agent' = 'acorn-installer' }
+  Invoke-WebRequest -Uri $AssetUrl -OutFile $Tmp -UseBasicParsing -Headers @{ 'User-Agent' = 'spore-code-installer' }
 } catch {
   Die "Download failed: $($_.Exception.Message)"
 }
@@ -74,7 +78,7 @@ if (-not ($head[0] -eq 0x4D -and $head[1] -eq 0x5A)) {
   Die "Downloaded file isn't a Windows binary (asset missing for this platform?)"
 }
 
-# If a previous acorn.exe is in place, Windows can't replace a running
+# If a previous spore.exe is in place, Windows can't replace a running
 # image — rename it aside first. Falls back to a stale .old file the
 # user can delete next reboot.
 if (Test-Path $DestPath) {
@@ -84,7 +88,7 @@ if (Test-Path $DestPath) {
   try {
     Move-Item $DestPath $Backup -Force
   } catch {
-    Die "Couldn't move the existing acorn.exe aside (is it open in another terminal? close acorn and retry)."
+    Die "Couldn't move the existing spore.exe aside (is it open in another terminal? close spore and retry)."
   }
 }
 
@@ -115,5 +119,5 @@ if (-not $onPath) {
 
 Write-Host ""
 Write-Host "Run " -NoNewline -ForegroundColor DarkGray
-Write-Host "acorn" -NoNewline -ForegroundColor White
+Write-Host "spore" -NoNewline -ForegroundColor White
 Write-Host " in a new terminal to start. First launch walks you through setup." -ForegroundColor DarkGray

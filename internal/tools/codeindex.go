@@ -10,11 +10,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/yumlevi/acorn-cli/internal/codeindex"
+	"github.com/yumlevi/spore-code/internal/codeindex"
 )
 
 // codeindex tool surface (M1):
-//   index_codebase   — walk cwd, parse, populate .acorn/index.db
+//   index_codebase   — walk cwd, parse, populate .spore-code/index.db
 //   search_symbols   — name/kind/file/language filters against the index
 //   get_snippet      — return source lines for a symbol (qname or file:line range)
 //   architecture     — clusters/entry-points/hot-paths/tech-stack summary

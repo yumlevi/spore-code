@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yumlevi/acorn-cli/internal/bg"
+	"github.com/yumlevi/spore-code/internal/bg"
 )
 
 // Server-side tools: we must NOT claim these; signal fallback by returning
@@ -48,7 +48,7 @@ var localTools = map[string]bool{
 	// web_fetch left to server.
 
 	// codeindex (M1): structural code search backed by a per-project
-	// SQLite index at <cwd>/.acorn/index.db. See internal/codeindex/.
+	// SQLite index at <cwd>/.spore-code/index.db. See internal/codeindex/.
 	"index_codebase": true,
 	"search_symbols": true,
 	"get_snippet":    true,

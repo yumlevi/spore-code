@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yumlevi/acorn-cli/internal/bg"
+	"github.com/yumlevi/spore-code/internal/bg"
 )
 
 // dangerousPatterns — exact substrings we refuse to run. Mirror
@@ -165,7 +165,7 @@ func Exec(input map[string]any, cwd string, logDir string, pm *bg.Manager, on fu
 	}
 	inactivity := time.Duration(timeoutMs) * time.Millisecond
 
-	// Log file setup — .acorn/logs/<ts>.log.
+	// Log file setup — .spore-code/logs/<ts>.log.
 	var logPath string
 	var logW *os.File
 	if logDir != "" {

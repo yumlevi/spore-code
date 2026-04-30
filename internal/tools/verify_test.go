@@ -19,13 +19,13 @@ func TestVerifyImplementation(t *testing.T) {
 	exe := New(allowAllPerms{}, root, logDir)
 
 	// Reset prior index so the test runs deterministically.
-	_ = os.Remove(filepath.Join(root, ".acorn", "index.db"))
-	_ = os.Remove(filepath.Join(root, ".acorn", "index.db-shm"))
-	_ = os.Remove(filepath.Join(root, ".acorn", "index.db-wal"))
+	_ = os.Remove(filepath.Join(root, ".spore-code", "index.db"))
+	_ = os.Remove(filepath.Join(root, ".spore-code", "index.db-shm"))
+	_ = os.Remove(filepath.Join(root, ".spore-code", "index.db-wal"))
 	t.Cleanup(func() {
-		_ = os.Remove(filepath.Join(root, ".acorn", "index.db"))
-		_ = os.Remove(filepath.Join(root, ".acorn", "index.db-shm"))
-		_ = os.Remove(filepath.Join(root, ".acorn", "index.db-wal"))
+		_ = os.Remove(filepath.Join(root, ".spore-code", "index.db"))
+		_ = os.Remove(filepath.Join(root, ".spore-code", "index.db-shm"))
+		_ = os.Remove(filepath.Join(root, ".spore-code", "index.db-wal"))
 	})
 
 	// Build a fresh Go-only index.

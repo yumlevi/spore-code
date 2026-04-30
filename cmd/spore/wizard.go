@@ -16,21 +16,41 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/yumlevi/acorn-cli/internal/app"
-	"github.com/yumlevi/acorn-cli/internal/config"
+	"github.com/yumlevi/spore-code/internal/app"
+	"github.com/yumlevi/spore-code/internal/config"
 )
 
 // runSetupWizard is the Go port of acorn/config.py:run_setup_wizard.
-// Writes ~/.acorn/config.toml. Tests auth with the entered host/port/key
+// Writes ~/.spore-code/config.toml. Tests auth with the entered host/port/key
 // before saving, offering the user a chance to continue anyway on failure.
 func runSetupWizard() (*config.Config, error) {
 	rd := bufio.NewReader(os.Stdin)
 	home, _ := os.UserHomeDir()
-	globalDir := filepath.Join(home, ".acorn")
+	globalDir := filepath.Join(home, ".spore-code")
+
+	// One-shot migration: legacy ~/.acorn/ → ~/.spore-code/. If the new
+	// global dir doesn't exist yet but the old one does, copy contents
+	// over and leave a MIGRATED.md breadcrumb so the operator can find
+	// the old data if anything seems off after the rename. Best-effort:
+	// failures here just mean the user goes through fresh setup.
+	if home != "" {
+		legacyDir := filepath.Join(home, ".acorn")
+		if _, err := os.Stat(globalDir); os.IsNotExist(err) {
+			if _, err := os.Stat(legacyDir); err == nil {
+				if err := copyDirRecursive(legacyDir, globalDir); err == nil {
+					_ = os.WriteFile(filepath.Join(legacyDir, "MIGRATED.md"),
+						[]byte("# Migrated to ~/.spore-code/\n\nSpore Code (formerly acorn) renamed its global config dir to ~/.spore-code/.\nContents of this directory were copied there on the first run of `spore`. You can safely delete this directory once you've confirmed the new location works.\n"),
+						0o644)
+					fmt.Println()
+					fmt.Println("Migrated ~/.acorn/ → ~/.spore-code/  (legacy dir kept; see ~/.acorn/MIGRATED.md)")
+				}
+			}
+		}
+	}
 
 	fmt.Println()
 	fmt.Println("╔════════════════════════════════════════╗")
-	fmt.Println("║  Acorn — first-time setup               ║")
+	fmt.Println("║  Spore Code — first-time setup          ║")
 	fmt.Println("╚════════════════════════════════════════╝")
 	fmt.Println()
 
@@ -197,4 +217,37 @@ func testAuth(host string, port int, user, key string) error {
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	return nil
+}
+
+
+// copyDirRecursive copies src → dst, creating dst if needed. Used for
+// the one-shot ~/.acorn/ → ~/.spore-code/ migration on first run after
+// the rebrand. Best-effort: errors propagate up so the wizard can fall
+// through to fresh setup if the copy fails.
+func copyDirRecursive(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, info.Mode())
+		}
+		// Skip the breadcrumb file if a previous run already wrote it.
+		if filepath.Base(path) == "MIGRATED.md" {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, info.Mode())
+	})
 }

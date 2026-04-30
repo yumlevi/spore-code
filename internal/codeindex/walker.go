@@ -33,7 +33,7 @@ var noiseDirs = map[string]struct{}{
 	"out":              {}, // common JS/Java output dir
 	".next":            {},
 	".cache":           {},
-	".acorn":           {},
+	".spore-code":           {},
 	"vendor":           {},
 	".gradle":          {},
 	".mvn":             {},
@@ -116,7 +116,7 @@ func Walk(opts WalkOptions, yield func(FileEntry) bool) error {
 		return fmt.Errorf("codeindex: abs root: %w", err)
 	}
 
-	ignored := loadAcornIgnore(root)
+	ignored := loadSporeIgnore(root)
 	for _, p := range opts.ExtraIgnoreFiles {
 		ignored[filepath.ToSlash(p)] = struct{}{}
 	}
@@ -203,14 +203,14 @@ func Walk(opts WalkOptions, yield func(FileEntry) bool) error {
 	return nil
 }
 
-// loadAcornIgnore reads <root>/.acornignore (one path per line, # for
+// loadSporeIgnore reads <root>/.sporeignore (one path per line, # for
 // comments, blank lines ignored) into a set of repo-relative posix paths.
 // Patterns are exact path matches — this is intentionally simple; if
 // pattern globbing is wanted, .gitignore handles most of the cases via
 // the noise-dir filter and explicit project conventions.
-func loadAcornIgnore(root string) map[string]struct{} {
+func loadSporeIgnore(root string) map[string]struct{} {
 	out := map[string]struct{}{}
-	f, err := os.Open(filepath.Join(root, ".acornignore"))
+	f, err := os.Open(filepath.Join(root, ".sporeignore"))
 	if err != nil {
 		return out
 	}
