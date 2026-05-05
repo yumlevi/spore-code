@@ -8,7 +8,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/yumlevi/spore-code/internal/proto"
 )
@@ -31,7 +30,7 @@ func (m *Model) openPlanModal(text string) {
 	m.Broadcast("plan:show-approval", map[string]any{"text": preview})
 }
 
-func (pm *planModal) view(w, h int) string {
+func (pm *planModal) view(w, h int, t Theme) string {
 	// Inline render: the plan text itself is already in the chat
 	// history above (the assistant's reply is what triggered this
 	// modal), so we drop the embedded preview and just show the
@@ -39,11 +38,11 @@ func (pm *planModal) view(w, h int) string {
 	// the user reads the plan in the chat scrollback, picks an
 	// action below.
 	var lines []string
-	lines = append(lines, accentStyle.Bold(true).Render("Plan Ready")+mutedStyle.Render("  — review the plan above and choose:"))
+	lines = append(lines, t.accent(true).Render("Plan Ready")+t.muted().Render("  — review the plan above and choose:"))
 	if pm.noting {
 		lines = append(lines,
 			"Feedback for the agent (enter submits, esc cancels):",
-			borderStyle.Render(pm.feedback+"▌"),
+			borderStyle.Copy().BorderForeground(t.Accent2).Render(pm.feedback+"▌"),
 		)
 	} else {
 		choices := []struct{ label, desc string }{
@@ -56,16 +55,16 @@ func (pm *planModal) view(w, h int) string {
 			label := c.label
 			if i == pm.selected {
 				cursor = "▸ "
-				label = accentStyle.Bold(true).Render(c.label)
+				label = t.accent(true).Render(c.label)
 			}
-			lines = append(lines, cursor+label+mutedStyle.Render("  "+c.desc))
+			lines = append(lines, cursor+label+t.muted().Render("  "+c.desc))
 		}
-		lines = append(lines, mutedStyle.Render(" ↑↓ select · enter confirm · esc cancel"))
+		lines = append(lines, t.muted().Render(" ↑↓ select · enter confirm · esc cancel"))
 	}
 
 	boxW := w - 2
 	return borderStyle.Copy().
-		BorderForeground(lipgloss.Color("#8b6cf7")).
+		BorderForeground(t.Accent).
 		Width(boxW).
 		Padding(0, 1).
 		Render(strings.Join(lines, "\n"))

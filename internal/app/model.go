@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -328,8 +329,23 @@ func historyKey(role, text string) string {
 
 func (m *Model) Init() tea.Cmd {
 	m.client = conn.New(m.cfg.Connection.Host, m.cfg.Connection.Port, m.cfg.Connection.User, m.cfg.Connection.Key)
-	m.client.OnConnected = func() {}
-	m.client.OnDisconnected = func() {}
+	var reconnecting atomic.Bool
+	m.client.OnConnected = func() {
+		if reconnecting.Swap(false) && m.sendProgramMsg != nil {
+			m.sendProgramMsg(connReconnectedMsg{})
+		}
+	}
+	m.client.OnDisconnected = func() {
+		if m.sendProgramMsg != nil {
+			m.sendProgramMsg(connDisconnectedMsg{})
+		}
+	}
+	m.client.OnReconnecting = func(attempt int) {
+		reconnecting.Store(true)
+		if m.sendProgramMsg != nil {
+			m.sendProgramMsg(connReconnectingMsg{attempt: attempt})
+		}
+	}
 	if m.dlog != nil {
 		m.client.Logger = func(level, tag, msg string) {
 			switch level {
@@ -420,6 +436,9 @@ func (m *Model) toolCmd() tea.Cmd {
 type connOpenMsg struct{}
 type connErrorMsg struct{ err string }
 type connClosedMsg struct{}
+type connDisconnectedMsg struct{}
+type connReconnectingMsg struct{ attempt int }
+type connReconnectedMsg struct{}
 type wsFrameMsg struct{ frame conn.Frame }
 type toolHandledMsg struct{ name string }
 type spinnerTickMsg struct{}
@@ -492,6 +511,36 @@ func (m *Model) streamMsg() *chatMsg {
 		return nil
 	}
 	return &m.messages[m.currentStreamIdx]
+}
+
+// displayFlag returns a display toggle with a default. Nil config pointers
+// mean "not explicitly configured", so callers get the documented default.
+func (m *Model) displayFlag(p *bool, def bool) bool {
+	if p == nil {
+		return def
+	}
+	return *p
+}
+
+func (m *Model) showThinking() bool {
+	if m == nil || m.cfg == nil {
+		return true
+	}
+	return m.displayFlag(m.cfg.Display.ShowThinking, true)
+}
+
+func (m *Model) showTools() bool {
+	if m == nil || m.cfg == nil {
+		return true
+	}
+	return m.displayFlag(m.cfg.Display.ShowTools, true)
+}
+
+func (m *Model) showUsage() bool {
+	if m == nil || m.cfg == nil {
+		return true
+	}
+	return m.displayFlag(m.cfg.Display.ShowUsage, true)
 }
 
 func (m *Model) startStream() {

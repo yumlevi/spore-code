@@ -37,15 +37,6 @@ var localTools = map[string]bool{
 	"edit_file":  true,
 	"glob":       true,
 	"grep":       true,
-	// web_serve runs locally so the user's LAN actually reaches the
-	// hosted dir. The server-side version serves /workspace inside
-	// the SPORE container — useless for "show me a QR code on my
-	// phone" workflows. Local action=start/stop/status only;
-	// action=backend (vault-key injection / Traefik proxy) stays
-	// server-only and falls back when the user explicitly requests
-	// that flavor (or has no acorn CLI connected).
-	"web_serve": true,
-	// web_fetch left to server.
 
 	// codeindex (M1): structural code search backed by a per-project
 	// SQLite index at <cwd>/.spore-code/index.db. See internal/codeindex/.
@@ -109,14 +100,14 @@ type Executor struct {
 	// Scope mirrors Model.scope — "" / "strict" enforces the cwd
 	// sandbox in fileops; "expanded" lifts it. Set by app/update.go
 	// whenever /scope changes.
-	Scope      string
-	Hooks      Hooks
-	BG         *bg.Manager
+	Scope string
+	Hooks Hooks
+	BG    *bg.Manager
 
 	// Track the one currently-running child for /stop handling. Go's
 	// context.CancelFunc replaces the Python _current_proc.kill() pattern.
-	mu     sync.Mutex
-	abort  func()
+	mu    sync.Mutex
+	abort func()
 }
 
 func New(perms Permissions, cwd, logDir string) *Executor {
@@ -216,14 +207,6 @@ func (e *Executor) Execute(name string, inputRaw json.RawMessage) (result any, c
 		return Grep(input, e.CWD), true
 	case "exec":
 		return Exec(input, e.CWD, e.LogDir, e.BG, e.Hooks.OnExecLine), true
-	case "web_serve":
-		// Disabled for acorn sessions — claim ALL actions (including
-		// action=backend) and refuse with a clear "use exec instead"
-		// error. Letting action=backend fall through would route to
-		// SPORE's server-side _webServeTool which runs inside the
-		// container — meaningless when the agent's intent is to host
-		// something on the user's machine.
-		return WebServe(input, e.CWD, e.Scope), true
 
 	// codeindex (M1)
 	case "index_codebase":

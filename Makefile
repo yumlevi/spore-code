@@ -4,7 +4,7 @@
 #
 # Requires cgo (tree-sitter language grammars are vendored C code that
 # the smacker bindings link in). We use `zig cc` as the C cross-compiler
-# so a single Linux dev box can produce all 6 release binaries without
+# so a single Linux dev box can produce the supported release binaries without
 # per-target gcc/clang toolchains. Linux targets link against musl and
 # emit fully-static binaries; macOS and Windows targets emit standard
 # cgo binaries (statically linked at the C-rt layer; macOS still needs
@@ -14,6 +14,7 @@ BIN = spore
 VERSION ?= $(shell scripts/version.sh)
 GO ?= go
 ZIG ?= zig
+INCLUDE_DARWIN ?= 0
 LDFLAGS = -s -w -X main.version=$(VERSION)
 LDFLAGS_STATIC = $(LDFLAGS) -extldflags '-static'
 
@@ -59,10 +60,12 @@ release: clean
 	mkdir -p dist
 	@$(MAKE) --no-print-directory release-one GOOS=linux   GOARCH=amd64 ZIG_TARGET=$(ZIG_LINUX_AMD64)   STATIC=1
 	@$(MAKE) --no-print-directory release-one GOOS=linux   GOARCH=arm64 ZIG_TARGET=$(ZIG_LINUX_ARM64)   STATIC=1
-	@$(MAKE) --no-print-directory release-one GOOS=darwin  GOARCH=amd64 ZIG_TARGET=$(ZIG_DARWIN_AMD64)
-	@$(MAKE) --no-print-directory release-one GOOS=darwin  GOARCH=arm64 ZIG_TARGET=$(ZIG_DARWIN_ARM64)
 	@$(MAKE) --no-print-directory release-one GOOS=windows GOARCH=amd64 ZIG_TARGET=$(ZIG_WINDOWS_AMD64) EXT=.exe
 	@$(MAKE) --no-print-directory release-one GOOS=windows GOARCH=arm64 ZIG_TARGET=$(ZIG_WINDOWS_ARM64) EXT=.exe
+	@if [ "$(INCLUDE_DARWIN)" = "1" ]; then \
+		$(MAKE) --no-print-directory release-one GOOS=darwin GOARCH=amd64 ZIG_TARGET=$(ZIG_DARWIN_AMD64); \
+		$(MAKE) --no-print-directory release-one GOOS=darwin GOARCH=arm64 ZIG_TARGET=$(ZIG_DARWIN_ARM64); \
+	fi
 	@echo "done — $$(ls -1 dist/ | wc -l) binaries in dist/"
 
 # Internal sub-make — builds one target binary using zig as the CC.

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"golang.org/x/term"
 
 	"github.com/yumlevi/spore-code/internal/app"
 	"github.com/yumlevi/spore-code/internal/config"
@@ -58,14 +59,7 @@ func runSetupWizard() (*config.Config, error) {
 	fmt.Println("1. Connect to Spore Core")
 	fmt.Println("   Enter your Spore Core server address.")
 	fmt.Println("   Examples: 192.168.1.78 · https://spore.example.com")
-	host := prompt(rd, "   Host", "localhost")
-	port := 18810
-	if !strings.Contains(host, "://") {
-		portStr := prompt(rd, "   Port", "18810")
-		if p, err := strconv.Atoi(portStr); err == nil {
-			port = p
-		}
-	}
+	host, port := promptEndpoint(rd, "localhost", 18810)
 	fmt.Println()
 
 	// 2. User
@@ -85,7 +79,7 @@ func runSetupWizard() (*config.Config, error) {
 	fmt.Println("   Enter the invite key from your Spore Core server (.env SPORE_INVITE_KEY value).")
 	key := ""
 	for key == "" {
-		key = strings.TrimSpace(prompt(rd, "   Team key", ""))
+		key = strings.TrimSpace(promptSecret(rd, "   Team key", ""))
 		if key == "" {
 			fmt.Println("   Team key is required.")
 		}
@@ -93,14 +87,38 @@ func runSetupWizard() (*config.Config, error) {
 	fmt.Println()
 
 	// 4. Test
-	fmt.Println("4. Testing connection…")
-	if err := testAuth(host, port, user, key); err != nil {
-		fmt.Printf("   ✗ %s\n", err)
-		if !confirm(rd, "   Continue anyway?", false) {
-			return nil, fmt.Errorf("setup aborted")
+	for {
+		fmt.Println("4. Testing connection…")
+		if err := testAuth(host, port, user, key); err != nil {
+			fmt.Printf("   ✗ %s\n", err)
+			if confirm(rd, "   Edit details and retry?", true) {
+				host, port = promptEndpoint(rd, host, port)
+				for {
+					nextUser := strings.TrimSpace(prompt(rd, "   Username", user))
+					if nextUser != "" {
+						user = nextUser
+					}
+					if user != "" {
+						break
+					}
+					if user == "" {
+						fmt.Println("   Username is required.")
+					}
+				}
+				nextKey := strings.TrimSpace(promptSecret(rd, "   Team key", key))
+				if nextKey != "" {
+					key = nextKey
+				}
+				fmt.Println()
+				continue
+			}
+			if !confirm(rd, "   Continue anyway?", false) {
+				return nil, fmt.Errorf("setup aborted")
+			}
+		} else {
+			fmt.Println("   ✓ Connected and authenticated successfully.")
 		}
-	} else {
-		fmt.Println("   ✓ Connected and authenticated successfully.")
+		break
 	}
 	fmt.Println()
 
@@ -150,6 +168,43 @@ func prompt(rd *bufio.Reader, label, def string) string {
 		fmt.Printf("%s [%s]: ", label, def)
 	} else {
 		fmt.Printf("%s: ", label)
+	}
+	line, _ := rd.ReadString('\n')
+	line = strings.TrimRight(line, "\r\n")
+	if line == "" {
+		return def
+	}
+	return line
+}
+
+func promptEndpoint(rd *bufio.Reader, defaultHost string, defaultPort int) (string, int) {
+	host := prompt(rd, "   Host", defaultHost)
+	port := defaultPort
+	if !strings.Contains(host, "://") {
+		portStr := prompt(rd, "   Port", strconv.Itoa(defaultPort))
+		if p, err := strconv.Atoi(portStr); err == nil && p > 0 {
+			port = p
+		}
+	}
+	return host, port
+}
+
+func promptSecret(rd *bufio.Reader, label, def string) string {
+	if def != "" {
+		fmt.Printf("%s [keep existing; enter to keep]: ", label)
+	} else {
+		fmt.Printf("%s: ", label)
+	}
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		b, err := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Println()
+		if err == nil {
+			line := strings.TrimRight(string(b), "\r\n")
+			if line == "" {
+				return def
+			}
+			return line
+		}
 	}
 	line, _ := rd.ReadString('\n')
 	line = strings.TrimRight(line, "\r\n")
@@ -218,7 +273,6 @@ func testAuth(host string, port int, user, key string) error {
 	}
 	return nil
 }
-
 
 // copyDirRecursive copies src → dst, creating dst if needed. Used for
 // the one-shot ~/.acorn/ → ~/.spore-code/ migration on first run after

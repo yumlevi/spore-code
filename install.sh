@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Spore Code — one-liner installer for Linux & macOS.
+# Spore Code — one-liner installer for Linux.
 #
 #   curl -fsSL https://raw.githubusercontent.com/yumlevi/spore-code/main/install.sh | sh
 #
@@ -36,7 +36,7 @@ die()  { printf "%s%s%s\n" "$C_RED"   "✗ $*" "$C_RESET" >&2; exit 1; }
 os="$(uname -s 2>/dev/null | tr '[:upper:]' '[:lower:]')"
 case "$os" in
   linux)   ;;
-  darwin)  ;;
+  darwin)  die "macOS release assets are currently paused; build from source with INCLUDE_DARWIN=1 on a host with Apple SDK." ;;
   msys*|mingw*|cygwin*)
     die "Detected Git-Bash / WSL — use the PowerShell installer instead:
      irm https://raw.githubusercontent.com/yumlevi/spore-code/main/install.ps1 | iex" ;;

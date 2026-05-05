@@ -46,6 +46,14 @@ var slashCatalog = []slashEntry{
 	{"/theme oled", "switch to oled theme"},
 	{"/theme light", "switch to light theme"},
 
+	{"/display", "toggle optional UI surfaces"},
+	{"/display thinking on", "show thinking in the activity panel"},
+	{"/display thinking off", "hide thinking from the activity panel"},
+	{"/display tools on", "show tool/file activity in the panel"},
+	{"/display tools off", "hide tool/file activity in the panel"},
+	{"/display usage on", "show token/iteration usage after turns"},
+	{"/display usage off", "hide token/iteration usage after turns"},
+
 	// Tool approval mode — every variant tab-completable.
 	{"/mode", "tool approval mode (auto/ask/locked/yolo/rules)"},
 	{"/mode auto", "auto-approve all tools"},

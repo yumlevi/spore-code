@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 
+	"github.com/yumlevi/spore-code/internal/config"
 	"github.com/yumlevi/spore-code/internal/proto"
 )
 
@@ -66,5 +67,39 @@ func TestToolExecStartClosesAssistantSegment(t *testing.T) {
 	m.appendDelta("after tool")
 	if len(m.messages) != 2 || m.messages[1].Text != "after tool" {
 		t.Fatalf("expected new segment after tool, messages=%#v", m.messages)
+	}
+}
+
+func TestAppendActivityHonorsDisplayFlags(t *testing.T) {
+	off := false
+	m := &Model{
+		cfg: &config.Config{
+			Display: config.DisplaySection{ShowThinking: &off, ShowTools: &off},
+		},
+	}
+
+	m.appendThinking("hidden thought")
+	m.appendToolExec("exec", "pwd")
+	m.pushCodeView("main.go", "package main", false)
+
+	if len(m.codeViews) != 0 {
+		t.Fatalf("expected display flags to suppress activity entries, got %#v", m.codeViews)
+	}
+}
+
+func TestFormatUsageSummary(t *testing.T) {
+	got := formatUsageSummary(proto.ChatDone{
+		Usage: &proto.Usage{
+			InputTokens:              100,
+			OutputTokens:             25,
+			CacheReadInputTokens:     10,
+			CacheCreationInputTokens: 5,
+		},
+		Iterations: 2,
+		ToolUsage:  map[string]int{"read_file": 3, "exec": 1},
+	})
+	want := "Usage: 100 in · 25 out · 10 cache-read · 5 cache-write · 2 iterations · tools exec×1, read_file×3"
+	if got != want {
+		t.Fatalf("unexpected usage summary\nwant: %q\n got: %q", want, got)
 	}
 }

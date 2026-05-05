@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"golang.org/x/term"
 
 	"github.com/yumlevi/spore-code/internal/proto"
@@ -493,13 +492,13 @@ func splitOptions(s string) []string {
 }
 
 // view renders the modal as a centred card.
-func (qm *questionModal) view(w, h int, input string) string {
+func (qm *questionModal) view(w, h int, input string, t Theme) string {
 	if qm.idx >= len(qm.questions) {
 		return ""
 	}
 	q := qm.questions[qm.idx]
 	lines := []string{
-		accentStyle.Bold(true).Render(
+		t.accent(true).Render(
 			"Question "+itoa(qm.idx+1)+"/"+itoa(len(qm.questions))+": ") + q.Text,
 		"",
 	}
@@ -519,14 +518,14 @@ func (qm *questionModal) view(w, h int, input string) string {
 			}
 			line := " " + cursor + " " + marker + " " + opt
 			if i == qm.selected {
-				line = accentStyle.Bold(true).Render(line)
+				line = t.accent(true).Render(line)
 			}
 			lines = append(lines, line)
 		}
 		if q.Multi {
-			lines = append(lines, "", mutedStyle.Render(" ↑↓ move · space toggle · enter submit · esc cancel"))
+			lines = append(lines, "", t.muted().Render(" ↑↓ move · space toggle · enter submit · esc cancel"))
 		} else {
-			lines = append(lines, "", mutedStyle.Render(" ↑↓ select · enter confirm · esc cancel"))
+			lines = append(lines, "", t.muted().Render(" ↑↓ select · enter confirm · esc cancel"))
 		}
 	} else {
 		// Open-ended — show the textarea contents inline so the user
@@ -539,15 +538,15 @@ func (qm *questionModal) view(w, h int, input string) string {
 			boxW = w - 8
 		}
 		inputBox := borderStyle.Copy().
-			BorderForeground(lipgloss.Color("#5b8af5")).
+			BorderForeground(t.Accent2).
 			Width(boxW).
 			Padding(0, 1).
 			Render(display)
 		lines = append(lines,
-			mutedStyle.Render(" "+caption),
+			t.muted().Render(" "+caption),
 			inputBox,
 			"",
-			mutedStyle.Render(" type your answer · enter submit · esc cancel"),
+			t.muted().Render(" type your answer · enter submit · esc cancel"),
 		)
 	}
 
@@ -557,7 +556,7 @@ func (qm *questionModal) view(w, h int, input string) string {
 	inner := strings.Join(lines, "\n")
 	boxW := w - 2
 	return borderStyle.Copy().
-		BorderForeground(lipgloss.Color("#8b6cf7")).
+		BorderForeground(t.Accent).
 		Width(boxW).
 		Padding(0, 1).
 		Render(inner)
@@ -584,8 +583,34 @@ func (m *Model) updateModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, sizePollCmd()
-	case connOpenMsg, connErrorMsg, connClosedMsg:
-		// surface as regular state changes even under modal
+	case connOpenMsg:
+		m.connected = true
+		m.connErr = ""
+		m.status = "connected"
+		return m, nil
+	case connErrorMsg:
+		m.connected = false
+		m.connErr = v.err
+		m.status = "disconnected"
+		return m, nil
+	case connClosedMsg:
+		m.connected = false
+		m.status = "disconnected"
+		return m, nil
+	case connDisconnectedMsg:
+		m.connected = false
+		m.status = "disconnected; reconnecting…"
+		return m, nil
+	case connReconnectingMsg:
+		m.connected = false
+		m.status = "reconnecting… attempt " + itoa(v.attempt)
+		return m, nil
+	case connReconnectedMsg:
+		m.connected = true
+		m.connErr = ""
+		m.status = "connected"
+		m.announceSessionStart()
+		return m, nil
 	}
 
 	km, ok := msg.(tea.KeyMsg)

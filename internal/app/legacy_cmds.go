@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,10 +34,39 @@ func cmdClear(m *Model, _ []string) (tea.Model, tea.Cmd) {
 // disk and remains reachable via /resume <id>.
 func cmdNew(m *Model, _ []string) (tea.Model, tea.Cmd) {
 	prev := m.sess
-	m.sess = ComputeSessionIDFresh(m.cfg.Connection.User, m.cwd)
+	switchSession(m, ComputeSessionIDFresh(m.cfg.Connection.User, m.cwd), false)
+	m.pushChat("system", "New session: "+m.sess)
+	if prev != "" && prev != m.sess {
+		m.pushChat("system", "Previous session preserved: "+prev+"  (use /resume "+prev+" to return)")
+	}
+	return m, nil
+}
+
+// /resume <sessionId> — switch to a different session id and replay
+// local JSONL history.
+func cmdResume(m *Model, args []string) (tea.Model, tea.Cmd) {
+	if len(args) < 1 {
+		m.pushChat("system", "Usage: /resume <sessionId|number from /sessions>")
+		return m, nil
+	}
+	sess, err := resolveSessionRef(m, args[0])
+	if err != nil {
+		m.pushChat("system", err.Error())
+		return m, nil
+	}
+	switchSession(m, sess, true)
+	_ = m.client.Send(map[string]any{"type": "chat:history-request", "sessionId": m.sess, "userName": m.cfg.Connection.User})
+	m.pushChat("system", "Resumed: "+m.sess)
+	return m, nil
+}
+
+func switchSession(m *Model, sessionID string, replay bool) {
+	m.sess = sessionID
 	m.messages = m.messages[:0]
+	m.currentStreamIdx = -1
 	m.contextSent = false
 	m.historyDirty = true
+	m.viewportDirty = true
 	if m.writer != nil {
 		m.writer.Close()
 	}
@@ -49,28 +79,35 @@ func cmdNew(m *Model, _ []string) (tea.Model, tea.Cmd) {
 		m.dlog.Close()
 	}
 	m.dlog = sessionlog.OpenDebug(m.cfg.GlobalDir, m.sess, m.cfg.Connection.User, m.cwd)
-	m.rerenderViewport()
-	m.pushChat("system", "New session: "+m.sess)
-	if prev != "" && prev != m.sess {
-		m.pushChat("system", "Previous session preserved: "+prev+"  (use /resume "+prev+" to return)")
+	if replay {
+		m.loadLocalHistory()
 	}
-	return m, nil
+	_ = config.SaveLastSession(m.cfg.GlobalDir, m.sess, m.cwd)
+	m.announceSessionStart()
+	m.rerenderViewport()
 }
 
-// /resume <sessionId> — switch to a different session id and replay
-// local JSONL history.
-func cmdResume(m *Model, args []string) (tea.Model, tea.Cmd) {
-	if len(args) < 1 {
-		m.pushChat("system", "Usage: /resume <sessionId>")
-		return m, nil
+func resolveSessionRef(m *Model, ref string) (string, error) {
+	ref = strings.TrimSpace(strings.TrimPrefix(ref, "#"))
+	if ref == "" {
+		return "", fmt.Errorf("Usage: /resume <sessionId|number from /sessions>")
 	}
-	m.sess = args[0]
-	m.messages = m.messages[:0]
-	m.historyDirty = true
-	m.loadLocalHistory()
-	_ = m.client.Send(map[string]any{"type": "chat:history-request", "sessionId": m.sess, "userName": m.cfg.Connection.User})
-	m.pushChat("system", "Resumed: "+m.sess)
-	return m, nil
+	if n, err := strconv.Atoi(ref); err == nil {
+		list := projectSessions(m)
+		if n < 1 || n > len(list) {
+			return "", fmt.Errorf("No session #%d. Run /sessions to see available sessions.", n)
+		}
+		return list[n-1].SessionID, nil
+	}
+	return ref, nil
+}
+
+func projectSessions(m *Model) []sessionlog.ProjectSession {
+	root := findGitRoot(m.cwd)
+	if root == "" {
+		root = m.cwd
+	}
+	return sessionlog.ListProjectSessions(m.cfg.GlobalDir, m.cfg.Connection.User, root)
 }
 
 // /quit — graceful close: kill bg procs, send session:end, close logs,
@@ -99,18 +136,39 @@ func closeSessionAndLogs(m *Model) {
 	if m.exec != nil && m.exec.BG != nil {
 		m.exec.BG.KillAll()
 	}
-	_ = m.client.Send(map[string]any{
-		"type":      "session:end",
-		"sessionId": m.sess,
-		"endedAt":   time.Now().UTC().Format(time.RFC3339),
-	})
-	m.client.Close()
+	if m.client != nil {
+		_ = m.client.Send(map[string]any{
+			"type":      "session:end",
+			"sessionId": m.sess,
+			"endedAt":   time.Now().UTC().Format(time.RFC3339),
+		})
+		m.client.Close()
+	}
 	if m.dlog != nil {
 		m.dlog.Close()
 	}
 	if m.writer != nil {
 		m.writer.Close()
 	}
+}
+
+func (m *Model) announceSessionStart() {
+	if m.client == nil {
+		return
+	}
+	mode := "execute"
+	if m.planMode {
+		mode = "plan"
+	}
+	pc := BuildProjectContextWithScope(m.cwd, mode, m.scope)
+	_ = m.client.Send(map[string]any{
+		"type":           "session:start",
+		"sessionId":      m.sess,
+		"userName":       m.cfg.Connection.User,
+		"cwd":            m.cwd,
+		"startedAt":      time.Now().UTC().Format(time.RFC3339),
+		"projectContext": pc,
+	})
 }
 
 // /stop — abort the current generation locally + tell server.
@@ -157,6 +215,68 @@ func cmdTheme(m *Model, args []string) (tea.Model, tea.Cmd) {
 	m.historyDirty = true
 	m.rerenderViewport()
 	return m, nil
+}
+
+// /display [thinking|tools|usage] [on|off] — toggle optional UI surfaces.
+func cmdDisplay(m *Model, args []string) (tea.Model, tea.Cmd) {
+	if len(args) == 0 {
+		m.pushChat("system", fmt.Sprintf(
+			"Display: thinking=%t tools=%t usage=%t\nUsage: /display <thinking|tools|usage> <on|off>",
+			m.showThinking(), m.showTools(), m.showUsage(),
+		))
+		return m, nil
+	}
+	if len(args) < 2 {
+		m.pushChat("system", "Usage: /display <thinking|tools|usage> <on|off>")
+		return m, nil
+	}
+	value, ok := parseDisplayBool(args[1])
+	if !ok {
+		m.pushChat("system", "Use on/off, true/false, yes/no, or 1/0.")
+		return m, nil
+	}
+	switch strings.ToLower(args[0]) {
+	case "thinking", "thoughts":
+		m.cfg.Display.ShowThinking = &value
+	case "tools", "tool":
+		m.cfg.Display.ShowTools = &value
+	case "usage", "tokens":
+		m.cfg.Display.ShowUsage = &value
+	default:
+		m.pushChat("system", "Usage: /display <thinking|tools|usage> <on|off>")
+		return m, nil
+	}
+	if err := config.Save(m.cfg); err != nil {
+		m.pushChat("system", "Display setting changed but save failed: "+err.Error())
+	} else {
+		m.pushChat("system", fmt.Sprintf("Display → thinking=%t tools=%t usage=%t (saved)", m.showThinking(), m.showTools(), m.showUsage()))
+	}
+	if !m.showThinking() || !m.showTools() {
+		filtered := m.codeViews[:0]
+		for _, e := range m.codeViews {
+			if e.Thinking && m.showThinking() {
+				filtered = append(filtered, e)
+			}
+			if !e.Thinking && m.showTools() {
+				filtered = append(filtered, e)
+			}
+		}
+		m.codeViews = filtered
+	}
+	m.historyDirty = true
+	m.rerenderViewport()
+	return m, nil
+}
+
+func parseDisplayBool(s string) (bool, bool) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "1", "true", "t", "yes", "y", "on", "show", "enable", "enabled":
+		return true, true
+	case "0", "false", "f", "no", "n", "off", "hide", "disable", "disabled":
+		return false, true
+	default:
+		return false, false
+	}
 }
 
 // /mode <auto|ask|locked|yolo|rules> — switch tool-approval mode.
@@ -321,11 +441,7 @@ func cmdBg(m *Model, args []string) (tea.Model, tea.Cmd) {
 
 // /sessions — list saved local sessions for this project (from JSONL logs).
 func cmdSessions(m *Model, _ []string) (tea.Model, tea.Cmd) {
-	root := findGitRoot(m.cwd)
-	if root == "" {
-		root = m.cwd
-	}
-	list := sessionlog.ListProjectSessions(m.cfg.GlobalDir, m.cfg.Connection.User, root)
+	list := projectSessions(m)
 	if len(list) == 0 {
 		m.pushChat("system", "No saved sessions for this project")
 		return m, nil
@@ -337,8 +453,9 @@ func cmdSessions(m *Model, _ []string) (tea.Model, tea.Cmd) {
 			break
 		}
 		lines = append(lines, fmt.Sprintf("  %2d. %-12s %3d msgs  %s", i+1, s.TimeAgo, s.MessageCount, truncateFor(s.Preview, 60)))
+		lines = append(lines, fmt.Sprintf("      id: %s", s.SessionID))
 	}
-	lines = append(lines, "", "/resume <sessionId> to pick one")
+	lines = append(lines, "", "Resume with `/resume 1` or `/resume <sessionId>`.")
 	m.pushChat("system", strings.Join(lines, "\n"))
 	return m, nil
 }
@@ -379,6 +496,7 @@ func init() {
 	register(&slashCmd{Name: "/plan", Help: "toggle plan/execute mode (same as Shift+Tab)", Handler: cmdPlan})
 	register(&slashCmd{Name: "/status", Help: "connection + session info", Handler: cmdStatus})
 	register(&slashCmd{Name: "/theme", Help: "switch theme (dark/oak/forest/oled/light/…)", Handler: cmdTheme})
+	register(&slashCmd{Name: "/display", Help: "toggle optional UI: thinking/tools/usage on|off", Handler: cmdDisplay})
 	register(&slashCmd{Name: "/mode", Help: "tool approval mode (auto/ask/locked/yolo/rules)", Handler: cmdMode})
 	register(&slashCmd{Name: "/approve-all", Help: "shortcut for /mode auto", Handler: cmdApproveAll})
 	register(&slashCmd{Name: "/approve-all-dangerous", Help: "shortcut for /mode yolo", Handler: cmdApproveAllDangerous})

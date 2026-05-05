@@ -91,14 +91,6 @@ func Summarize(name string, input map[string]any) string {
 			u = u[:100]
 		}
 		return u
-	case "web_serve":
-		if v, ok := input["dir"].(string); ok && v != "" {
-			return v
-		}
-		if v, ok := input["directory"].(string); ok && v != "" {
-			return v
-		}
-		return ""
 	}
 	return fmt.Sprintf("%v", input)
 }

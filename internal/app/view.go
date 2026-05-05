@@ -161,9 +161,9 @@ func (m *Model) View() string {
 	var input string
 	switch m.modal {
 	case modalQuestion:
-		input = m.question.view(m.width, m.height, m.input.Value())
+		input = m.question.view(m.width, m.height, m.input.Value(), m.theme)
 	case modalPlan:
-		input = m.planApproval.view(m.width, m.height)
+		input = m.planApproval.view(m.width, m.height, m.theme)
 	case modalPermission:
 		input = m.permission.view(m.width, m.height, m.theme)
 	default:

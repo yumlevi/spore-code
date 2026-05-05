@@ -150,10 +150,10 @@ func Exec(input map[string]any, cwd string, logDir string, pm *bg.Manager, on fu
 			early = early[:4000]
 		}
 		return map[string]any{
-			"output":      early,
+			"output":       early,
 			"backgrounded": true,
-			"processId":   p.ID,
-			"logFile":     p.LogPath,
+			"processId":    p.ID,
+			"logFile":      p.LogPath,
 			"note": fmt.Sprintf("Running in background as #%d. Check output via `exec /bg %d`. Kill: `exec /bg kill %d`.",
 				p.ID, p.ID, p.ID),
 		}
@@ -215,12 +215,12 @@ func Exec(input map[string]any, cwd string, logDir string, pm *bg.Manager, on fu
 
 	// Read lines with inactivity timeout.
 	var (
-		mu          sync.Mutex
-		lines       []string
-		lineCh      = make(chan string, 1024)
-		done        = make(chan error, 1)
-		timedOut    bool
-		totalBytes  int
+		mu         sync.Mutex
+		lines      []string
+		lineCh     = make(chan string, 1024)
+		done       = make(chan error, 1)
+		timedOut   bool
+		totalBytes int
 	)
 	go func() {
 		defer close(lineCh)
@@ -275,38 +275,6 @@ collect:
 	err = <-done
 	duration := time.Since(start).Milliseconds()
 
-	// Inactivity-timeout safety net (mirrors Python shell.py:243-259).
-	// If we killed the foreground process for going quiet but it was
-	// still doing something (unrecognized dev server like `expo start`,
-	// long-running build, etc.), don't just report a hard error — relaunch
-	// it in the background so the user gets a processId they can monitor
-	// instead of having to /stop and retry. The bg.Manager already handles
-	// the lifecycle. Skip when pm is nil (rare — only if no bg manager wired)
-	// or when the process actually exited cleanly before the kill (exit code
-	// would be set in that path).
-	if timedOut && pm != nil {
-		bp, bgErr := pm.Launch(command, cwd)
-		if bgErr == nil {
-			mu.Lock()
-			tail := lines
-			if len(tail) > 50 {
-				tail = tail[len(tail)-50:]
-			}
-			out := strings.Join(tail, "\n") + fmt.Sprintf("\n\n[timed out after %dms of inactivity — moved to background as #%d]", inactivity.Milliseconds(), bp.ID)
-			mu.Unlock()
-			res := map[string]any{
-				"output":       out,
-				"backgrounded": true,
-				"processId":    bp.ID,
-				"note":         fmt.Sprintf("Foreground exec timed out; same command relaunched in background as #%d. Read output via `exec /bg %d`. Kill: `exec /bg kill %d`.", bp.ID, bp.ID, bp.ID),
-			}
-			if bp.LogPath != "" {
-				res["logFile"] = bp.LogPath
-			}
-			return res
-		}
-	}
-
 	mu.Lock()
 	raw := strings.Join(lines, "\n")
 	mu.Unlock()
@@ -327,8 +295,10 @@ collect:
 	if timedOut {
 		return map[string]any{
 			"error":    fmt.Sprintf("Command timed out after %dms of inactivity", inactivity.Milliseconds()),
+			"output":   raw,
 			"exitCode": -1,
 			"logFile":  logPath,
+			"note":     "The command was killed and was not rerun. If it is a dev server or watcher, rerun it with background=true or use `/bg run <command>`.",
 		}
 	}
 
@@ -417,10 +387,10 @@ func handleBgSubcommand(args string, pm *bg.Manager) any {
 		st = fmt.Sprintf("exited (%d)", p.ExitCode)
 	}
 	return map[string]any{
-		"output":   out,
-		"running":  p.Running,
-		"logFile":  p.LogPath,
-		"status":   st,
-		"elapsed":  p.Elapsed(),
+		"output":  out,
+		"running": p.Running,
+		"logFile": p.LogPath,
+		"status":  st,
+		"elapsed": p.Elapsed(),
 	}
 }

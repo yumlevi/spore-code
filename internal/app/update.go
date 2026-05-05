@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -112,7 +113,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// this frame (default switch case is a no-op for unknown
 		// types). projectContext is included so SPORE can link the
 		// session to the project node in one shot — saves a roundtrip.
-		pc := BuildProjectContextWithScope(m.cwd, "execute", m.scope)
+		mode := "execute"
+		if m.planMode {
+			mode = "plan"
+		}
+		pc := BuildProjectContextWithScope(m.cwd, mode, m.scope)
 		_ = m.client.Send(map[string]any{
 			"type":           "session:start",
 			"sessionId":      m.sess,
@@ -195,6 +200,25 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.connected = false
 		m.status = "disconnected"
 		m.pushChat("system", "Disconnected.")
+		return m, nil
+
+	case connDisconnectedMsg:
+		m.connected = false
+		m.status = "disconnected; reconnecting…"
+		m.pushChat("system", "Connection lost — reconnecting.")
+		return m, nil
+
+	case connReconnectingMsg:
+		m.connected = false
+		m.status = fmt.Sprintf("reconnecting… attempt %d", msg.attempt)
+		return m, nil
+
+	case connReconnectedMsg:
+		m.connected = true
+		m.connErr = ""
+		m.status = "connected"
+		m.pushChat("system", "Reconnected.")
+		m.announceSessionStart()
 		return m, nil
 
 	case wsFrameMsg:
@@ -804,13 +828,21 @@ func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 		_ = json.Unmarshal(f.Raw, &v)
 		m.appendDelta(v.Text)
 	case "chat:done":
+		var v proto.ChatDone
+		_ = json.Unmarshal(f.Raw, &v)
 		m.endStream()
 		m.generating = false
 		m.status = ""
 		// postStreamChecks may return an auto-retry cmd (when the agent
 		// emitted a malformed QUESTIONS: block). Forward it through
 		// handleFrame's return so the next chat:submit goes out.
-		if cmd := m.postStreamChecks(); cmd != nil {
+		cmd := m.postStreamChecks()
+		if m.showUsage() {
+			if line := formatUsageSummary(v); line != "" {
+				m.pushChat("system", line)
+			}
+		}
+		if cmd != nil {
 			return cmd
 		}
 	case "chat:thinking":
@@ -1100,7 +1132,15 @@ func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 		"state:questions", "perm:current-mode":
 		// observer relays — outbound only here (we send these to observers)
 	case "conn:error":
-		// already surfaced via connErrorMsg path
+		var v struct {
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(f.Raw, &v)
+		m.connected = false
+		if v.Error != "" {
+			m.connErr = v.Error
+		}
+		m.status = "disconnected; reconnecting…"
 
 	default:
 		// Subagent activity — the server streams subagent:start / :line /
@@ -1122,6 +1162,43 @@ func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+func formatUsageSummary(v proto.ChatDone) string {
+	var parts []string
+	if v.Usage != nil {
+		if v.Usage.InputTokens > 0 {
+			parts = append(parts, fmt.Sprintf("%d in", v.Usage.InputTokens))
+		}
+		if v.Usage.OutputTokens > 0 {
+			parts = append(parts, fmt.Sprintf("%d out", v.Usage.OutputTokens))
+		}
+		if v.Usage.CacheReadInputTokens > 0 {
+			parts = append(parts, fmt.Sprintf("%d cache-read", v.Usage.CacheReadInputTokens))
+		}
+		if v.Usage.CacheCreationInputTokens > 0 {
+			parts = append(parts, fmt.Sprintf("%d cache-write", v.Usage.CacheCreationInputTokens))
+		}
+	}
+	if v.Iterations > 0 {
+		parts = append(parts, fmt.Sprintf("%d iterations", v.Iterations))
+	}
+	if len(v.ToolUsage) > 0 {
+		var tools []string
+		for name, count := range v.ToolUsage {
+			if count > 0 {
+				tools = append(tools, fmt.Sprintf("%s×%d", name, count))
+			}
+		}
+		if len(tools) > 0 {
+			sort.Strings(tools)
+			parts = append(parts, "tools "+strings.Join(tools, ", "))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "Usage: " + strings.Join(parts, " · ")
 }
 
 func (m *Model) handleStatus(v proto.ChatStatus) {

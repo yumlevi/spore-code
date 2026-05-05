@@ -108,6 +108,13 @@ func (m *Model) appendToolExec(tool, detail string) {
 }
 
 func (m *Model) appendActivity(e codeViewEntry) {
+	if e.Thinking {
+		if !m.showThinking() {
+			return
+		}
+	} else if !m.showTools() {
+		return
+	}
 	m.codeViews = append(m.codeViews, e)
 	if len(m.codeViews) > 100 {
 		m.codeViews = m.codeViews[len(m.codeViews)-100:]

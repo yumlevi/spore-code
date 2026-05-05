@@ -13,7 +13,7 @@ One-liner installers detect your OS+arch, download the matching release
 binary, verify it (ELF/Mach-O/PE magic check), atomic-rename into place,
 and handle PATH setup. Re-running upgrades in place.
 
-**Linux / macOS:**
+**Linux:**
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/yumlevi/spore-code/main/install.sh | sh
@@ -122,14 +122,12 @@ Run `spore` once to go through the wizard, or write the TOML by hand.
 
 ## Releases
 
-Six binaries per release at
+Four binaries per default release at
 <https://github.com/yumlevi/spore-code/releases/latest>:
 
 ```
 spore-linux-amd64       Linux  x86_64
 spore-linux-arm64       Linux  aarch64
-spore-darwin-amd64      macOS  Intel        (paused — see "Build status")
-spore-darwin-arm64      macOS  Apple Silicon (paused — see "Build status")
 spore-windows-amd64.exe Windows x64
 spore-windows-arm64.exe Windows ARM64
 ```
@@ -137,7 +135,8 @@ spore-windows-arm64.exe Windows ARM64
 ## Build status
 
 Linux + Windows targets cross-compile cleanly via `zig cc`. Darwin
-targets are currently paused — zig 0.13's bundled darwin SDK is missing
+targets are opt-in with `INCLUDE_DARWIN=1 make release` and currently
+paused for official releases — zig 0.13's bundled darwin SDK is missing
 `libresolv.tbd` + the Apple frameworks Go's CGO net stack needs. Builds
 will return when the build host has Apple SDK installed (or zig 0.14
 ships the missing stubs).
