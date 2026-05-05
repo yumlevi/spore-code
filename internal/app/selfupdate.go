@@ -31,8 +31,8 @@ type updateInstallResult struct {
 // Implementation notes:
 //   - Downloads to a sibling temp file in the install dir so os.Rename works
 //     atomically (same filesystem).
-//   - On Windows, we can't rename-over a running exe, so we rename the old
-//     one aside first. The user has to re-launch for the new version.
+//   - On Windows, the running .exe is locked. We stage a replacement script
+//     that waits for Spore to exit, then swaps the binary.
 //   - Validates the download is non-empty and has ELF/PE magic before swap.
 func installUpdateCmd(version string) tea.Cmd {
 	return func() tea.Msg {
@@ -243,13 +243,18 @@ func installTempFile(tmpPath, version string) updateInstallResult {
 		return updateInstallResult{Err: "chmod failed: " + err.Error()}
 	}
 
-	// Swap. On Windows we move the running exe aside first.
+	// Swap. On Windows the running executable is locked by the OS, so a
+	// direct rename fails with "Access is denied". Stage a cmd helper that
+	// retries the replacement after the user closes Spore.
 	if runtime.GOOS == "windows" {
-		old := exePath + ".old"
-		_ = os.Remove(old)
-		if err := os.Rename(exePath, old); err != nil {
+		if err := scheduleWindowsReplacement(tmpPath, exePath); err != nil {
 			_ = os.Remove(tmpPath)
-			return updateInstallResult{Err: "cannot rename running exe aside: " + err.Error()}
+			return updateInstallResult{Err: "cannot schedule Windows replacement: " + err.Error()}
+		}
+		return updateInstallResult{
+			OK:      true,
+			Version: version,
+			Path:    exePath + " (scheduled; close Spore, then launch it again)",
 		}
 	}
 	if err := os.Rename(tmpPath, exePath); err != nil {
@@ -257,6 +262,47 @@ func installTempFile(tmpPath, version string) updateInstallResult {
 		return updateInstallResult{Err: "atomic rename failed: " + err.Error()}
 	}
 	return updateInstallResult{OK: true, Version: version, Path: exePath}
+}
+
+func scheduleWindowsReplacement(tmpPath, exePath string) error {
+	dir := filepath.Dir(exePath)
+	script, err := os.CreateTemp(dir, ".spore-update-*.cmd")
+	if err != nil {
+		return err
+	}
+	scriptPath := script.Name()
+	oldPath := exePath + ".old"
+	body := fmt.Sprintf(`@echo off
+set "TMP=%s"
+set "EXE=%s"
+set "OLD=%s"
+for /l %%%%i in (1,1,600) do (
+  move /Y "%%EXE%%" "%%OLD%%" >nul 2>nul
+  if not errorlevel 1 goto replace
+  timeout /t 1 /nobreak >nul
+)
+exit /b 1
+:replace
+move /Y "%%TMP%%" "%%EXE%%" >nul 2>nul
+if errorlevel 1 (
+  move /Y "%%OLD%%" "%%EXE%%" >nul 2>nul
+  exit /b 1
+)
+del "%%OLD%%" >nul 2>nul
+del "%%~f0" >nul 2>nul
+`, tmpPath, exePath, oldPath)
+	if _, err := script.WriteString(body); err != nil {
+		_ = script.Close()
+		_ = os.Remove(scriptPath)
+		return err
+	}
+	if err := script.Close(); err != nil {
+		_ = os.Remove(scriptPath)
+		return err
+	}
+	cmd := exec.Command("cmd", "/C", "start", "", "/MIN", scriptPath)
+	cmd.Dir = dir
+	return cmd.Start()
 }
 
 func fetchLatestTag() (string, string, error) {
