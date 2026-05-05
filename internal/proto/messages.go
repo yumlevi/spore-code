@@ -277,6 +277,21 @@ type AskUserAnswer struct {
 	Answer string `json:"answer"`
 }
 
+// AskUserCancelled — server → CLI when a pending ask_user was aborted.
+type AskUserCancelled struct {
+	Type     string `json:"type"`
+	QID      string `json:"qid"`
+	Question string `json:"question,omitempty"`
+}
+
+// AskUserAnswerAck — server → CLI after an ask_user_answer frame.
+type AskUserAnswerAck struct {
+	Type   string `json:"type"`
+	QID    string `json:"qid"`
+	OK     bool   `json:"ok"`
+	Answer string `json:"answer,omitempty"`
+}
+
 // Plan-mode (web queue variant). Acorn uses its own prose-based plan flow
 // so these just surface as system messages when seen.
 type PlanProposal struct {

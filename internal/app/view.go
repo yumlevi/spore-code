@@ -504,6 +504,9 @@ func (m *Model) rerenderViewport() {
 	} else {
 		content = m.renderedHistory
 	}
+	if m.followBottom {
+		content = bottomAlignContent(content, m.viewport.Height)
+	}
 	prevYOffset := m.viewport.YOffset
 	m.viewport.SetContent(content)
 	if m.followBottom {
@@ -518,6 +521,30 @@ func (m *Model) rerenderViewport() {
 		}
 	}
 	m.viewportDirty = false
+}
+
+// bottomAlignContent keeps short transcripts anchored above the input instead
+// of stranded near the top of a tall terminal. Once content is taller than the
+// viewport, normal scrolling behavior takes over.
+func bottomAlignContent(content string, height int) string {
+	if height <= 0 {
+		return content
+	}
+	lineCount := 0
+	if content != "" {
+		lineCount = strings.Count(content, "\n") + 1
+	}
+	if lineCount >= height {
+		return content
+	}
+	pad := height - lineCount
+	if content == "" {
+		if pad <= 1 {
+			return ""
+		}
+		return strings.Repeat("\n", pad-1)
+	}
+	return strings.Repeat("\n", pad) + content
 }
 
 // renderHistoryPrefix renders every completed message — i.e. every

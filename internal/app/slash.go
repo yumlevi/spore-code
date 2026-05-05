@@ -65,6 +65,7 @@ var slashCatalog = []slashEntry{
 	{"/update", "check/install/list releases"},
 	{"/update check", "check the stable channel for a newer release"},
 	{"/update install", "install the latest stable release"},
+	{"/update install local", "install a locally-built binary"},
 	{"/update install pre", "install the latest pre-release (any kind)"},
 	{"/update list", "list recent releases (stable + pre-release)"},
 

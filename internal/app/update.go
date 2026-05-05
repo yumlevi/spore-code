@@ -312,13 +312,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pushChat("system", "Update check failed: "+msg.Err)
 			return m, nil
 		}
-		switch {
-		case versionLE(msg.Version, Version):
-			m.pushChat("system", fmt.Sprintf("You're on %s — that's the latest release.", Version))
-		default:
-			m.pushChat("system", fmt.Sprintf("Update available: %s → %s\n%s\n(run /update install to upgrade in place)",
-				Version, msg.Version, msg.URL))
-		}
+		m.pushChat("system", updateCheckMessage(Version, msg.Version, msg.URL))
 		return m, nil
 
 	case updateInstallResult:
@@ -389,7 +383,8 @@ func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.outputLogOpen = false
 			return m, nil
 		case "ctrl+c":
-			return m, tea.Quit
+			m.outputLogOpen = false
+			return m.handleCtrlC()
 		case "up":
 			m.outputLogVP.LineUp(1)
 			return m, nil
@@ -419,7 +414,8 @@ func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.panelExpand = false
 			return m, nil
 		case "ctrl+c":
-			return m, tea.Quit
+			m.panelExpand = false
+			return m.handleCtrlC()
 		case "up":
 			m.panelView.LineUp(1)
 			return m, nil
@@ -628,25 +624,8 @@ func (m *Model) handleHistoryNav(dir int) bool {
 func (m *Model) handleCtrlC() (tea.Model, tea.Cmd) {
 	now := time.Now()
 	if m.generating || m.thinking {
-		// Tell the server to abort.
-		if m.client != nil {
-			_ = m.client.Send(map[string]any{"type": "chat:stop", "sessionId": m.sess})
-		}
-		// Cancel any in-flight local tool exec.
-		if m.exec != nil {
-			m.exec.AbortCurrent()
-		}
-		// End the streaming entry so it stops looking like it's still going.
-		if m.currentStreamIdx >= 0 {
-			m.endStream()
-		}
-		m.generating = false
-		m.thinking = false
-		m.thinkingTokens = 0
-		m.status = ""
-		m.pushChat("system", "⏹ Stopped")
 		m.lastCtrlC = now
-		return m, nil
+		return m.stopActiveTurn("⏹ Stopped")
 	}
 	// Idle path — double-tap to confirm.
 	if !m.lastCtrlC.IsZero() && now.Sub(m.lastCtrlC) < time.Second {
@@ -654,6 +633,29 @@ func (m *Model) handleCtrlC() (tea.Model, tea.Cmd) {
 	}
 	m.lastCtrlC = now
 	m.pushChat("system", "Press Ctrl+C again to quit")
+	return m, nil
+}
+
+// stopActiveTurn aborts the current model/tool execution without ending the
+// local session. This is intentionally shared by Ctrl+C, /stop, and modal
+// cancellation so interrupts cannot orphan a pending ask_user/tool request.
+func (m *Model) stopActiveTurn(message string) (tea.Model, tea.Cmd) {
+	if m.client != nil {
+		_ = m.client.Send(map[string]any{"type": "chat:stop", "sessionId": m.sess})
+	}
+	if m.exec != nil {
+		m.exec.AbortCurrent()
+	}
+	if m.currentStreamIdx >= 0 {
+		m.endStream()
+	}
+	m.generating = false
+	m.thinking = false
+	m.thinkingTokens = 0
+	m.status = ""
+	if strings.TrimSpace(message) != "" {
+		m.pushChat("system", message)
+	}
 	return m, nil
 }
 
@@ -901,6 +903,24 @@ func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 		var v proto.AskUser
 		_ = json.Unmarshal(f.Raw, &v)
 		m.openStructuredQuestion(v)
+	case "ask_user_cancelled":
+		var v proto.AskUserCancelled
+		_ = json.Unmarshal(f.Raw, &v)
+		if m.question != nil && m.question.source == "ask_user" && (v.QID == "" || v.QID == m.question.qid) {
+			m.modal = modalNone
+			m.question = nil
+			m.input.Reset()
+			m.Broadcast("interactive:resolved", map[string]any{"kind": "questions"})
+			m.pushChat("system", "Question cancelled.")
+		}
+		m.status = ""
+	case "ask_user_answer_ack":
+		var v proto.AskUserAnswerAck
+		_ = json.Unmarshal(f.Raw, &v)
+		if !v.OK {
+			m.pushChat("system", "Question answer was not accepted; choose one of the listed options.")
+			m.status = "waiting for question answer"
+		}
 	case "plan_proposal":
 		var v proto.PlanProposal
 		_ = json.Unmarshal(f.Raw, &v)
@@ -1131,42 +1151,20 @@ func (m *Model) handleStatus(v proto.ChatStatus) {
 		// the chat clean was an explicit user ask.
 		m.thinkingBuf = ""
 	case "tool_exec_start":
-		// Flush the in-flight assistant bubble so the user sees a
-		// clean break before the tool indicator. The next chat:delta
-		// will start a fresh bubble. Mirrors Python's
-		// flush_stream_buffer() call in on_status.
-		m.endStream()
 		m.status = fmt.Sprintf("⚙ %s %s", v.Tool, v.Detail)
 		if v.Tool != "" {
-			detail := v.Detail
-			if detail != "" {
-				m.pushChat("system", fmt.Sprintf("⚙ %s · %s", v.Tool, truncateForLog(detail, 120)))
-			} else {
-				m.pushChat("system", "⚙ "+v.Tool)
-			}
 			m.appendToolExec(v.Tool, v.Detail)
 		}
 	case "tool_exec_done":
 		m.status = fmt.Sprintf("✓ %s · %dms", v.Tool, v.DurationMs)
-		// Inline 'tool done' indicator — duration + result size if
-		// the server reported them. Same shape as Python's
-		// '✓ Nms · Nchars' line.
-		var parts []string
-		if v.DurationMs > 0 {
-			parts = append(parts, fmt.Sprintf("%dms", v.DurationMs))
-		}
-		if v.ResultChars > 0 {
-			parts = append(parts, fmt.Sprintf("%d chars", v.ResultChars))
-		}
-		tail := ""
-		if len(parts) > 0 {
-			tail = " · " + strings.Join(parts, " · ")
-		}
-		m.pushChat("system", fmt.Sprintf("  ✓ %s%s", v.Tool, tail))
 	case "interjected", "interjection":
 		m.status = "interjecting…"
 	case "waiting":
 		m.status = "waiting…"
+	case "ask_user_waiting":
+		m.status = "waiting for question answer"
+	case "ask_user_answered":
+		m.status = ""
 	case "truncated":
 		m.pushChat("system", "[agent] response hit max_tokens — retrying with smaller output")
 	case "compaction-start":

@@ -68,6 +68,21 @@ make install        # ~/.local/bin/spore
 make release        # cross-compile linux/darwin/windows × amd64/arm64 into dist/
 ```
 
+On hosts without `make` or a system C compiler, use the repo-local scripts.
+They use `zig cc` for CGO when gcc/clang is unavailable:
+
+```sh
+scripts/build.sh    # ./spore
+scripts/test.sh     # go test ./...
+scripts/release.sh  # linux/windows amd64+arm64 into dist/
+```
+
+Builds are stamped from `git describe --tags --dirty --always` by default.
+Pass `VERSION=v1.0.7` when producing binaries for a published release.
+The scripts also stage the current-platform binary into
+`~/.spore-code/updates`, so a running client can apply it with
+`/update install local`. Set `SPORE_CODE_STAGE_UPDATE=0` to skip staging.
+
 ## Self-update
 
 ```

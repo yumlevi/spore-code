@@ -115,10 +115,7 @@ func closeSessionAndLogs(m *Model) {
 
 // /stop — abort the current generation locally + tell server.
 func cmdStop(m *Model, _ []string) (tea.Model, tea.Cmd) {
-	m.exec.AbortCurrent()
-	_ = m.client.Send(map[string]any{"type": "chat:stop", "sessionId": m.sess})
-	m.pushChat("system", "Stop requested.")
-	return m, nil
+	return m.stopActiveTurn("Stop requested.")
 }
 
 // /plan — toggle between plan and execute mode.
@@ -208,9 +205,16 @@ func cmdApproveAllDangerous(m *Model, _ []string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// /update [check|install [tag|substring]|list] — release management.
+// /update [check|install [tag|substring|local [path]]|list] — release management.
 func cmdUpdate(m *Model, args []string) (tea.Model, tea.Cmd) {
 	switch {
+	case len(args) >= 1 && args[0] == "local":
+		source := ""
+		if len(args) >= 2 {
+			source = strings.Join(args[1:], " ")
+		}
+		m.pushChat("system", "Installing local build… will replace the running binary in place.")
+		return m, installLocalUpdateCmd(source)
 	case len(args) >= 1 && args[0] == "install":
 		query := ""
 		if len(args) >= 2 {
@@ -219,6 +223,12 @@ func cmdUpdate(m *Model, args []string) (tea.Model, tea.Cmd) {
 		if query == "" {
 			m.pushChat("system", "Installing latest stable release… will replace the running binary in place.")
 			return m, installUpdateCmd("")
+		}
+		parts := strings.Fields(query)
+		if len(parts) > 0 && (parts[0] == "local" || parts[0] == "dev") {
+			source := strings.TrimSpace(strings.TrimPrefix(query, parts[0]))
+			m.pushChat("system", "Installing local build… will replace the running binary in place.")
+			return m, installLocalUpdateCmd(source)
 		}
 		m.pushChat("system", fmt.Sprintf("Resolving release for %q… will install in place when found.", query))
 		return m, resolveAndInstallCmd(query)
@@ -235,6 +245,7 @@ func cmdUpdate(m *Model, args []string) (tea.Model, tea.Cmd) {
 			"  /update install                     install the latest STABLE release",
 			"  /update install <tag>               install an exact tag (e.g. v1.0.2)",
 			"  /update install pre                 install the latest pre-release (any kind)",
+			"  /update install local [path]        install a locally-built binary from ~/.spore-code/updates, dist/, or path",
 			"  /update list                        list recent releases (stable + pre-release)",
 			"You're on " + Version + ".",
 		}, "\n"))

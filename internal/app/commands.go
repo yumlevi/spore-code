@@ -256,8 +256,10 @@ func cmdScope(m *Model, args []string) (tea.Model, tea.Cmd) {
 
 // cmdPanel toggles (or explicitly sets) the right-column activity panel.
 // Usage: /panel            (toggle)
-//        /panel hide|off   (force hidden)
-//        /panel show|on    (force visible)
+//
+//	/panel hide|off   (force hidden)
+//	/panel show|on    (force visible)
+//
 // When hidden the chat area reclaims the full terminal width — useful
 // on narrow windows or when the panel's contents aren't interesting
 // this session.
@@ -1063,7 +1065,8 @@ func renderTraceCallsResult(label string, m map[string]any) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s — %d edges (direction=%s depth=%d%s):\n", label, count, dir, depth, ternary(truncated, ", TRUNCATED", ""))
 	// Print up to 25 edges; agent gets the full list via the JSON tool result.
-	if edges, ok := m["edges"].([]struct{ /* anonymous from inline closure */ }); ok {
+	if edges, ok := m["edges"].([]struct { /* anonymous from inline closure */
+	}); ok {
 		_ = edges
 	}
 	// Use reflection-light loop via type assertion onto []any.

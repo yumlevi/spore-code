@@ -26,17 +26,26 @@ func SetVersion(v string) { Version = v }
 // unparseable so we lean toward 'show update available' rather than
 // silently skip.
 func versionLE(a, b string) bool {
+	cmp, ok := compareSemver(a, b)
+	return ok && cmp <= 0
+}
+
+// compareSemver returns -1, 0, or +1 for a < b, a == b, or a > b.
+func compareSemver(a, b string) (int, bool) {
 	pa, oka := parseSemver(a)
 	pb, okb := parseSemver(b)
 	if !oka || !okb {
-		return false
+		return 0, false
 	}
 	for i := 0; i < 3; i++ {
 		if pa[i] != pb[i] {
-			return pa[i] < pb[i]
+			if pa[i] < pb[i] {
+				return -1, true
+			}
+			return 1, true
 		}
 	}
-	return true
+	return 0, true
 }
 
 func parseSemver(s string) ([3]int, bool) {
@@ -55,6 +64,23 @@ func parseSemver(s string) ([3]int, bool) {
 		out[i] = n
 	}
 	return out, true
+}
+
+func updateCheckMessage(current, latest, url string) string {
+	if latest == "" {
+		return "Update check succeeded, but GitHub did not return a release tag."
+	}
+	if cmp, ok := compareSemver(latest, current); ok && cmp <= 0 {
+		if current == latest {
+			return fmt.Sprintf("You're on %s — that's the latest published stable release.", current)
+		}
+		return fmt.Sprintf(
+			"No newer published stable release.\nCurrent build: %s\nLatest published: %s\n%s\nUse `/update install local` to install a locally-built binary staged by scripts/build.sh or scripts/release.sh.",
+			current, latest, url,
+		)
+	}
+	return fmt.Sprintf("Update available: %s → %s\n%s\n(run /update install to upgrade in place)",
+		current, latest, url)
 }
 
 // updateCheckResult carries GitHub release info back to the UI.
@@ -115,11 +141,11 @@ func bootCheckUpdateCmd() tea.Cmd {
 // — the subset we render in /update list and use to resolve fuzzy
 // installs (`/update install graphcorn`, `/update install pre`).
 type releaseInfo struct {
-	TagName    string `json:"tag_name"`
-	Name       string `json:"name"`
-	URL        string `json:"html_url"`
-	Prerelease bool   `json:"prerelease"`
-	Draft      bool   `json:"draft"`
+	TagName     string `json:"tag_name"`
+	Name        string `json:"name"`
+	URL         string `json:"html_url"`
+	Prerelease  bool   `json:"prerelease"`
+	Draft       bool   `json:"draft"`
 	PublishedAt string `json:"published_at"`
 }
 
@@ -219,8 +245,12 @@ func resolveAndInstallCmd(query string) tea.Cmd {
 		// All matches skip drafts.
 		filter := func(predicate func(releaseInfo) bool) *releaseInfo {
 			for i := range rels {
-				if rels[i].Draft { continue }
-				if predicate(rels[i]) { return &rels[i] }
+				if rels[i].Draft {
+					continue
+				}
+				if predicate(rels[i]) {
+					return &rels[i]
+				}
 			}
 			return nil
 		}
@@ -234,7 +264,9 @@ func resolveAndInstallCmd(query string) tea.Cmd {
 		// Substring (longest-tag wins via list order — releases are newest first)
 		if picked == nil {
 			ql := strings.ToLower(query)
-			picked = filter(func(r releaseInfo) bool { return strings.Contains(strings.ToLower(r.TagName), ql) || strings.Contains(strings.ToLower(r.Name), ql) })
+			picked = filter(func(r releaseInfo) bool {
+				return strings.Contains(strings.ToLower(r.TagName), ql) || strings.Contains(strings.ToLower(r.Name), ql)
+			})
 		}
 		if picked == nil {
 			// Fall back to the direct tag endpoint. The GitHub /releases

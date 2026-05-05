@@ -181,7 +181,7 @@ type TUIPerms struct {
 	// Session-scope allow rules.
 	rules []string
 	// Pending prompt — a goroutine waits on ch for the UI to resolve.
-	pendingCh chan bool
+	pendingCh    chan bool
 	pendingName  string
 	pendingInput map[string]any
 	pendingRule  string
@@ -280,10 +280,10 @@ func (p *TUIPerms) Prompt(name string, input map[string]any) bool {
 	// Signal the Tea program to open the modal.
 	if p.m != nil && p.m.sendProgramMsg != nil {
 		p.m.sendProgramMsg(openPermModalMsg{
-			name:    name,
-			summary: Summarize(name, input),
+			name:      name,
+			summary:   Summarize(name, input),
 			dangerous: IsDangerous(name, input),
-			rule:    p.pendingRule,
+			rule:      p.pendingRule,
 		})
 	}
 

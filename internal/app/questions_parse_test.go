@@ -3,6 +3,10 @@ package app
 import (
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/bubbles/textarea"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/yumlevi/spore-code/internal/proto"
 )
 
 // Standard prose form — single-select, multi-select, open-ended on
@@ -144,5 +148,54 @@ func TestParseQuestionsBlock_recoversMalformedJSON(t *testing.T) {
 	// JSON (the array brackets survived). Recovery should lift them.
 	if len(qs[0].Options) < 5 {
 		t.Errorf("q0 expected ≥5 recovered options, got %d: %v", len(qs[0].Options), qs[0].Options)
+	}
+}
+
+func TestOpenStructuredQuestionWithoutOptionsIsOpenEnded(t *testing.T) {
+	m := &Model{currentStreamIdx: -1, input: textarea.New()}
+	m.openStructuredQuestion(proto.AskUser{
+		QID:      "q1",
+		Question: "What should I do next?",
+	})
+
+	if m.modal != modalQuestion {
+		t.Fatalf("expected question modal, got %v", m.modal)
+	}
+	if m.question == nil || m.question.source != "ask_user" || m.question.qid != "q1" {
+		t.Fatalf("unexpected question state: %#v", m.question)
+	}
+	if got := m.question.questions[0].Options; got != nil {
+		t.Fatalf("expected nil options for open-ended ask_user, got %#v", got)
+	}
+}
+
+func TestAskUserEscStopsTurnAndClosesModal(t *testing.T) {
+	m := &Model{
+		modal:            modalQuestion,
+		currentStreamIdx: -1,
+		generating:       true,
+		input:            textarea.New(),
+		question: &questionModal{
+			source: "ask_user",
+			qid:    "q1",
+			questions: []question{{
+				Text:    "Continue?",
+				Options: []string{"Yes", "No"},
+			}},
+			answers: make([]string, 1),
+			checked: map[int]bool{},
+		},
+	}
+
+	next, _ := m.updateQuestionModal(tea.KeyMsg{Type: tea.KeyEsc})
+	got := next.(*Model)
+	if got.modal != modalNone || got.question != nil {
+		t.Fatalf("expected ask_user modal to close, modal=%v question=%#v", got.modal, got.question)
+	}
+	if got.generating || got.thinking || got.status != "" {
+		t.Fatalf("expected active turn stopped, generating=%v thinking=%v status=%q", got.generating, got.thinking, got.status)
+	}
+	if len(got.messages) == 0 || !strings.Contains(got.messages[len(got.messages)-1].Text, "stopped current turn") {
+		t.Fatalf("expected stop notice in chat, messages=%#v", got.messages)
 	}
 }

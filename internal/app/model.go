@@ -52,14 +52,14 @@ type Model struct {
 	cwd  string
 	sess string
 
-	client  *conn.Client
-	exec    *tools.Executor
-	perms   *TUIPerms
+	client *conn.Client
+	exec   *tools.Executor
+	perms  *TUIPerms
 
 	connected bool
 	connErr   string
 
-	messages      []chatMsg
+	messages []chatMsg
 	// currentStreamIdx is the index in m.messages of the chatMsg
 	// currently receiving chat:delta chunks, or -1 if no stream is
 	// open. Indexing — rather than keeping a *chatMsg pointer — is
@@ -69,25 +69,25 @@ type Model struct {
 	// re-resolve &m.messages[idx] on every access.
 	currentStreamIdx int
 	viewport         viewport.Model
-	input         textarea.Model
-	width, height int
+	input            textarea.Model
+	width, height    int
 
-	planMode     bool
-	contextSent  bool // gather_context only on first message — only used in legacy fallback path
+	planMode    bool
+	contextSent bool // gather_context only on first message — only used in legacy fallback path
 	// scope governs the sandbox for local file ops. "" / "strict"
 	// (default) enforces cwd-only access in tools/fileops.go and
 	// tells the agent so via the system prompt. "expanded" turns
 	// both off. Toggled with /scope.
-	scope string
-	generating   bool
+	scope      string
+	generating bool
 
 	// serverCaps is what SPORE told us it supports on connect. We send
 	// projectContext as a sibling field on chat:submit when this is set,
 	// otherwise we fall back to gluing GatherContext onto the message
 	// content for backwards compatibility with old SPORE builds.
 	serverCaps proto.ServerCapabilities
-	status       string
-	theme        Theme
+	status     string
+	theme      Theme
 
 	// Modals
 	modal        modalKind
@@ -119,13 +119,13 @@ type Model struct {
 	dlog *sessionlog.DebugLogger
 
 	// Side panel state for code viewer + subagent activity.
-	codeViews    []codeViewEntry
-	subagents    *subagentPanel
-	planTasks    *planTaskPanel     // plan-mode execution checklist (task:* frames)
-	panelExpand  bool               // ctrl+p opens a full-height browser
-	panelView    viewport.Model     // scrollable viewport for the expanded panel
+	codeViews     []codeViewEntry
+	subagents     *subagentPanel
+	planTasks     *planTaskPanel // plan-mode execution checklist (task:* frames)
+	panelExpand   bool           // ctrl+p opens a full-height browser
+	panelView     viewport.Model // scrollable viewport for the expanded panel
 	panelViewInit bool
-	panelHidden  bool               // /panel hide — suppress the right-column activity panel entirely
+	panelHidden   bool // /panel hide — suppress the right-column activity panel entirely
 
 	// Slash-command autocomplete state.
 	suggest slashSuggest
@@ -158,9 +158,9 @@ type Model struct {
 	// Command history — Up/Down in input cycles through prior sends.
 	// Persisted to ~/.spore-code/history (plain text, one entry per line) so
 	// it survives restarts. Mirrors prompt_toolkit's FileHistory.
-	cmdHistory  []string
-	histIdx     int    // -1 = not browsing; 0..len-1 = position
-	histDraft   string // saved in-progress text when user starts browsing
+	cmdHistory []string
+	histIdx    int    // -1 = not browsing; 0..len-1 = position
+	histDraft  string // saved in-progress text when user starts browsing
 
 	// Activity indicators for the header.
 	thinkingTokens int  // running token count during a thinking turn
@@ -310,8 +310,8 @@ func (m *Model) loadLocalHistory() {
 		m.messages = append(m.messages, chatMsg{Role: role, Text: text, Timestamp: time.Unix(int64(e.TS), 0)})
 	}
 	m.messages = append(m.messages, chatMsg{
-		Role: "system",
-		Text: fmt.Sprintf("── Local history replayed (%d sent, %d received) — context will be re-sent on next message ──", userN, asstN),
+		Role:      "system",
+		Text:      fmt.Sprintf("── Local history replayed (%d sent, %d received) — context will be re-sent on next message ──", userN, asstN),
 		Timestamp: time.Now(),
 	})
 	m.historyDirty = true
@@ -504,6 +504,9 @@ func (m *Model) startStream() {
 
 func (m *Model) appendDelta(t string) {
 	if m.currentStreamIdx < 0 {
+		if strings.TrimSpace(t) == "" {
+			return
+		}
 		m.startStream()
 	}
 	// Re-resolve every call — the pointer would be stale if anything

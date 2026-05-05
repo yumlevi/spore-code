@@ -1,14 +1,17 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -26,19 +29,13 @@ type updateInstallResult struct {
 // GOOS+GOARCH and atomically replaces the running acorn executable.
 //
 // Implementation notes:
-// - Downloads to a sibling temp file in the install dir so os.Rename works
-//   atomically (same filesystem).
-// - On Windows, we can't rename-over a running exe, so we rename the old
-//   one aside first. The user has to re-launch for the new version.
-// - Validates the download is non-empty and has ELF/PE magic before swap.
+//   - Downloads to a sibling temp file in the install dir so os.Rename works
+//     atomically (same filesystem).
+//   - On Windows, we can't rename-over a running exe, so we rename the old
+//     one aside first. The user has to re-launch for the new version.
+//   - Validates the download is non-empty and has ELF/PE magic before swap.
 func installUpdateCmd(version string) tea.Cmd {
 	return func() tea.Msg {
-		exePath, err := os.Executable()
-		if err != nil {
-			return updateInstallResult{Err: "cannot locate current binary: " + err.Error()}
-		}
-		exePath, _ = filepath.EvalSymlinks(exePath)
-
 		// Resolve asset URL from the release tag.
 		tag := version
 		if tag == "" {
@@ -48,13 +45,7 @@ func installUpdateCmd(version string) tea.Cmd {
 			}
 			tag, _ = t, u
 		}
-		url := fmt.Sprintf(
-			"https://github.com/yumlevi/spore-code/releases/download/%s/spore-%s-%s",
-			tag, runtime.GOOS, runtime.GOARCH,
-		)
-		if runtime.GOOS == "windows" {
-			url += ".exe"
-		}
+		url := fmt.Sprintf("https://github.com/yumlevi/spore-code/releases/download/%s/%s", tag, currentAssetName())
 
 		// Download.
 		client := &http.Client{Timeout: 2 * time.Minute}
@@ -65,6 +56,10 @@ func installUpdateCmd(version string) tea.Cmd {
 		defer resp.Body.Close()
 		if resp.StatusCode != 200 {
 			return updateInstallResult{Err: fmt.Sprintf("download HTTP %d at %s", resp.StatusCode, url)}
+		}
+		exePath, err := currentExecutablePath()
+		if err != nil {
+			return updateInstallResult{Err: err.Error()}
 		}
 		dir := filepath.Dir(exePath)
 		tmp, err := os.CreateTemp(dir, ".spore-update-*")
@@ -78,31 +73,190 @@ func installUpdateCmd(version string) tea.Cmd {
 		}
 		_ = tmp.Close()
 
-		// Magic-byte check: the download must be ELF or PE, not HTML 404.
-		if !looksLikeBinary(tmp.Name()) {
-			_ = os.Remove(tmp.Name())
-			return updateInstallResult{Err: "downloaded file doesn't look like a binary (probably 404'd or the release asset is missing for this platform)"}
-		}
-		if err := os.Chmod(tmp.Name(), 0o755); err != nil {
-			_ = os.Remove(tmp.Name())
-			return updateInstallResult{Err: "chmod failed: " + err.Error()}
-		}
-
-		// Swap. On Windows we move the running exe aside first.
-		if runtime.GOOS == "windows" {
-			old := exePath + ".old"
-			_ = os.Remove(old)
-			if err := os.Rename(exePath, old); err != nil {
-				_ = os.Remove(tmp.Name())
-				return updateInstallResult{Err: "cannot rename running exe aside: " + err.Error()}
-			}
-		}
-		if err := os.Rename(tmp.Name(), exePath); err != nil {
-			_ = os.Remove(tmp.Name())
-			return updateInstallResult{Err: "atomic rename failed: " + err.Error()}
-		}
-		return updateInstallResult{OK: true, Version: tag, Path: exePath}
+		return installTempFile(tmp.Name(), tag)
 	}
+}
+
+// installLocalUpdateCmd installs a locally-built binary instead of downloading
+// from GitHub. It searches:
+//   - explicit file/dir passed after `/update install local`
+//   - SPORE_CODE_UPDATE_BINARY
+//   - SPORE_CODE_UPDATE_DIR
+//   - ./dist and sibling dist/ beside the running executable
+//   - ~/.spore-code/updates
+func installLocalUpdateCmd(query string) tea.Cmd {
+	return func() tea.Msg {
+		src, label, err := resolveLocalUpdateSource(query)
+		if err != nil {
+			return updateInstallResult{Err: err.Error()}
+		}
+		return installSourceFile(src, label)
+	}
+}
+
+func currentAssetName() string {
+	name := fmt.Sprintf("spore-%s-%s", runtime.GOOS, runtime.GOARCH)
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	return name
+}
+
+func currentExecutablePath() (string, error) {
+	exePath, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("cannot locate current binary: %w", err)
+	}
+	exePath, _ = filepath.EvalSymlinks(exePath)
+	return exePath, nil
+}
+
+func resolveLocalUpdateSource(query string) (string, string, error) {
+	query = strings.TrimSpace(query)
+	if query == "local" || query == "dev" {
+		query = ""
+	}
+	if query != "" {
+		if p, ok := localUpdateCandidate(query); ok {
+			return p, readBinaryVersion(p), nil
+		}
+		return "", "", fmt.Errorf("local update source not found: %s", query)
+	}
+
+	if p := os.Getenv("SPORE_CODE_UPDATE_BINARY"); p != "" {
+		if path, ok := localUpdateCandidate(p); ok {
+			return path, readBinaryVersion(path), nil
+		}
+	}
+
+	var dirs []string
+	if d := os.Getenv("SPORE_CODE_UPDATE_DIR"); d != "" {
+		dirs = append(dirs, d)
+	}
+	if exePath, err := currentExecutablePath(); err == nil {
+		dirs = append(dirs, filepath.Join(filepath.Dir(exePath), "dist"))
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		dirs = append(dirs, filepath.Join(cwd, "dist"))
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		dirs = append(dirs, filepath.Join(home, ".spore-code", "updates"))
+	}
+
+	for _, dir := range dirs {
+		if p, ok := localUpdateCandidate(dir); ok {
+			return p, readBinaryVersion(p), nil
+		}
+	}
+
+	return "", "", fmt.Errorf(
+		"no local %s binary found. Run scripts/build.sh or scripts/release.sh, or set SPORE_CODE_UPDATE_DIR / pass `/update install local /path/to/dist`",
+		currentAssetName(),
+	)
+}
+
+func localUpdateCandidate(path string) (string, bool) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", false
+	}
+	if st, err := os.Stat(path); err == nil {
+		if st.IsDir() {
+			candidate := filepath.Join(path, currentAssetName())
+			if st2, err := os.Stat(candidate); err == nil && !st2.IsDir() {
+				return candidate, true
+			}
+			return "", false
+		}
+		return path, true
+	}
+	return "", false
+}
+
+func readBinaryVersion(path string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, path, "--version").Output()
+	if err != nil {
+		return filepath.Base(path)
+	}
+	fields := strings.Fields(strings.TrimSpace(string(out)))
+	if len(fields) == 0 {
+		return filepath.Base(path)
+	}
+	return fields[len(fields)-1]
+}
+
+func installSourceFile(srcPath, version string) updateInstallResult {
+	exePath, err := currentExecutablePath()
+	if err != nil {
+		return updateInstallResult{Err: err.Error()}
+	}
+	if sameFile(srcPath, exePath) {
+		return updateInstallResult{Err: "local update source is already the running executable"}
+	}
+	dir := filepath.Dir(exePath)
+	tmp, err := os.CreateTemp(dir, ".spore-update-*")
+	if err != nil {
+		return updateInstallResult{Err: "cannot create temp file in " + dir + ": " + err.Error()}
+	}
+	src, err := os.Open(srcPath)
+	if err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+		return updateInstallResult{Err: "cannot open local update source: " + err.Error()}
+	}
+	if _, err := io.Copy(tmp, src); err != nil {
+		_ = src.Close()
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+		return updateInstallResult{Err: "copy failed: " + err.Error()}
+	}
+	_ = src.Close()
+	_ = tmp.Close()
+	return installTempFile(tmp.Name(), version)
+}
+
+func sameFile(a, b string) bool {
+	ai, errA := os.Stat(a)
+	bi, errB := os.Stat(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return os.SameFile(ai, bi)
+}
+
+func installTempFile(tmpPath, version string) updateInstallResult {
+	exePath, err := currentExecutablePath()
+	if err != nil {
+		_ = os.Remove(tmpPath)
+		return updateInstallResult{Err: err.Error()}
+	}
+
+	// Magic-byte check: the source must be ELF/PE/Mach-O, not HTML or text.
+	if !looksLikeBinary(tmpPath) {
+		_ = os.Remove(tmpPath)
+		return updateInstallResult{Err: "update source doesn't look like a binary for this platform"}
+	}
+	if err := os.Chmod(tmpPath, 0o755); err != nil {
+		_ = os.Remove(tmpPath)
+		return updateInstallResult{Err: "chmod failed: " + err.Error()}
+	}
+
+	// Swap. On Windows we move the running exe aside first.
+	if runtime.GOOS == "windows" {
+		old := exePath + ".old"
+		_ = os.Remove(old)
+		if err := os.Rename(exePath, old); err != nil {
+			_ = os.Remove(tmpPath)
+			return updateInstallResult{Err: "cannot rename running exe aside: " + err.Error()}
+		}
+	}
+	if err := os.Rename(tmpPath, exePath); err != nil {
+		_ = os.Remove(tmpPath)
+		return updateInstallResult{Err: "atomic rename failed: " + err.Error()}
+	}
+	return updateInstallResult{OK: true, Version: version, Path: exePath}
 }
 
 func fetchLatestTag() (string, string, error) {

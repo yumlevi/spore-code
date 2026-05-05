@@ -419,9 +419,9 @@ type subagentState struct {
 	StreamChars    int    // chars streamed this iter
 
 	// Completion stats (populated on done/error).
-	FinalElapsed  int
-	FinalIters    int
-	FinalTools    int
+	FinalElapsed int
+	FinalIters   int
+	FinalTools   int
 }
 
 func newSubagentPanel() *subagentPanel {
@@ -993,7 +993,6 @@ func truncateStr(s string, n int) string {
 	}
 	return s
 }
-
 
 func asString(v any, def string) string {
 	if s, ok := v.(string); ok {

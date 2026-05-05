@@ -263,10 +263,10 @@ func testMarkdown(m *Model) error {
 
 func testParse(m *Model) error {
 	type tc struct {
-		name string
-		in   string
-		nQ   int
-		opts0 []string
+		name   string
+		in     string
+		nQ     int
+		opts0  []string
 		multi1 bool
 	}
 	cases := []tc{
@@ -274,8 +274,8 @@ func testParse(m *Model) error {
 			name: "standard",
 			in: "QUESTIONS:\n1. What database? [PostgreSQL / MySQL / SQLite]\n" +
 				"2. Which features? {Auth / API / WebSocket}\n3. Project name?\n",
-			nQ:    3,
-			opts0: []string{"PostgreSQL", "MySQL", "SQLite"},
+			nQ:     3,
+			opts0:  []string{"PostgreSQL", "MySQL", "SQLite"},
 			multi1: true,
 		},
 		{
@@ -331,10 +331,10 @@ func testWrap(m *Model) error {
 		in    string
 		width int
 	}{
-		{"hello — world", 8},                 // em dash mid-line
-		{"“smart” quotes", 6},                // smart quotes
-		{"█▄▀▄▄▄ █▀▄ ▀▀ █▄", 4},              // box-drawing run
-		{"日本語のテストです長い行", 6},         // CJK wide-cells
+		{"hello — world", 8},                   // em dash mid-line
+		{"“smart” quotes", 6},                  // smart quotes
+		{"█▄▀▄▄▄ █▀▄ ▀▀ █▄", 4},                // box-drawing run
+		{"日本語のテストです長い行", 6},                    // CJK wide-cells
 		{"emoji 🎉 in the middle of words", 10}, // emoji
 	}
 	for _, c := range cases {
@@ -408,13 +408,17 @@ func testSandbox(m *Model) error {
 			want: "outside",
 		},
 		{
-			op:   "write_file /usr/bin/evil (strict)",
-			fn:   func() any { return tools.WriteFile(map[string]any{"path": "/usr/bin/evil", "content": "x"}, m.cwd, "strict") },
+			op: "write_file /usr/bin/evil (strict)",
+			fn: func() any {
+				return tools.WriteFile(map[string]any{"path": "/usr/bin/evil", "content": "x"}, m.cwd, "strict")
+			},
 			want: "outside",
 		},
 		{
-			op:   "edit_file /etc/hosts (strict)",
-			fn:   func() any { return tools.EditFile(map[string]any{"path": "/etc/hosts", "old_string": "x", "new_string": "y"}, m.cwd, "strict") },
+			op: "edit_file /etc/hosts (strict)",
+			fn: func() any {
+				return tools.EditFile(map[string]any{"path": "/etc/hosts", "old_string": "x", "new_string": "y"}, m.cwd, "strict")
+			},
 			want: "outside",
 		},
 	}

@@ -12,9 +12,10 @@ import (
 // viewport — returns `height` lines.
 //
 // Characters:
-//   track — faint vertical bar ("│") in the theme's separator color
-//   thumb — solid block ("█") in the accent color, sized proportional to
-//           the visible fraction of total content
+//
+//	track — faint vertical bar ("│") in the theme's separator color
+//	thumb — solid block ("█") in the accent color, sized proportional to
+//	        the visible fraction of total content
 //
 // If there's no overflow (content fits), returns height empty lines so
 // the layout stays rectangular.
@@ -65,4 +66,3 @@ func scrollbar(vp *viewport.Model, height int, t Theme) string {
 	}
 	return strings.Join(lines, "\n")
 }
-

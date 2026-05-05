@@ -61,7 +61,13 @@ func (m *Model) openQuestionModal(qs []question) {
 func (m *Model) openStructuredQuestion(f proto.AskUser) {
 	labels := make([]string, 0, len(f.Options))
 	for _, o := range f.Options {
-		labels = append(labels, o.Label)
+		if strings.TrimSpace(o.Label) != "" {
+			labels = append(labels, o.Label)
+		}
+	}
+	var opts []string
+	if len(labels) > 0 {
+		opts = labels
 	}
 	m.modal = modalQuestion
 	m.question = &questionModal{
@@ -69,11 +75,12 @@ func (m *Model) openStructuredQuestion(f proto.AskUser) {
 		qid:    f.QID,
 		questions: []question{{
 			Text:    f.Question,
-			Options: labels,
+			Options: opts,
 		}},
 		answers: make([]string, 1),
 		checked: map[int]bool{},
 	}
+	m.input.Reset()
 }
 
 // parseQuestionsBlock parses the QUESTIONS: marker format used by acorn's
@@ -113,7 +120,7 @@ func parseMarkedQuestions(text string) []question {
 	// Leading/trailing whitespace and backticks are tolerated because
 	// real models don't reliably emit the bare literal no matter what
 	// the prompt says.
-	parts := regexp.MustCompile(`(?mi)(?:^|\n)\s*[*_` + "`" + `]{0,2}\s*QUESTIONS?\s*:\s*[*_` + "`" + `]{0,2}\s*\n`).Split(text, -1)
+	parts := regexp.MustCompile(`(?mi)(?:^|\n)\s*[*_`+"`"+`]{0,2}\s*QUESTIONS?\s*:\s*[*_`+"`"+`]{0,2}\s*\n`).Split(text, -1)
 	if len(parts) < 2 {
 		return nil
 	}
@@ -587,9 +594,17 @@ func (m *Model) updateModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	// Ctrl+C inside a modal: dismiss the modal first (and deny any
 	// pending permission prompt so the blocked tool goroutine unblocks).
-	// THEN route through the normal handleCtrlC double-tap logic so it
-	// behaves the same as outside modals.
+	// If this modal belongs to an active turn, route through the same
+	// stop path as outside modals; otherwise just close the modal.
 	if km.String() == "ctrl+c" {
+		forceStop := m.generating || m.thinking
+		cancelledQuestion := false
+		if m.modal == modalQuestion && m.question != nil {
+			cancelledQuestion = true
+			if m.question.source == "ask_user" && m.question.qid != "" {
+				forceStop = true
+			}
+		}
 		if m.modal == modalPermission && m.perms != nil {
 			m.perms.resolvePerm(false, false)
 		}
@@ -597,7 +612,15 @@ func (m *Model) updateModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.question = nil
 		m.planApproval = nil
 		m.permission = nil
-		return m.handleCtrlC()
+		m.input.Reset()
+		if forceStop {
+			return m.stopActiveTurn("⏹ Stopped")
+		}
+		if cancelledQuestion {
+			m.pushChat("system", "Questions cancelled.")
+			m.Broadcast("interactive:resolved", map[string]any{"kind": "questions"})
+		}
+		return m, nil
 	}
 	if km.String() == "ctrl+d" {
 		if m.modal == modalPermission && m.perms != nil {
@@ -632,6 +655,11 @@ func (m *Model) updateQuestionModal(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.modal = modalNone
 		m.question = nil
+		m.input.Reset()
+		m.Broadcast("interactive:resolved", map[string]any{"kind": "questions"})
+		if qm.source == "ask_user" {
+			return m.stopActiveTurn("Question cancelled; stopped current turn.")
+		}
 		m.pushChat("system", "Questions cancelled.")
 		return m, nil
 	case "up":
@@ -700,7 +728,7 @@ func (m *Model) finishQuestions() (tea.Model, tea.Cmd) {
 	var answerBody string
 	if qm.source == "ask_user" {
 		// Structured ask_user: send WS answer.
-		if len(qm.answers) > 0 {
+		if len(qm.answers) > 0 && m.client != nil {
 			_ = m.client.Send(map[string]any{
 				"type":   "ask_user_answer",
 				"qid":    qm.qid,

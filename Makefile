@@ -11,7 +11,9 @@
 # the host libSystem at runtime, but every Mac ships it).
 
 BIN = spore
-VERSION ?= 0.1.0
+VERSION ?= $(shell scripts/version.sh)
+GO ?= go
+ZIG ?= zig
 LDFLAGS = -s -w -X main.version=$(VERSION)
 LDFLAGS_STATIC = $(LDFLAGS) -extldflags '-static'
 
@@ -30,23 +32,30 @@ ZIG_WINDOWS_ARM64 = aarch64-windows-gnu
 
 all: build
 
-# Local dev build — uses host gcc/cc + cgo. zig works too if you set
-# CC=zig cc explicitly.
+# Local dev build — uses host gcc/cc + cgo when available. On Unraid-style
+# hosts that have Go but no C compiler, falls back to zig cc.
 build:
-	CGO_ENABLED=1 go build -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/spore
+	@if command -v cc >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1; then \
+		CGO_ENABLED=1 $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/spore; \
+	elif command -v $(ZIG) >/dev/null 2>&1; then \
+		CGO_ENABLED=1 CC="$(ZIG) cc" CXX="$(ZIG) c++" $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/spore; \
+	else \
+		echo "No C compiler found. Install gcc/clang or zig 0.13+ for CGO tree-sitter builds."; \
+		exit 1; \
+	fi
 
 run: build
 	./$(BIN)
 
 tidy:
-	go mod tidy
+	$(GO) mod tidy
 
 # Cross-compile every target via zig cc. Linux targets are
 # fully-static (musl); macOS and Windows are dynamically-linked
 # against the host C runtime which is always present on those
 # platforms. End user installs a single binary either way.
 release: clean
-	@command -v zig >/dev/null 2>&1 || { echo "zig not found in PATH — install from https://ziglang.org/download/ (need 0.13+) for cgo cross-compile"; exit 1; }
+	@command -v $(ZIG) >/dev/null 2>&1 || { echo "$(ZIG) not found in PATH — install from https://ziglang.org/download/ (need 0.13+) for cgo cross-compile"; exit 1; }
 	mkdir -p dist
 	@$(MAKE) --no-print-directory release-one GOOS=linux   GOARCH=amd64 ZIG_TARGET=$(ZIG_LINUX_AMD64)   STATIC=1
 	@$(MAKE) --no-print-directory release-one GOOS=linux   GOARCH=arm64 ZIG_TARGET=$(ZIG_LINUX_ARM64)   STATIC=1
@@ -67,9 +76,9 @@ release-one:
 		extflags=""; \
 	fi; \
 	GOOS=$(GOOS) GOARCH=$(GOARCH) CGO_ENABLED=1 \
-	    CC="zig cc -target $(ZIG_TARGET)" \
-	    CXX="zig c++ -target $(ZIG_TARGET)" \
-	    go build -ldflags "$(LDFLAGS) $$extflags" -o $$out ./cmd/spore
+	    CC="$(ZIG) cc -target $(ZIG_TARGET)" \
+	    CXX="$(ZIG) c++ -target $(ZIG_TARGET)" \
+	    $(GO) build -ldflags "$(LDFLAGS) $$extflags" -o $$out ./cmd/spore
 
 install: build
 	install -Dm755 $(BIN) $${HOME}/.local/bin/$(BIN)
