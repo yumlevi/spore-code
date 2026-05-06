@@ -286,6 +286,9 @@ func TestViewPaintsBaseBackgroundWithoutResetHoles(t *testing.T) {
 
 func TestLogoMessageUsesThemeAccent(t *testing.T) {
 	rendered := renderMessage(chatMsg{Role: "system", Text: LogoFull}, 100, themeDark)
+	if !strings.HasPrefix(rendered, "\n") {
+		t.Fatalf("logo banner should start with a blank separator line:\n%q", rendered)
+	}
 	accent := foregroundOpen(themeDark.Accent)
 	if accent == "" || !strings.Contains(rendered, accent) {
 		t.Fatalf("logo banner was not accented:\n%q", rendered)

@@ -1071,7 +1071,7 @@ func renderLogoMessage(width int, t Theme) string {
 		line = strings.TrimRight(line, " ")
 		lines[i] = open + "\x1b[1m" + truncateCells(line, innerW) + "\x1b[0m"
 	}
-	return strings.Join(lines, "\n")
+	return "\n" + strings.Join(lines, "\n")
 }
 
 // wrapForPanel soft-wraps each line to at most w display cells wide,
