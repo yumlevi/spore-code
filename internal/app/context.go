@@ -81,11 +81,26 @@ func BuildProjectContextWithScope(cwd, mode, scope string) proto.ProjectContext 
 	}
 	// codeindex (M2): advertise the local index so the SPORE-side
 	// spore-code plugin's Plan Mode Phase 2 prompt can branch.
-	if has, head := codeindexState(root); has {
+	hasIndex, head := codeindexState(root)
+	if hasIndex {
 		pc.HasCodeIndex = true
 		pc.IndexHead = head
 	}
+	pc.ToolGuidance = codeLookupToolGuidance(hasIndex)
 	return pc
+}
+
+func codeLookupToolGuidance(hasIndex bool) []string {
+	guidance := []string{
+		"Prefer targeted code lookup over full-file reads.",
+		"Use search_symbols to find qname/file/start/end, then get_snippet with qname or name+file/kind.",
+		"Use get_snippet with file+start_line/end_line or read_file with start_line/end_line for narrow ranges.",
+		"Only read whole files when symbol/range lookup cannot answer the question.",
+	}
+	if !hasIndex {
+		guidance = append(guidance, "If structural lookup is empty, run index_codebase first or rely on grep/read_file ranges.")
+	}
+	return guidance
 }
 
 // codeindexState reports whether <root>/.spore-code/index.db is present and
@@ -478,6 +493,11 @@ func GatherContext(cwd string) string {
 			"2. Tell user: \"Installing deps, this may take a minute...\"\n"+
 			"3. Check the result, report success/failure, then continue.\n"+
 			"This keeps the user informed instead of going silent for 2 minutes.]")
+	parts = append(parts,
+		"[TOOL GUIDANCE: Prefer search_symbols → get_snippet before full-file reads. "+
+			"get_snippet accepts qname, name+file/kind, or file+start_line/end_line. "+
+			"read_file accepts start_line/end_line, line_range, offset/limit, and compact/code_only. "+
+			"Only read whole files when symbol or range lookup cannot answer the question.]")
 
 	if gitRoot != "" {
 		if branch := gitBranch(cwd); branch != "" {

@@ -42,6 +42,28 @@ func TestReadFile_OffsetLimit(t *testing.T) {
 	}
 }
 
+func TestReadFile_StartEndLineAliases(t *testing.T) {
+	path, cwd := writeNLines(t, 100)
+	r := ReadFile(map[string]any{"path": path, "start_line": 11, "end_line": 15}, cwd, "expanded")
+	m := r.(map[string]any)
+	got := m["content"].(string)
+	want := "11\tline 11\n12\tline 12\n13\tline 13\n14\tline 14\n15\tline 15\n"
+	if got != want {
+		t.Errorf("content mismatch\nwant: %q\ngot:  %q", want, got)
+	}
+}
+
+func TestReadFile_LineRangeCompact(t *testing.T) {
+	path, cwd := writeNLines(t, 100)
+	r := ReadFile(map[string]any{"path": path, "line_range": "L11-L13", "compact": true}, cwd, "expanded")
+	m := r.(map[string]any)
+	got := m["content"].(string)
+	want := "line 11\nline 12\nline 13\n"
+	if got != want {
+		t.Errorf("content mismatch\nwant: %q\ngot:  %q", want, got)
+	}
+}
+
 func TestReadFile_NegativeOffset_TailMode(t *testing.T) {
 	path, cwd := writeNLines(t, 50)
 	r := ReadFile(map[string]any{"path": path, "offset": -3}, cwd, "expanded")

@@ -112,7 +112,34 @@ func TestExecutorCodeIndexFlow(t *testing.T) {
 		t.Errorf("snippet should include func decl line; got first 80 chars: %q", firstChars(content, 80))
 	}
 
-	// 4. architecture
+	// 4. get_snippet by friendly symbol name + file hint
+	in3b, _ := json.Marshal(map[string]any{"name": "Execute", "file": "internal/tools/executor.go", "kind": "method"})
+	r3b, _ := exe.Execute("get_snippet", in3b)
+	m3b, _ := r3b.(map[string]any)
+	if m3b["ok"] != true {
+		t.Fatalf("get_snippet by name failed: %+v", r3b)
+	}
+	content, _ = m3b["content"].(string)
+	if !strings.Contains(content, "func (e *Executor) Execute") {
+		t.Errorf("name snippet should include func decl line; got first 80 chars: %q", firstChars(content, 80))
+	}
+	if m3b["qname"] == "" {
+		t.Errorf("name snippet should include resolved qname: %+v", m3b)
+	}
+
+	// 5. get_snippet by file + line_range alias
+	in3c, _ := json.Marshal(map[string]any{"file": "internal/tools/executor.go", "line_range": []any{160, 165}})
+	r3c, _ := exe.Execute("get_snippet", in3c)
+	m3c, _ := r3c.(map[string]any)
+	if m3c["ok"] != true {
+		t.Fatalf("get_snippet by line range failed: %+v", r3c)
+	}
+	content, _ = m3c["content"].(string)
+	if !strings.Contains(content, "func (e *Executor) Execute") {
+		t.Errorf("line range snippet should include Execute declaration; got %q", firstChars(content, 120))
+	}
+
+	// 6. architecture
 	r4, _ := exe.Execute("architecture", []byte(`{}`))
 	m4, _ := r4.(map[string]any)
 	if m4["ok"] != true {

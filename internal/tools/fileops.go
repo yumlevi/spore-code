@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/yumlevi/spore-code/internal/codeindex"
@@ -52,7 +53,20 @@ func ResolvePathScoped(raw, cwd, scope string) (string, error) {
 // would be quietly read end-to-end just to compute totalLines.
 const MaxReadFileBytes int64 = 100 * 1024 * 1024 // 100 MB
 
-// ReadFile implements the read_file tool. Input keys: path, offset, limit.
+// ReadFile implements the read_file tool.
+//
+// Range inputs:
+//
+//	offset + limit                — 0-based line offset and count
+//	start_line + end_line         — 1-based inclusive line range
+//	startLine + endLine           — camelCase aliases
+//	line_range / lineRange        — "120-145", "120:145", or [120,145]
+//
+// Formatting inputs:
+//
+//	include_line_numbers=false    — omit "N\t" prefixes from content
+//	compact=true / code_only=true — aliases for include_line_numbers=false
+//
 // scope governs sandboxing — empty/"strict" enforces cwd containment,
 // "expanded" allows any absolute path.
 //
@@ -64,8 +78,9 @@ const MaxReadFileBytes int64 = 100 * 1024 * 1024 // 100 MB
 // fetch more), but unselected lines are dropped after counting.
 //
 // Special offset values:
-//   offset >= 0      — start at line `offset` (0-based)
-//   offset < 0       — "last |offset| lines" (tail mode, ring-buffered)
+//
+//	offset >= 0      — start at line `offset` (0-based)
+//	offset < 0       — "last |offset| lines" (tail mode, ring-buffered)
 func ReadFile(input map[string]any, cwd, scope string) any {
 	pathRaw, _ := input["path"].(string)
 	p, err := ResolvePathScoped(pathRaw, cwd, scope)
@@ -91,8 +106,7 @@ func ReadFile(input map[string]any, cwd, scope string) any {
 	}
 	defer f.Close()
 
-	offset := asInt(input["offset"], 0)
-	limit := asInt(input["limit"], 2000)
+	offset, limit, includeLineNumbers := readFileOptions(input)
 	if limit <= 0 {
 		limit = 2000
 	}
@@ -124,7 +138,7 @@ func ReadFile(input map[string]any, cwd, scope string) any {
 		startLine := total - len(ring) + 1
 		var b strings.Builder
 		for i, ln := range ring {
-			fmt.Fprintf(&b, "%d\t%s\n", startLine+i, ln)
+			writeReadFileLine(&b, startLine+i, ln, includeLineNumbers)
 		}
 		return map[string]any{
 			"content":    b.String(),
@@ -153,9 +167,123 @@ func ReadFile(input map[string]any, cwd, scope string) any {
 	}
 	var b strings.Builder
 	for i, ln := range collected {
-		fmt.Fprintf(&b, "%d\t%s\n", offset+i+1, ln)
+		writeReadFileLine(&b, offset+i+1, ln, includeLineNumbers)
 	}
 	return map[string]any{"content": b.String(), "totalLines": total}
+}
+
+func readFileOptions(input map[string]any) (offset, limit int, includeLineNumbers bool) {
+	offset = asInt(input["offset"], 0)
+	limit = asInt(input["limit"], 2000)
+	includeLineNumbers = true
+	if asBool(input["compact"], false) || asBool(input["code_only"], false) || asBool(input["codeOnly"], false) {
+		includeLineNumbers = false
+	}
+	if v, ok := input["include_line_numbers"]; ok {
+		includeLineNumbers = asBool(v, includeLineNumbers)
+	}
+	if v, ok := input["includeLineNumbers"]; ok {
+		includeLineNumbers = asBool(v, includeLineNumbers)
+	}
+	if v, ok := input["line_numbers"]; ok {
+		includeLineNumbers = asBool(v, includeLineNumbers)
+	}
+
+	if start, end, ok := lineRangeFromInput(input); ok {
+		if start < 1 {
+			start = 1
+		}
+		offset = start - 1
+		if end >= start {
+			limit = end - start + 1
+		}
+	}
+	return offset, limit, includeLineNumbers
+}
+
+func lineRangeFromInput(input map[string]any) (start, end int, ok bool) {
+	for _, key := range []string{"line_range", "lineRange", "range"} {
+		if s, e, found := parseLineRange(input[key]); found {
+			return s, e, true
+		}
+	}
+	start, hasStart := firstInt(input, "start_line", "startLine", "line")
+	end, hasEnd := firstInt(input, "end_line", "endLine")
+	if hasStart || hasEnd {
+		if !hasStart {
+			start = end
+		}
+		if !hasEnd {
+			end = 0
+		}
+		return start, end, true
+	}
+	return 0, 0, false
+}
+
+func parseLineRange(v any) (start, end int, ok bool) {
+	switch x := v.(type) {
+	case string:
+		s := strings.TrimSpace(strings.ToLower(x))
+		if s == "" {
+			return 0, 0, false
+		}
+		replacer := strings.NewReplacer("lines", "", "line", "", "l", "", " ", "", "..", "-", ":", "-", ",", "-")
+		s = replacer.Replace(s)
+		parts := strings.Split(s, "-")
+		if len(parts) == 0 || parts[0] == "" {
+			return 0, 0, false
+		}
+		start, err := strconv.Atoi(parts[0])
+		if err != nil {
+			return 0, 0, false
+		}
+		end := 0
+		if len(parts) > 1 && parts[1] != "" {
+			if end, err = strconv.Atoi(parts[1]); err != nil {
+				return 0, 0, false
+			}
+		}
+		return start, end, true
+	case []any:
+		if len(x) == 0 {
+			return 0, 0, false
+		}
+		start := asInt(x[0], 0)
+		end := 0
+		if len(x) > 1 {
+			end = asInt(x[1], 0)
+		}
+		return start, end, start > 0
+	case []int:
+		if len(x) == 0 {
+			return 0, 0, false
+		}
+		end := 0
+		if len(x) > 1 {
+			end = x[1]
+		}
+		return x[0], end, x[0] > 0
+	}
+	return 0, 0, false
+}
+
+func firstInt(input map[string]any, keys ...string) (int, bool) {
+	for _, key := range keys {
+		if v, ok := input[key]; ok {
+			return asInt(v, 0), true
+		}
+	}
+	return 0, false
+}
+
+func writeReadFileLine(b *strings.Builder, lineNo int, line string, includeLineNumbers bool) {
+	if includeLineNumbers {
+		fmt.Fprintf(b, "%d\t%s\n", lineNo, line)
+		return
+	}
+	b.WriteString(line)
+	b.WriteByte('\n')
 }
 
 // WriteFile implements the write_file tool. Input: path, content.
@@ -225,6 +353,10 @@ func asInt(v any, d int) int {
 		return int(n)
 	case float64:
 		return int(n)
+	case string:
+		if i, err := strconv.Atoi(strings.TrimSpace(n)); err == nil {
+			return i
+		}
 	}
 	return d
 }
@@ -234,9 +366,22 @@ func asString(v any, d string) string {
 	}
 	return d
 }
+func firstString(input map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if s := strings.TrimSpace(asString(input[key], "")); s != "" {
+			return s
+		}
+	}
+	return ""
+}
 func asBool(v any, d bool) bool {
 	if b, ok := v.(bool); ok {
 		return b
+	}
+	if s, ok := v.(string); ok {
+		if b, err := strconv.ParseBool(strings.TrimSpace(s)); err == nil {
+			return b
+		}
 	}
 	return d
 }

@@ -107,19 +107,20 @@ type ChatBusy struct {
 // previous turn's value and only re-rendering changed fields. Cheap on
 // the wire (a small struct), big savings in the conversation token cost.
 type ProjectContext struct {
-	Cwd         string   `json:"cwd"`
-	Project     string   `json:"project"`               // basename of git root or cwd
-	GitBranch   string   `json:"gitBranch,omitempty"`   // current branch name
-	GitStatus   string   `json:"gitStatus,omitempty"`   // git status --short, capped at 1KB
-	GitHash     string   `json:"gitHash,omitempty"`     // HEAD short hash, used as cache key
-	ProjectType string   `json:"projectType,omitempty"` // "Go", "Node.js", etc.
-	SporeMd     string   `json:"sporeMd,omitempty"`     // SPORE.md contents, capped at 4KB
-	Tree        []string `json:"tree,omitempty"`        // depth-2 paths only, no contents
-	Tools       []string `json:"tools,omitempty"`       // ["node", "go", "git", ...]
-	LocalTools  []string `json:"localTools,omitempty"`  // callable tools this binary can execute locally
-	Mode        string   `json:"mode,omitempty"`        // "plan" | "execute" — replaces PlanPrefix glue
-	OS          string   `json:"os,omitempty"`          // runtime.GOOS
-	Arch        string   `json:"arch,omitempty"`        // runtime.GOARCH
+	Cwd          string   `json:"cwd"`
+	Project      string   `json:"project"`                // basename of git root or cwd
+	GitBranch    string   `json:"gitBranch,omitempty"`    // current branch name
+	GitStatus    string   `json:"gitStatus,omitempty"`    // git status --short, capped at 1KB
+	GitHash      string   `json:"gitHash,omitempty"`      // HEAD short hash, used as cache key
+	ProjectType  string   `json:"projectType,omitempty"`  // "Go", "Node.js", etc.
+	SporeMd      string   `json:"sporeMd,omitempty"`      // SPORE.md contents, capped at 4KB
+	Tree         []string `json:"tree,omitempty"`         // depth-2 paths only, no contents
+	Tools        []string `json:"tools,omitempty"`        // ["node", "go", "git", ...]
+	LocalTools   []string `json:"localTools,omitempty"`   // callable tools this binary can execute locally
+	ToolGuidance []string `json:"toolGuidance,omitempty"` // concise tool-selection rules for lower-token code lookup
+	Mode         string   `json:"mode,omitempty"`         // "plan" | "execute" — replaces PlanPrefix glue
+	OS           string   `json:"os,omitempty"`           // runtime.GOOS
+	Arch         string   `json:"arch,omitempty"`         // runtime.GOARCH
 
 	// Scope governs file-op sandboxing. "strict" (default) locks
 	// read_file/write_file/edit_file/exec to the cwd directory tree.

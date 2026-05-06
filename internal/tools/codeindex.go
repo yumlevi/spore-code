@@ -369,12 +369,15 @@ func SearchSymbols(input map[string]any, cwd string) any {
 // Input fields (one form):
 //
 //	qname:       string — symbol's qualified name (preferred)
+//	name:        string — bare symbol name; may be paired with file/kind/container
+//	symbolName:  string — alias for name
 //
 // Input fields (alternate form):
 //
 //	file:        string — repo-relative path
 //	start_line:  int
 //	end_line:    int
+//	line_range:  string or [start,end]
 func GetSnippet(input map[string]any, cwd string) any {
 	refreshed, oldHead, newHead := ensureIndexFresh(cwd)
 	store, err := codeindex.Open(cwd)
@@ -385,9 +388,10 @@ func GetSnippet(input map[string]any, cwd string) any {
 
 	var file string
 	var startLine, endLine int
+	var sym *codeindex.Symbol
 
-	if qn := asString(input["qname"], ""); qn != "" {
-		sym, err := store.GetSymbol(qn)
+	if qn := firstString(input, "qname", "qualified_name", "qualifiedName"); qn != "" {
+		sym, err = store.GetSymbol(qn)
 		if err != nil {
 			return errMap("lookup qname: " + err.Error())
 		}
@@ -397,12 +401,22 @@ func GetSnippet(input map[string]any, cwd string) any {
 		file = sym.File
 		startLine = sym.StartLine
 		endLine = sym.EndLine
+	} else if name := firstString(input, "name", "symbol", "symbol_name", "symbolName"); name != "" {
+		sym, err = resolveSnippetSymbol(store, input, name)
+		if err != nil {
+			return errMap(err.Error())
+		}
+		if sym == nil {
+			return map[string]any{"ok": false, "error": "symbol name not in index", "name": name}
+		}
+		file = sym.File
+		startLine = sym.StartLine
+		endLine = sym.EndLine
 	} else {
-		file = asString(input["file"], "")
-		startLine = asInt(input["start_line"], 0)
-		endLine = asInt(input["end_line"], 0)
+		file = firstString(input, "file", "path")
+		startLine, endLine, _ = lineRangeFromInput(input)
 		if file == "" || startLine < 1 {
-			return errMap("either qname or (file + start_line[+end_line]) required")
+			return errMap("either qname, name, or (file + start_line[+end_line]) required")
 		}
 	}
 
@@ -423,10 +437,106 @@ func GetSnippet(input map[string]any, cwd string) any {
 		"end_line":   endLine,
 		"content":    body,
 	}
+	if sym != nil {
+		r["qname"] = sym.QName
+		r["name"] = sym.Name
+		r["kind"] = sym.Kind
+	}
 	if note := freshnessNote(refreshed, oldHead, newHead); note != nil {
 		r["index_refreshed"] = note
 	}
 	return r
+}
+
+func resolveSnippetSymbol(store *codeindex.Store, input map[string]any, name string) (*codeindex.Symbol, error) {
+	fileHint := firstString(input, "file", "path")
+	query := codeindex.SearchQuery{
+		NameLike: firstSymbolNameSegment(name),
+		Kind:     firstString(input, "kind", "symbol_kind", "symbolKind"),
+		Language: firstString(input, "language", "lang"),
+		Limit:    200,
+	}
+	if fileHint != "" {
+		query.FileLike = likePattern(fileHint)
+	}
+	results, err := store.Search(query)
+	if err != nil {
+		return nil, fmt.Errorf("search symbol: %w", err)
+	}
+	containerHint := strings.ToLower(firstString(input, "container", "class", "receiver", "type"))
+	nameLower := strings.ToLower(name)
+	fileLower := strings.ToLower(fileHint)
+	filtered := results[:0]
+	for _, r := range results {
+		if nameLower != "" &&
+			!strings.EqualFold(r.Name, name) &&
+			!strings.EqualFold(r.QName, name) &&
+			!strings.Contains(strings.ToLower(r.QName), nameLower) {
+			continue
+		}
+		if fileLower != "" && !strings.Contains(strings.ToLower(r.File), fileLower) {
+			continue
+		}
+		if containerHint != "" &&
+			!strings.Contains(strings.ToLower(r.Container), containerHint) &&
+			!strings.Contains(strings.ToLower(r.QName), containerHint) {
+			continue
+		}
+		filtered = append(filtered, r)
+	}
+	if len(filtered) == 0 {
+		return nil, nil
+	}
+	exact := filtered[:0]
+	for _, r := range filtered {
+		if strings.EqualFold(r.Name, name) || strings.EqualFold(r.QName, name) {
+			exact = append(exact, r)
+		}
+	}
+	if len(exact) == 1 {
+		return &exact[0], nil
+	}
+	if len(exact) > 1 {
+		return nil, ambiguousSymbolError(name, exact)
+	}
+	if len(filtered) == 1 {
+		return &filtered[0], nil
+	}
+	return nil, ambiguousSymbolError(name, filtered)
+}
+
+func firstSymbolNameSegment(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	for _, sep := range []string{"::", "."} {
+		if idx := strings.LastIndex(name, sep); idx >= 0 && idx+len(sep) < len(name) {
+			return name[idx+len(sep):]
+		}
+	}
+	return name
+}
+
+func likePattern(s string) string {
+	if strings.ContainsAny(s, "%_") {
+		return s
+	}
+	return "%" + s + "%"
+}
+
+func ambiguousSymbolError(name string, matches []codeindex.Symbol) error {
+	const max = 8
+	var b strings.Builder
+	fmt.Fprintf(&b, "symbol name %q is ambiguous; pass qname or add file/kind/container. candidates:", name)
+	for i, m := range matches {
+		if i >= max {
+			fmt.Fprintf(&b, " ... (%d more)", len(matches)-max)
+			break
+		}
+		fmt.Fprintf(&b, " %s (%s:%d)", m.QName, m.File, m.StartLine)
+	}
+	return fmt.Errorf("%s", b.String())
 }
 
 // Architecture returns the index summary used by /architecture and the
