@@ -53,7 +53,7 @@ func TestAuthenticateUsesPasswordPayload(t *testing.T) {
 	if _, ok := got["key"]; ok {
 		t.Fatalf("password auth should not send invite key: %#v", got)
 	}
-	if _, ok := got["authMethod"]; ok {
-		t.Fatalf("password auth should keep payload minimal: %#v", got)
+	if got["authMethod"] != "password" {
+		t.Fatalf("password auth should identify its auth method: %#v", got)
 	}
 }

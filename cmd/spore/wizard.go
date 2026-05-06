@@ -366,6 +366,7 @@ func testAuth(host string, port int, user, authMethod, key, password string) err
 	base = strings.TrimRight(base, "/")
 	authBody := map[string]string{"username": user}
 	if authMethod == config.AuthPassword {
+		authBody["authMethod"] = config.AuthPassword
 		authBody["password"] = password
 	} else {
 		authBody["key"] = key

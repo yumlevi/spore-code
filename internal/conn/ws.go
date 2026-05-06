@@ -102,6 +102,7 @@ func New(host string, port int, user, authMethod, key, password string) *Client 
 func (c *Client) Authenticate(ctx context.Context) error {
 	payload := map[string]string{"username": c.user}
 	if strings.EqualFold(strings.TrimSpace(c.authMethod), "password") {
+		payload["authMethod"] = "password"
 		payload["password"] = c.password
 	} else {
 		payload["key"] = c.key
