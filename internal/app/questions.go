@@ -865,8 +865,7 @@ func (m *Model) finishQuestions() (tea.Model, tea.Cmd) {
 	}
 	answerBody = strings.Join(lines, "\n")
 	m.pushChat("user", answerBody)
-	m.generating = true
-	m.status = "waiting…"
+	m.startActiveTurn("waiting…")
 	// Dismiss mobile question sheet.
 	m.Broadcast("interactive:resolved", map[string]any{"kind": "questions"})
 	// Question answers are user-typed content; project context still

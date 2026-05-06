@@ -174,6 +174,7 @@ type Model struct {
 	thinkingTokens int  // running token count during a thinking turn
 	spinnerFrame   int  // index into spinnerFrames for animated activity dot
 	thinking       bool // true between thinking_start and thinking_done
+	activeSince    time.Time
 
 	// Ctrl+C bookkeeping. Mirrors acorn/app.py:action_quit_check —
 	// while generating: first Ctrl+C stops the run; while idle: first
@@ -209,6 +210,21 @@ type Model struct {
 // main.go calls this after tea.NewProgram returns.
 func (m *Model) SetProgram(p *tea.Program) {
 	m.sendProgramMsg = func(msg tea.Msg) { p.Send(msg) }
+}
+
+func (m *Model) startActiveTurn(status string) {
+	m.generating = true
+	if m.activeSince.IsZero() {
+		m.activeSince = time.Now()
+	}
+	m.status = status
+}
+
+func (m *Model) clearActiveTurn() {
+	m.generating = false
+	m.thinking = false
+	m.thinkingTokens = 0
+	m.activeSince = time.Time{}
 }
 
 // New constructs the initial model.

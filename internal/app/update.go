@@ -251,6 +251,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, sizePollCmd()
 
 	case spinnerTickMsg:
+		if (m.generating || m.thinking) && m.activeSince.IsZero() {
+			m.activeSince = time.Now()
+		}
 		m.spinnerFrame = (m.spinnerFrame + 1) % len(spinnerFrames)
 		// Keep ticking only while there's something to animate. Drops the
 		// tick once generation ends so we don't burn cycles redrawing.
@@ -569,8 +572,7 @@ func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				content = PlanPrefix + content
 			}
 		}
-		m.generating = true
-		m.status = "waiting…"
+		m.startActiveTurn("waiting…")
 		m.thinkingTokens = 0
 		if m.planMode {
 			m.setWorkflowPhase(workflowInterview, "")
@@ -706,9 +708,7 @@ func (m *Model) stopActiveTurn(message string) (tea.Model, tea.Cmd) {
 	if m.currentStreamIdx >= 0 {
 		m.endStream()
 	}
-	m.generating = false
-	m.thinking = false
-	m.thinkingTokens = 0
+	m.clearActiveTurn()
 	m.status = ""
 	m.setWorkflowPhase(workflowIdle, "")
 	if strings.TrimSpace(message) != "" {
@@ -878,7 +878,7 @@ func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 		var v proto.ChatDone
 		_ = json.Unmarshal(f.Raw, &v)
 		m.endStream()
-		m.generating = false
+		m.clearActiveTurn()
 		m.status = ""
 		if !m.planMode && m.modal == modalNone {
 			m.setWorkflowPhase(workflowIdle, "")
@@ -948,7 +948,7 @@ func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 		var v proto.ChatError
 		_ = json.Unmarshal(f.Raw, &v)
 		m.pushChat("system", "chat error: "+v.Error)
-		m.generating = false
+		m.clearActiveTurn()
 		m.status = ""
 	case "chat:busy":
 		m.pushChat("system", "Server: session busy (another client may be running it)")
@@ -1283,6 +1283,9 @@ func (m *Model) handleStatus(v proto.ChatStatus) {
 		m.endStream()
 		m.status = "thinking…"
 		m.thinking = true
+		if m.activeSince.IsZero() {
+			m.activeSince = time.Now()
+		}
 		m.thinkingTokens = 0
 		m.thinkingBuf = ""
 	case "thinking", "thinking_token":
@@ -1445,8 +1448,7 @@ func (m *Model) postStreamChecks() tea.Cmd {
 			m.questionsRetryAttempted = true
 			m.pushChat("system", "Agent's QUESTIONS: block was malformed (probably a streaming glitch) — auto-asking the agent to re-emit it cleanly.")
 			fixup := "Your previous response had a `QUESTIONS:` marker but the JSON couldn't be parsed (likely streaming corruption — chars got dropped between fields). Re-emit ONLY the QUESTIONS: block as valid JSON, in this exact shape:\n\nQUESTIONS:\n```json\n[\n  {\"text\": \"Question text?\", \"type\": \"single|multi|open\", \"options\": [\"A\", \"B\", \"C\"]}\n]\n```\n\nNo prose before or after. Just the marker line and the JSON array. Each item needs `text` (string), `type` (\"single\" / \"multi\" / \"open\"), and — for non-open — an `options` array of strings."
-			m.generating = true
-			m.status = "asking agent to fix questions…"
+			m.startActiveTurn("asking agent to fix questions…")
 			return tea.Batch(m.sendChatWithMode(fixup, "plan"), spinnerTickCmd())
 		}
 	}
@@ -1458,8 +1460,7 @@ func (m *Model) postStreamChecks() tea.Cmd {
 	if hasNoInterview {
 		// ROUTER 1 decided no interview needed → auto-fire RESEARCH.
 		m.pushChat("system", "No interview needed — starting research…")
-		m.generating = true
-		m.status = "researching…"
+		m.startActiveTurn("researching…")
 		m.setWorkflowPhase(workflowResearch, "")
 		return tea.Batch(m.sendChatWithMode("[RESEARCH] Proceed to research+code phase.", "plan"), spinnerTickCmd())
 	}
@@ -1468,16 +1469,14 @@ func (m *Model) postStreamChecks() tea.Cmd {
 		// so the agent can flag any follow-up questions that surfaced
 		// from the research output before the plan is built.
 		m.pushChat("system", "Research complete — reviewing for any follow-up questions…")
-		m.generating = true
-		m.status = "reviewing research…"
+		m.startActiveTurn("reviewing research…")
 		m.setWorkflowPhase(workflowReview, "")
 		return tea.Batch(m.sendChatWithMode("[REVIEW] Review the RESEARCH_DONE block from your previous turn and decide if any follow-up questions are needed.", "plan"), spinnerTickCmd())
 	}
 	if hasNoFollowup {
 		// ROUTER 2 decided no follow-ups → auto-fire BUILDING.
 		m.pushChat("system", "No follow-up questions — building the plan…")
-		m.generating = true
-		m.status = "building plan…"
+		m.startActiveTurn("building plan…")
 		m.setWorkflowPhase(workflowBuildPlan, "")
 		return tea.Batch(m.sendChatWithMode("[BUILD_PLAN] Build the plan from the RESEARCH_DONE block in the conversation history.", "plan"), spinnerTickCmd())
 	}

@@ -294,6 +294,41 @@ func TestLogoMessageUsesThemeAccent(t *testing.T) {
 	}
 }
 
+func TestActiveFooterShowsWorkingIndicator(t *testing.T) {
+	m := renderTestModel(120, 24)
+	m.startActiveTurn("running tests")
+	m.activeSince = time.Now().Add(-65 * time.Second)
+	m.spinnerFrame = 3
+
+	rendered := m.renderFooter()
+	for _, needle := range []string{"⠸ Working 1m05s", "running tests", "Ctrl+C to stop"} {
+		if !strings.Contains(rendered, needle) {
+			t.Fatalf("active footer missing %q:\n%q", needle, rendered)
+		}
+	}
+	if strings.Contains(rendered, "enter send") {
+		t.Fatalf("active footer should replace idle shortcuts:\n%q", rendered)
+	}
+}
+
+func TestActiveFooterShowsThinkingTokens(t *testing.T) {
+	m := renderTestModel(120, 24)
+	m.startActiveTurn("thinking…")
+	m.activeSince = time.Now().Add(-2 * time.Second)
+	m.thinking = true
+	m.thinkingTokens = 42
+
+	rendered := m.renderFooter()
+	for _, needle := range []string{"Thinking 0m02s", "42 thinking tokens", "Ctrl+C to stop"} {
+		if !strings.Contains(rendered, needle) {
+			t.Fatalf("thinking footer missing %q:\n%q", needle, rendered)
+		}
+	}
+	if strings.Contains(rendered, "thinking…") {
+		t.Fatalf("thinking footer should avoid duplicate raw status:\n%q", rendered)
+	}
+}
+
 func renderTestModel(w, h int) *Model {
 	ta := textarea.New()
 	ta.SetHeight(3)

@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/glamour"
@@ -684,11 +685,16 @@ func (m *Model) renderHeader() string {
 
 func (m *Model) renderFooter() string {
 	status := m.status
-	if status == "" {
+	active := m.generating || m.thinking
+	if active {
+		status = m.activeFooterStatus()
+	} else if status == "" {
 		status = "enter send · alt+enter newline · shift+tab mode · pgup/pgdn or ctrl+↑/↓ scroll · ctrl+p panels · ctrl+o output · ctrl+c quit"
 	}
-	if wf := m.workflowLabel(); wf != "" {
-		status = wf + " · " + status
+	if !active {
+		if wf := m.workflowLabel(); wf != "" {
+			status = wf + " · " + status
+		}
 	}
 	// Truncate first so lipgloss.Width(...) below doesn't overflow when
 	// the status string is wider than the terminal. Width() pads but
@@ -700,15 +706,72 @@ func (m *Model) renderFooter() string {
 	if lipgloss.Width(status) > maxInner {
 		status = ansi.Truncate(status, maxInner, "…")
 	}
+	fg := m.theme.Muted
+	border := m.theme.Separator
+	if active {
+		fg = m.theme.Fg
+		border = m.theme.Accent
+	}
 	return lipgloss.NewStyle().
-		Foreground(m.theme.Muted).
+		Foreground(fg).
 		Background(m.theme.BgPanel).
 		Padding(0, 1).
 		Border(lipgloss.NormalBorder(), true, false, false, false).
-		BorderForeground(m.theme.Separator).
+		BorderForeground(border).
 		Width(m.width).
 		MaxWidth(m.width).
 		Render(status)
+}
+
+func (m *Model) activeFooterStatus() string {
+	spin := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
+	elapsed := time.Duration(0)
+	if !m.activeSince.IsZero() {
+		elapsed = time.Since(m.activeSince)
+	}
+	verb := "Working"
+	if m.thinking {
+		verb = "Thinking"
+	}
+	parts := []string{fmt.Sprintf("%s %s %s", spin, verb, formatWorkingElapsed(elapsed))}
+	if wf := m.workflowLabel(); wf != "" {
+		parts = append(parts, wf)
+	}
+	if detail := activeStatusDetail(m.status, m.thinking); detail != "" {
+		parts = append(parts, detail)
+	}
+	if m.thinking && m.thinkingTokens > 0 {
+		parts = append(parts, fmt.Sprintf("%d thinking tokens", m.thinkingTokens))
+	}
+	parts = append(parts, "Ctrl+C to stop")
+	return strings.Join(parts, " · ")
+}
+
+func activeStatusDetail(status string, thinking bool) string {
+	status = strings.TrimSpace(status)
+	switch status {
+	case "", "waiting…":
+		return ""
+	case "thinking…":
+		if thinking {
+			return ""
+		}
+	}
+	return status
+}
+
+func formatWorkingElapsed(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	total := int(d / time.Second)
+	h := total / 3600
+	m := (total % 3600) / 60
+	s := total % 60
+	if h > 0 {
+		return fmt.Sprintf("%dh%02dm%02ds", h, m, s)
+	}
+	return fmt.Sprintf("%dm%02ds", m, s)
 }
 
 // rerenderViewport composes the chat content for the viewport. It uses a

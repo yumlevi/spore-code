@@ -175,8 +175,7 @@ func (m *Model) planExecute(text string) (tea.Model, tea.Cmd) {
 	m.Broadcast("plan:set-mode", map[string]any{"enabled": false})
 	m.pushChat("system", "Mode → execute")
 	m.pushChat("system", "▶ Executing plan…")
-	m.generating = true
-	m.status = "waiting…"
+	m.startActiveTurn("waiting…")
 	// Use sendChat (not the old raw sendChatMessage) so projectContext
 	// flows on this turn with mode='execute'. Without it the system
 	// prompt loses the Project Context section AND the plan-mode block,
@@ -199,8 +198,7 @@ func (m *Model) planReviseWithFeedback(fb string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.pushChat("user", "(feedback) "+fb)
-	m.generating = true
-	m.status = "waiting…"
+	m.startActiveTurn("waiting…")
 	m.setWorkflowPhase(workflowInterview, "revision")
 	m.Broadcast("plan:decided", map[string]any{"action": "revise", "feedback": fb})
 	// Stay in plan mode — projectContext.mode='plan' so the system
