@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
@@ -138,16 +139,69 @@ func TestDroppedImageOutsideProjectCopiesToAttachment(t *testing.T) {
 	})
 	got := next.(*Model)
 
-	prefix := "Attached image: "
-	if !strings.HasPrefix(got.input.Value(), prefix) {
-		t.Fatalf("expected attached image prompt, got %q", got.input.Value())
+	if got.input.Value() != "Attached image: spore shot.png" {
+		t.Fatalf("expected image placeholder without a path, got %q", got.input.Value())
 	}
-	rel := strings.TrimPrefix(got.input.Value(), prefix)
+	if len(got.inputAttachments) != 1 {
+		t.Fatalf("expected one hidden image attachment, got %#v", got.inputAttachments)
+	}
+	attachment := got.inputAttachments[0]
+	if attachment.Kind != "image" || attachment.Name != "spore shot.png" || attachment.MediaType != "image/png" {
+		t.Fatalf("unexpected image attachment metadata: %#v", attachment)
+	}
+	rel, err := filepath.Rel(got.cwd, attachment.Path)
+	if err != nil {
+		t.Fatalf("attachment path was not relative to cwd: %v", err)
+	}
+	rel = filepath.ToSlash(rel)
 	if !strings.HasPrefix(rel, ".spore-code/attachments/") {
 		t.Fatalf("expected project-local attachment path, got %q", rel)
 	}
-	if _, err := os.Stat(filepath.Join(got.cwd, filepath.FromSlash(rel))); err != nil {
+	if _, err := os.Stat(attachment.Path); err != nil {
 		t.Fatalf("attachment was not copied into project: %v", err)
+	}
+}
+
+func TestDroppedImageBuildsChatImagePayload(t *testing.T) {
+	m := inputTestModel(t)
+	src := filepath.Join(m.cwd, "spore shot.png")
+	touchFile(t, src)
+
+	next, _ := m.updateKey(tea.KeyMsg{
+		Type:  tea.KeyRunes,
+		Runes: []rune(pathToFileURI(src)),
+		Paste: true,
+	})
+	got := next.(*Model)
+
+	payload := got.chatPayload("look", "look", nil, inputAttachmentsForText(got.input.Value(), got.inputAttachments)...)
+	rawImages, ok := payload["images"].([]map[string]any)
+	if !ok || len(rawImages) != 1 {
+		t.Fatalf("expected one chat image payload, got %#v", payload["images"])
+	}
+	image := rawImages[0]
+	if image["name"] != "spore shot.png" || image["mediaType"] != "image/png" {
+		t.Fatalf("unexpected image payload metadata: %#v", image)
+	}
+	if image["data"] != base64.StdEncoding.EncodeToString([]byte("x")) {
+		t.Fatalf("unexpected image payload data: %#v", image["data"])
+	}
+}
+
+func TestDeletedImagePlaceholderDoesNotSendHiddenAttachment(t *testing.T) {
+	m := inputTestModel(t)
+	src := filepath.Join(m.cwd, "spore shot.png")
+	touchFile(t, src)
+	attachments := []inputAttachment{{
+		Kind:      "image",
+		Name:      "spore shot.png",
+		Path:      src,
+		MediaType: "image/png",
+	}}
+
+	payload := m.chatPayload("look", "look", nil, inputAttachmentsForText("look", attachments)...)
+	if _, ok := payload["images"]; ok {
+		t.Fatalf("deleted placeholder should not send images: %#v", payload["images"])
 	}
 }
 

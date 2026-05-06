@@ -1,8 +1,10 @@
 package app
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
+	"mime"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -20,6 +22,13 @@ type inputTextFlushMsg struct {
 	seq uint64
 }
 
+type inputAttachment struct {
+	Kind      string
+	Name      string
+	Path      string
+	MediaType string
+}
+
 var fileURIRe = regexp.MustCompile(`file://[^\s"'<>]+`)
 
 func (m *Model) handleTextInputKey(km tea.KeyMsg) (tea.Cmd, bool) {
@@ -30,7 +39,7 @@ func (m *Model) handleTextInputKey(km tea.KeyMsg) (tea.Cmd, bool) {
 	if km.Paste {
 		if text := keyText(km); text != "" {
 			m.flushPendingInputText()
-			m.insertInputText(normalizePastedInput(text, m.cwd))
+			m.insertInputText(m.normalizeInputText(text))
 			return nil, true
 		}
 	}
@@ -94,7 +103,7 @@ func (m *Model) flushPendingInputText() {
 	}
 	text := string(m.inputBurst)
 	if m.inputBurstNormalize || len(m.inputBurst) >= 16 {
-		text = normalizePastedInput(text, m.cwd)
+		text = m.normalizeInputText(text)
 	}
 	m.inputBurst = nil
 	m.inputBurstScheduled = false
@@ -112,11 +121,41 @@ func (m *Model) insertInputText(text string) {
 	}
 }
 
+func (m *Model) normalizeInputText(raw string) string {
+	text, attachments := normalizePastedInputWithAttachments(raw, m.cwd, m.modal == modalNone)
+	if m.modal == modalNone && len(attachments) > 0 {
+		m.inputAttachments = append(m.inputAttachments, attachments...)
+	}
+	return text
+}
+
+func inputAttachmentsForText(text string, attachments []inputAttachment) []inputAttachment {
+	if len(attachments) == 0 {
+		return nil
+	}
+	out := make([]inputAttachment, 0, len(attachments))
+	for _, attachment := range attachments {
+		if attachment.Kind == "image" && attachment.Name != "" {
+			if !strings.Contains(text, "Attached image: "+attachment.Name) {
+				continue
+			}
+		}
+		out = append(out, attachment)
+	}
+	return out
+}
+
 func normalizePastedInput(raw, cwd string) string {
+	text, _ := normalizePastedInputWithAttachments(raw, cwd, false)
+	return text
+}
+
+func normalizePastedInputWithAttachments(raw, cwd string, attachImages bool) (string, []inputAttachment) {
 	s := strings.ReplaceAll(raw, "\r\n", "\n")
 	s = strings.ReplaceAll(s, "\r", "\n")
 	if paths, ok := droppedPathFields(s, cwd); ok {
-		return strings.Join(materializeDroppedPaths(paths, cwd), "\n")
+		lines, attachments := materializeDroppedPaths(paths, cwd, attachImages)
+		return strings.Join(lines, "\n"), attachments
 	}
 	s = fileURIRe.ReplaceAllStringFunc(s, func(token string) string {
 		path, ok := fileURIToPath(token)
@@ -125,7 +164,7 @@ func normalizePastedInput(raw, cwd string) string {
 		}
 		return path
 	})
-	return s
+	return s, nil
 }
 
 func droppedPathFields(s, cwd string) ([]string, bool) {
@@ -166,22 +205,28 @@ func fileURIToPath(token string) (string, bool) {
 	return path, true
 }
 
-func materializeDroppedPaths(paths []string, cwd string) []string {
+func materializeDroppedPaths(paths []string, cwd string, attachImages bool) ([]string, []inputAttachment) {
 	out := make([]string, 0, len(paths))
+	attachments := make([]inputAttachment, 0, len(paths))
 	for _, p := range paths {
-		out = append(out, materializeDroppedPath(p, cwd))
+		line, attachment := materializeDroppedPath(p, cwd, attachImages)
+		out = append(out, line)
+		if attachment != nil {
+			attachments = append(attachments, *attachment)
+		}
 	}
-	return out
+	return out, attachments
 }
 
-func materializeDroppedPath(path, cwd string) string {
+func materializeDroppedPath(path, cwd string, attachImages bool) (string, *inputAttachment) {
 	resolved := expandHome(path)
 	info, err := os.Stat(resolved)
 	if err != nil || info.IsDir() {
-		return path
+		return path, nil
 	}
 	label := "file"
-	if isImagePath(resolved) {
+	isImage := isImagePath(resolved)
+	if isImage {
 		label = "image"
 	}
 	usable := usablePathForAgent(resolved, cwd)
@@ -193,7 +238,27 @@ func materializeDroppedPath(path, cwd string) string {
 	if usable == "" {
 		usable = path
 	}
-	return fmt.Sprintf("Attached %s: %s", label, filepath.ToSlash(usable))
+	if isImage && attachImages {
+		attachPath := resolvedAttachmentPath(usable, resolved, cwd)
+		attachment := &inputAttachment{
+			Kind:      "image",
+			Name:      filepath.Base(resolved),
+			Path:      attachPath,
+			MediaType: mediaTypeForPath(resolved),
+		}
+		return fmt.Sprintf("Attached image: %s", filepath.Base(resolved)), attachment
+	}
+	return fmt.Sprintf("Attached %s: %s", label, filepath.ToSlash(usable)), nil
+}
+
+func resolvedAttachmentPath(usable, fallback, cwd string) string {
+	if cwd != "" && usable != "" && !filepath.IsAbs(usable) && !isWindowsDrivePath(usable) {
+		p := filepath.Join(cwd, filepath.FromSlash(usable))
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return fallback
 }
 
 func usablePathForAgent(path, cwd string) string {
@@ -312,6 +377,54 @@ func isImagePath(path string) bool {
 	default:
 		return false
 	}
+}
+
+func mediaTypeForPath(path string) string {
+	if typ := mime.TypeByExtension(strings.ToLower(filepath.Ext(path))); typ != "" {
+		return strings.Split(typ, ";")[0]
+	}
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".png":
+		return "image/png"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	case ".svg":
+		return "image/svg+xml"
+	default:
+		return "application/octet-stream"
+	}
+}
+
+func chatImagesFromAttachments(attachments []inputAttachment) []map[string]any {
+	if len(attachments) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	images := make([]map[string]any, 0, len(attachments))
+	for _, attachment := range attachments {
+		if attachment.Kind != "image" || attachment.Path == "" || seen[attachment.Path] {
+			continue
+		}
+		data, err := os.ReadFile(attachment.Path)
+		if err != nil || len(data) == 0 {
+			continue
+		}
+		seen[attachment.Path] = true
+		mediaType := attachment.MediaType
+		if mediaType == "" {
+			mediaType = mediaTypeForPath(attachment.Path)
+		}
+		images = append(images, map[string]any{
+			"name":      attachment.Name,
+			"mediaType": mediaType,
+			"data":      base64.StdEncoding.EncodeToString(data),
+		})
+	}
+	return images
 }
 
 func shellLikeFields(s string) ([]string, bool) {

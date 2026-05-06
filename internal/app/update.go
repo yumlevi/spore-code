@@ -524,11 +524,15 @@ func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// (rebound in model.go:New). Plain 'enter' arrives here as send.
 		text := strings.TrimSpace(m.input.Value())
 		if text == "" {
+			m.inputAttachments = nil
 			return m, nil
 		}
 		if strings.HasPrefix(text, "/") {
+			m.inputAttachments = nil
 			return m.handleSlashCommand(text)
 		}
+		attachments := inputAttachmentsForText(text, m.inputAttachments)
+		m.inputAttachments = nil
 		m.input.Reset()
 		// Record the send in command history before context-prefixing.
 		// Skip identical-to-last to avoid noisy duplicates from re-sends.
@@ -573,7 +577,7 @@ func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.setWorkflowPhase(workflowIdle, "")
 		}
-		return m, tea.Batch(m.sendChat(content, text, projectCtx), spinnerTickCmd())
+		return m, tea.Batch(m.sendChat(content, text, projectCtx, attachments...), spinnerTickCmd())
 
 	case "pgup":
 		m.viewport.LineUp(m.viewport.Height - 2)

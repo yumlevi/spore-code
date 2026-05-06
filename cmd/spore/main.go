@@ -23,7 +23,7 @@ import (
 //	go build -ldflags "-X main.version=v0.1.1" ./cmd/acorn
 //
 // Falls back to the in-source default for plain `go build`.
-var version = "v1.0.18"
+var version = "v1.0.19"
 
 func main() {
 	var (

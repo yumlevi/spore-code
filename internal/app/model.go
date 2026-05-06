@@ -202,6 +202,7 @@ type Model struct {
 	inputBurstSeq       uint64
 	inputBurstScheduled bool
 	inputBurstNormalize bool
+	inputAttachments    []inputAttachment
 }
 
 // SetProgram stores the reference so off-thread code can deliver messages.
@@ -719,26 +720,34 @@ func (m *Model) Broadcast(msgType string, kv map[string]any) {
 // prompt so it never accumulates in messages[]. When the capability
 // isn't advertised, callers should glue GatherContext() onto content
 // instead and pass an empty ProjectContext here.
-func (m *Model) sendChat(content, displayText string, projectCtx *proto.ProjectContext) tea.Cmd {
+func (m *Model) sendChat(content, displayText string, projectCtx *proto.ProjectContext, attachments ...inputAttachment) tea.Cmd {
 	return func() tea.Msg {
-		payload := map[string]any{
-			"type":      "chat",
-			"sessionId": m.sess,
-			"content":   content,
-			"userName":  m.cfg.Connection.User,
-			"cwd":       m.cwd,
-		}
-		if displayText != "" && displayText != content {
-			payload["displayText"] = displayText
-		}
-		if projectCtx != nil {
-			payload["projectContext"] = projectCtx
-		}
+		payload := m.chatPayload(content, displayText, projectCtx, attachments...)
 		if err := m.client.Send(payload); err != nil {
 			return connErrorMsg{err: err.Error()}
 		}
 		return nil
 	}
+}
+
+func (m *Model) chatPayload(content, displayText string, projectCtx *proto.ProjectContext, attachments ...inputAttachment) map[string]any {
+	payload := map[string]any{
+		"type":      "chat",
+		"sessionId": m.sess,
+		"content":   content,
+		"userName":  m.cfg.Connection.User,
+		"cwd":       m.cwd,
+	}
+	if displayText != "" && displayText != content {
+		payload["displayText"] = displayText
+	}
+	if projectCtx != nil {
+		payload["projectContext"] = projectCtx
+	}
+	if images := chatImagesFromAttachments(attachments); len(images) > 0 {
+		payload["images"] = images
+	}
+	return payload
 }
 
 // dirTag extracts the last path component for a session label.
