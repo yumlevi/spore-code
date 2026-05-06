@@ -117,10 +117,11 @@ func cmdQuit(m *Model, _ []string) (tea.Model, tea.Cmd) {
 	return m, tea.Quit
 }
 
-// /logout — clear the saved invite key and quit. Next launch runs the
-// first-time wizard since no key is configured.
+// /logout — clear the saved auth secret and quit. Next launch runs the
+// first-time wizard since no credentials are configured.
 func cmdLogout(m *Model, _ []string) (tea.Model, tea.Cmd) {
 	m.cfg.Connection.Key = ""
+	m.cfg.Connection.Password = ""
 	if err := config.Save(m.cfg); err != nil {
 		m.pushChat("system", "Logout: failed to save config: "+err.Error())
 		return m, nil

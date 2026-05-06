@@ -35,7 +35,7 @@ Optional overrides:
 ## Usage
 
 First launch (no `~/.spore-code/config.toml`) runs the setup wizard:
-host + port → username → invite key → theme. After that:
+host + port → username → invite key or account password → theme. After that:
 
 ```sh
 spore                       # normal mode — REPL in your cwd
@@ -110,7 +110,14 @@ Global: `~/.spore-code/config.toml`:
 host = "spore.example.com"
 port = 18810
 user = "yam"
-key  = "<your-spore-core-invite-key>"
+auth_method = "invite"
+key = "<your-spore-core-invite-key>"
+password = ""
+
+# Or for a full Spore account:
+# auth_method = "password"
+# key = ""
+# password = "<your-spore-account-password>"
 
 [display]
 theme = "dark"
@@ -120,6 +127,9 @@ auto_resume = false
 ```
 
 Run `spore` once to go through the wizard, or write the TOML by hand.
+The config file is written with `0600` permissions. Password auth is stored
+there so reconnects and future CLI launches can authenticate without opening
+the web app.
 
 ## Releases
 

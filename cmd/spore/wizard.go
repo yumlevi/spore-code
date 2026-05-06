@@ -24,7 +24,7 @@ import (
 )
 
 // runSetupWizard is the Go port of acorn/config.py:run_setup_wizard.
-// Writes ~/.spore-code/config.toml. Tests auth with the entered host/port/key
+// Writes ~/.spore-code/config.toml. Tests auth with the entered credentials
 // before saving, offering the user a chance to continue anyway on failure.
 func runSetupWizard() (*config.Config, error) {
 	restoreTerminal := guardSetupTerminal()
@@ -79,22 +79,23 @@ func runSetupWizard() (*config.Config, error) {
 	}
 	fmt.Println()
 
-	// 3. Invite key
+	// 3. Authentication
 	fmt.Println("3. Authentication")
-	fmt.Println("   Enter the invite key from your Spore Core server (.env SPORE_INVITE_KEY value).")
+	fmt.Println("   Use an invite key for lightweight CLI-only access, or a password for a full Spore account.")
+	authMethod := promptAuthMethod(rd, config.AuthInvite)
 	key := ""
-	for key == "" {
-		key = strings.TrimSpace(promptInviteKey(rd, "   Invite key", ""))
-		if key == "" {
-			fmt.Println("   Invite key is required.")
-		}
+	password := ""
+	if authMethod == config.AuthPassword {
+		password = promptAuthSecret(rd, authMethod, "")
+	} else {
+		key = promptAuthSecret(rd, authMethod, "")
 	}
 	fmt.Println()
 
 	// 4. Test
 	for {
 		fmt.Println("4. Testing connection…")
-		if err := testAuth(host, port, user, key); err != nil {
+		if err := testAuth(host, port, user, authMethod, key, password); err != nil {
 			fmt.Printf("   ✗ %s\n", err)
 			if confirm(rd, "   Edit details and retry?", true) {
 				host, port = promptEndpoint(rd, host, port)
@@ -110,9 +111,16 @@ func runSetupWizard() (*config.Config, error) {
 						fmt.Println("   Username is required.")
 					}
 				}
-				nextKey := strings.TrimSpace(promptInviteKey(rd, "   Invite key", key))
-				if nextKey != "" {
-					key = nextKey
+				nextMethod := promptAuthMethod(rd, authMethod)
+				if nextMethod != authMethod {
+					authMethod = nextMethod
+					key = ""
+					password = ""
+				}
+				if authMethod == config.AuthPassword {
+					password = promptAuthSecret(rd, authMethod, password)
+				} else {
+					key = promptAuthSecret(rd, authMethod, key)
 				}
 				fmt.Println()
 				continue
@@ -156,7 +164,7 @@ func runSetupWizard() (*config.Config, error) {
 
 	// 6. Save
 	cfg := &config.Config{
-		Connection: config.ConnectionSection{Host: host, Port: port, User: user, Key: key},
+		Connection: config.ConnectionSection{Host: host, Port: port, User: user, AuthMethod: authMethod, Key: key, Password: password},
 		Display:    config.DisplaySection{Theme: theme},
 		GlobalDir:  globalDir,
 	}
@@ -235,6 +243,52 @@ func promptEndpoint(rd *bufio.Reader, defaultHost string, defaultPort int) (stri
 	return host, port
 }
 
+func promptAuthMethod(rd *bufio.Reader, def string) string {
+	def = strings.ToLower(strings.TrimSpace(def))
+	if def != config.AuthPassword {
+		def = config.AuthInvite
+	}
+	for {
+		fmt.Printf("   Login method [invite/password] [%s]: ", def)
+		line, _ := rd.ReadString('\n')
+		line = strings.ToLower(strings.TrimSpace(cleanPromptLine(line)))
+		if line == "" {
+			return def
+		}
+		switch line {
+		case "invite", "invite-key", "key", "i":
+			return config.AuthInvite
+		case "password", "account", "user", "p":
+			return config.AuthPassword
+		default:
+			fmt.Println("   Enter invite or password.")
+		}
+	}
+}
+
+func promptAuthSecret(rd *bufio.Reader, method, existing string) string {
+	label := "   Invite key"
+	read := func() string { return promptInviteKey(rd, label, existing) }
+	if method == config.AuthPassword {
+		label = "   Password"
+		read = func() string { return promptPassword(rd, label, existing != "") }
+	}
+	for {
+		secret := strings.TrimSpace(read())
+		if secret != "" {
+			return secret
+		}
+		if existing != "" {
+			return existing
+		}
+		if method == config.AuthPassword {
+			fmt.Println("   Password is required.")
+		} else {
+			fmt.Println("   Invite key is required.")
+		}
+	}
+}
+
 func promptInviteKey(rd *bufio.Reader, label, def string) string {
 	if def != "" {
 		fmt.Printf("%s [keep existing; paste replacement or enter to keep]: ", label)
@@ -249,11 +303,26 @@ func promptInviteKey(rd *bufio.Reader, label, def string) string {
 	return line
 }
 
+func promptPassword(rd *bufio.Reader, label string, hasExisting bool) string {
+	if hasExisting {
+		fmt.Printf("%s [keep existing; type replacement or enter to keep]: ", label)
+	} else {
+		fmt.Printf("%s: ", label)
+	}
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		data, _ := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Println()
+		return cleanPromptLine(string(data))
+	}
+	line, _ := rd.ReadString('\n')
+	return cleanPromptLine(line)
+}
+
 func cleanPromptLine(line string) string {
 	line = strings.TrimRight(line, "\r\n")
 	// Some terminals paste bracketed text as ESC[200~...ESC[201~ when a
 	// previous alt-screen app left bracketed paste enabled. Strip those
-	// wrappers so invite keys pasted during setup remain valid.
+	// wrappers so secrets pasted during setup remain valid.
 	line = strings.ReplaceAll(line, "\x1b[200~", "")
 	line = strings.ReplaceAll(line, "\x1b[201~", "")
 	return line
@@ -289,13 +358,19 @@ func contains(xs []string, s string) bool {
 
 // testAuth POSTs to /api/spore-code/auth just to validate credentials. Mirrors
 // connection.py:_sync_auth without establishing the WS.
-func testAuth(host string, port int, user, key string) error {
+func testAuth(host string, port int, user, authMethod, key, password string) error {
 	base := host
 	if !strings.Contains(host, "://") {
 		base = fmt.Sprintf("http://%s:%d", host, port)
 	}
 	base = strings.TrimRight(base, "/")
-	payload, _ := json.Marshal(map[string]string{"username": user, "key": key})
+	authBody := map[string]string{"username": user}
+	if authMethod == config.AuthPassword {
+		authBody["password"] = password
+	} else {
+		authBody["key"] = key
+	}
+	payload, _ := json.Marshal(authBody)
 	req, _ := http.NewRequestWithContext(
 		context.Background(), "POST", base+"/api/spore-code/auth", bytes.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")

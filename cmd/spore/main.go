@@ -23,7 +23,7 @@ import (
 //	go build -ldflags "-X main.version=v0.1.1" ./cmd/acorn
 //
 // Falls back to the in-source default for plain `go build`.
-var version = "v1.0.30"
+var version = "v1.0.31"
 
 func main() {
 	var (
@@ -86,9 +86,9 @@ func main() {
 	if *user != "" {
 		cfg.Connection.User = *user
 	}
-	if cfg.Connection.User == "" || cfg.Connection.Key == "" {
+	if !cfg.Connection.HasCredentials() {
 		// Missing credentials — most often after /logout, which clears the
-		// key but leaves config.toml in place. Re-run the wizard instead of
+		// secret but leaves config.toml in place. Re-run the wizard instead of
 		// dying with a hand-edit-the-toml hint.
 		fmt.Fprintln(os.Stderr, "missing credentials — running setup wizard")
 		fresh, werr := runSetupWizard()
@@ -205,6 +205,7 @@ func runLogoutCommand() error {
 		return err
 	}
 	cfg.Connection.Key = ""
+	cfg.Connection.Password = ""
 	if err := config.Save(cfg); err != nil {
 		return err
 	}

@@ -382,7 +382,14 @@ func historyKey(role, text string) string {
 }
 
 func (m *Model) Init() tea.Cmd {
-	m.client = conn.New(m.cfg.Connection.Host, m.cfg.Connection.Port, m.cfg.Connection.User, m.cfg.Connection.Key)
+	m.client = conn.New(
+		m.cfg.Connection.Host,
+		m.cfg.Connection.Port,
+		m.cfg.Connection.User,
+		m.cfg.Connection.Method(),
+		m.cfg.Connection.Key,
+		m.cfg.Connection.Password,
+	)
 	var reconnecting atomic.Bool
 	m.client.OnConnected = func() {
 		if reconnecting.Swap(false) && m.sendProgramMsg != nil {

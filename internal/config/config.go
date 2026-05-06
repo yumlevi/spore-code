@@ -8,15 +8,50 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
 
 type ConnectionSection struct {
-	Host string `toml:"host"`
-	Port int    `toml:"port"`
-	User string `toml:"user"`
-	Key  string `toml:"key"`
+	Host       string `toml:"host"`
+	Port       int    `toml:"port"`
+	User       string `toml:"user"`
+	AuthMethod string `toml:"auth_method"`
+	Key        string `toml:"key"`
+	Password   string `toml:"password"`
+}
+
+const (
+	AuthInvite   = "invite"
+	AuthPassword = "password"
+)
+
+func (c ConnectionSection) Method() string {
+	method := strings.ToLower(strings.TrimSpace(c.AuthMethod))
+	switch method {
+	case AuthPassword:
+		return AuthPassword
+	case AuthInvite:
+		return AuthInvite
+	default:
+		if c.Password != "" && c.Key == "" {
+			return AuthPassword
+		}
+		return AuthInvite
+	}
+}
+
+func (c ConnectionSection) HasCredentials() bool {
+	if strings.TrimSpace(c.User) == "" {
+		return false
+	}
+	switch c.Method() {
+	case AuthPassword:
+		return c.Password != ""
+	default:
+		return c.Key != ""
+	}
 }
 
 type DisplaySection struct {
@@ -150,7 +185,9 @@ func Save(cfg *Config) error {
 host = %q
 port = %d
 user = %q
+auth_method = %q
 key = %q
+password = %q
 
 [display]
 theme = %q
@@ -162,7 +199,7 @@ show_usage = %t
 auto_resume = %t
 `,
 		cfg.Connection.Host, cfg.Connection.Port,
-		cfg.Connection.User, cfg.Connection.Key,
+		cfg.Connection.User, cfg.Connection.Method(), cfg.Connection.Key, cfg.Connection.Password,
 		cfg.Display.Theme,
 		boolOrDefault(cfg.Display.ShowThinking, true),
 		boolOrDefault(cfg.Display.ShowTools, true),

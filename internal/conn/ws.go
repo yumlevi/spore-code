@@ -2,7 +2,7 @@
 // Mirrors acorn/connection.py.
 //
 // Flow:
-//  1. HTTP POST {host}/api/spore-code/auth with {username, key} → {token}.
+//  1. HTTP POST {host}/api/spore-code/auth with invite key or password → {token}.
 //  2. WebSocket connect to {ws_host}/ws?token={token}.
 //  3. Inbound messages fan out into Client.In.
 //  4. On disconnect, transparent reconnect with exponential backoff,
@@ -44,8 +44,8 @@ type authResp struct {
 
 // Client owns the WebSocket + reconnect logic.
 type Client struct {
-	host, user, key string
-	port            int
+	host, user, authMethod, key, password string
+	port                                  int
 
 	baseURL string
 	wsURL   string
@@ -69,7 +69,7 @@ type Client struct {
 	done chan struct{} // closed on Close()
 }
 
-func New(host string, port int, user, key string) *Client {
+func New(host string, port int, user, authMethod, key, password string) *Client {
 	base := host
 	if !strings.Contains(host, "://") {
 		base = fmt.Sprintf("http://%s:%d", host, port)
@@ -78,12 +78,14 @@ func New(host string, port int, user, key string) *Client {
 	wsBase := strings.Replace(base, "https://", "wss://", 1)
 	wsBase = strings.Replace(wsBase, "http://", "ws://", 1)
 	return &Client{
-		host:         host,
-		port:         port,
-		user:         user,
-		key:          key,
-		baseURL:      base,
-		wsURL:        wsBase + "/ws",
+		host:       host,
+		port:       port,
+		user:       user,
+		authMethod: authMethod,
+		key:        key,
+		password:   password,
+		baseURL:    base,
+		wsURL:      wsBase + "/ws",
 		// In is sized for bursty streaming. 4096 covers a long agent
 		// turn (1000+ chat:delta chunks) even with a slow renderer
 		// (glamour render time grows linearly with message length).
@@ -98,7 +100,12 @@ func New(host string, port int, user, key string) *Client {
 
 // Authenticate POSTs to /api/spore-code/auth and stashes the token.
 func (c *Client) Authenticate(ctx context.Context) error {
-	payload := map[string]string{"username": c.user, "key": c.key}
+	payload := map[string]string{"username": c.user}
+	if strings.EqualFold(strings.TrimSpace(c.authMethod), "password") {
+		payload["password"] = c.password
+	} else {
+		payload["key"] = c.key
+	}
 	data, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/spore-code/auth", bytes.NewReader(data))
 	if err != nil {
