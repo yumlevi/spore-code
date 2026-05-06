@@ -173,7 +173,7 @@ type Model struct {
 
 	// Activity indicators for the header.
 	thinkingTokens int  // running token count during a thinking turn
-	spinnerFrame   int  // index into spinnerFrames for animated activity dot
+	spinnerFrame   int  // animation tick; modulo spinnerFrames when rendering the spinner
 	thinking       bool // true between thinking_start and thinking_done
 	activeSince    time.Time
 
@@ -217,6 +217,7 @@ func (m *Model) startActiveTurn(status string) {
 	m.generating = true
 	if m.activeSince.IsZero() {
 		m.activeSince = time.Now()
+		m.spinnerFrame = 0
 	}
 	m.status = status
 }

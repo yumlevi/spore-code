@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/glamour"
@@ -745,21 +746,18 @@ func (m *Model) activeFooterStatus() string {
 		verb = "Thinking"
 	}
 	actor := truncateLineCells(m.agentDisplayName(), 24)
-	fadeColor := activeAccentColor(m.theme, m.spinnerFrame, m.thinking)
-	leader := foregroundSpan(fmt.Sprintf("%s %s %s", spin, actor, strings.ToLower(verb)), fadeColor, m.theme.Fg)
-	timer := foregroundSpan(formatWorkingElapsed(elapsed), m.theme.Muted, m.theme.Fg)
-	parts := []string{leader + " " + timer}
+	parts := []string{fmt.Sprintf("%s %s %s %s", spin, actor, strings.ToLower(verb), formatWorkingElapsed(elapsed))}
 	if wf := m.workflowLabel(); wf != "" {
-		parts = append(parts, foregroundSpan(wf, fadeColor, m.theme.Fg))
+		parts = append(parts, wf)
 	}
 	if detail := activeStatusDetail(m.status, m.thinking); detail != "" {
 		parts = append(parts, detail)
 	}
 	if m.thinking && m.thinkingTokens > 0 {
-		parts = append(parts, foregroundSpan(fmt.Sprintf("%d thinking tokens", m.thinkingTokens), fadeColor, m.theme.Fg))
+		parts = append(parts, fmt.Sprintf("%d thinking tokens", m.thinkingTokens))
 	}
-	parts = append(parts, foregroundSpan("Ctrl+C", fadeColor, m.theme.Fg)+foregroundSpan(" to stop", m.theme.Muted, m.theme.Fg))
-	return strings.Join(parts, foregroundSpan(" · ", m.theme.Muted, m.theme.Fg))
+	parts = append(parts, "Ctrl+C to stop")
+	return activeTextWave(strings.Join(parts, " · "), m.theme, m.spinnerFrame, m.thinking)
 }
 
 func foregroundSpan(text string, fg, base lipgloss.Color) string {
@@ -771,44 +769,67 @@ func foregroundSpan(text string, fg, base lipgloss.Color) string {
 	return open + text + close
 }
 
-func activeAccentColor(t Theme, frame int, thinking bool) lipgloss.Color {
-	from := t.Accent
-	if thinking {
-		from = t.Thinking
+func activeTextWave(text string, t Theme, frame int, thinking bool) string {
+	width := lipgloss.Width(text)
+	if width <= 0 {
+		return text
 	}
-	if color, ok := crossfadeColor(from, t.Fg, frame); ok {
-		return color
+	var b strings.Builder
+	pos := 0
+	for _, r := range text {
+		ch := string(r)
+		w := ansi.StringWidth(ch)
+		if w <= 0 {
+			b.WriteRune(r)
+			continue
+		}
+		if unicode.IsSpace(r) {
+			b.WriteRune(r)
+			pos += w
+			continue
+		}
+		color := activeWaveColor(t, frame, pos, width, thinking)
+		if color == t.Fg {
+			b.WriteRune(r)
+		} else {
+			b.WriteString(foregroundSpan(ch, color, t.Fg))
+		}
+		pos += w
 	}
-	phase := frame % 20
-	if phase < 0 {
-		phase += 20
-	}
-	if phase < 10 {
-		return from
-	}
-	return t.Fg
+	return b.String()
 }
 
-func crossfadeColor(from, to lipgloss.Color, frame int) (lipgloss.Color, bool) {
-	fr, fg, fb, ok := parseHexRGB(from)
+func activeWaveColor(t Theme, frame, pos, width int, thinking bool) lipgloss.Color {
+	accent := t.Accent
+	if thinking {
+		accent = t.Thinking
+	}
+	ar, ag, ab, ok := parseHexRGB(accent)
 	if !ok {
-		return "", false
+		return accent
 	}
-	tr, tg, tb, ok := parseHexRGB(to)
+	br, bg, bb, ok := parseHexRGB(t.Fg)
 	if !ok {
-		return "", false
+		return accent
 	}
-	phase := frame % 20
-	if phase < 0 {
-		phase += 20
+	const radius = 8
+	period := width + radius
+	if period <= 0 {
+		period = 1
 	}
-	if phase > 10 {
-		phase = 20 - phase
+	center := (frame * 2) % period
+	dist := pos - center
+	if dist < 0 {
+		dist = -dist
 	}
+	if dist >= radius {
+		return t.Fg
+	}
+	intensity := radius - dist
 	mix := func(a, b int) int {
-		return a + (b-a)*phase/10
+		return a + (b-a)*intensity/radius
 	}
-	return lipgloss.Color(fmt.Sprintf("#%02x%02x%02x", mix(fr, tr), mix(fg, tg), mix(fb, tb))), true
+	return lipgloss.Color(fmt.Sprintf("#%02x%02x%02x", mix(br, ar), mix(bg, ag), mix(bb, ab)))
 }
 
 func parseHexRGB(c lipgloss.Color) (int, int, int, bool) {

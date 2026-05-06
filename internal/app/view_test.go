@@ -315,8 +315,8 @@ func TestActiveFooterShowsWorkingIndicator(t *testing.T) {
 	if strings.ContainsAny(plain, "●•") {
 		t.Fatalf("active footer should animate text color, not pulse glyphs:\n%q", rendered)
 	}
-	if fade := foregroundOpen(activeAccentColor(themeDark, m.spinnerFrame, false)); fade == "" || !strings.Contains(rendered, fade) {
-		t.Fatalf("active footer did not use cross-faded theme accent:\n%q", rendered)
+	if strings.Count(rendered, "\x1b[38;2;") < 2 {
+		t.Fatalf("active footer should wave accent colors across text:\n%q", rendered)
 	}
 }
 
@@ -327,6 +327,7 @@ func TestActiveFooterShowsThinkingTokens(t *testing.T) {
 	m.activeSince = time.Now().Add(-2 * time.Second)
 	m.thinking = true
 	m.thinkingTokens = 42
+	m.spinnerFrame = 4
 
 	rendered := m.renderFooter()
 	plain := ansi.Strip(rendered)
@@ -341,8 +342,8 @@ func TestActiveFooterShowsThinkingTokens(t *testing.T) {
 	if strings.ContainsAny(plain, "●•") {
 		t.Fatalf("thinking footer should animate text color, not pulse glyphs:\n%q", rendered)
 	}
-	if thinking := foregroundOpen(activeAccentColor(themeDark, m.spinnerFrame, true)); thinking == "" || !strings.Contains(rendered, thinking) {
-		t.Fatalf("thinking footer did not use cross-faded thinking accent:\n%q", rendered)
+	if strings.Count(rendered, "\x1b[38;2;") < 2 {
+		t.Fatalf("thinking footer should wave thinking accent colors across text:\n%q", rendered)
 	}
 }
 
@@ -356,17 +357,25 @@ func TestActiveFooterStatusAvoidsFullAnsiResets(t *testing.T) {
 	}
 }
 
-func TestActiveFooterAccentColorCrossfades(t *testing.T) {
-	start := activeAccentColor(themeDark, 0, false)
-	mid := activeAccentColor(themeDark, 5, false)
-	if start == mid {
-		t.Fatalf("accent color should cross-fade over spinner frames: start=%s mid=%s", start, mid)
+func TestActiveFooterAccentWaveMovesLeftToRight(t *testing.T) {
+	const width = 24
+	leftEarly := activeWaveColor(themeDark, 0, 0, width, false)
+	leftLater := activeWaveColor(themeDark, 5, 0, width, false)
+	rightEarly := activeWaveColor(themeDark, 0, 10, width, false)
+	rightLater := activeWaveColor(themeDark, 5, 10, width, false)
+	if leftEarly == leftLater {
+		t.Fatalf("left edge should fade as wave moves right: early=%s later=%s", leftEarly, leftLater)
 	}
-	if got := foregroundOpen(start); got == "" || !strings.Contains(got, "38;2") {
-		t.Fatalf("expected truecolor start accent escape, got %q", got)
+	if rightEarly == rightLater {
+		t.Fatalf("right side should brighten as wave moves right: early=%s later=%s", rightEarly, rightLater)
 	}
-	if got := foregroundOpen(mid); got == "" || !strings.Contains(got, "38;2") {
-		t.Fatalf("expected truecolor mid accent escape, got %q", got)
+	first := activeTextWave("Spore Sage working", themeDark, 0, false)
+	second := activeTextWave("Spore Sage working", themeDark, 5, false)
+	if ansi.Strip(first) != ansi.Strip(second) {
+		t.Fatalf("wave should preserve text: %q vs %q", first, second)
+	}
+	if first == second {
+		t.Fatalf("wave should change color placement across frames")
 	}
 }
 

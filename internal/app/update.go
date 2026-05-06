@@ -253,8 +253,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case spinnerTickMsg:
 		if (m.generating || m.thinking) && m.activeSince.IsZero() {
 			m.activeSince = time.Now()
+			m.spinnerFrame = 0
 		}
-		m.spinnerFrame = (m.spinnerFrame + 1) % len(spinnerFrames)
+		m.spinnerFrame++
 		// Keep ticking only while there's something to animate. Drops the
 		// tick once generation ends so we don't burn cycles redrawing.
 		if m.generating || m.thinking {
