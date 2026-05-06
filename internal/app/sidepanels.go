@@ -233,9 +233,9 @@ func (m *Model) renderCodePanel(width, maxH int) string {
 		rendered = append(rendered, blocks[i].lines...)
 	}
 	hidden := len(m.codeViews) - len(blocks)
-	titleRow := truncateCells(title, innerW)
+	titleRow := truncateLineCells(title, innerW)
 	if hidden > 0 {
-		titleRow = truncateCells(titleRow+"  "+lipgloss.NewStyle().Foreground(m.theme.Muted).
+		titleRow = truncateLineCells(titleRow+"  "+lipgloss.NewStyle().Foreground(m.theme.Muted).
 			Render(fmt.Sprintf("(%d older — Ctrl+P)", hidden)), innerW)
 	}
 	bodyText := strings.Join(rendered, "\n")
@@ -292,11 +292,11 @@ func renderActivityHeader(e codeViewEntry, t Theme, innerW int) string {
 	if maxLabel < 6 {
 		maxLabel = 6
 	}
-	label = truncateCells(label, maxLabel)
+	label = truncateLineCells(label, maxLabel)
 	head := lipgloss.NewStyle().Bold(true).Foreground(color).Render(icon + " " + label)
 	meta := lipgloss.NewStyle().Foreground(t.Muted).Faint(true).
 		Render(" · " + e.When.Format("15:04:05") + "  " + e.Text)
-	return truncateCells(head+meta, innerW)
+	return truncateLineCells(head+meta, innerW)
 }
 
 // renderActivityPreview returns 0..N indented preview lines for an
@@ -631,10 +631,10 @@ func (m *Model) renderPlanTasksPanel(width, maxH int) string {
 		if subject == "" {
 			subject = "(" + shortID(id) + ")"
 		}
-		row := trimTo(icon+" "+subject, width-4)
+		row := truncateLineCells(icon+" "+subject, width-4)
 		lines = append(lines, lipgloss.NewStyle().Foreground(color).Bold(st.Status == "in_progress").Render(row))
 		if st.Note != "" {
-			note := trimTo(st.Note, width-6)
+			note := truncateLineCells(st.Note, width-6)
 			lines = append(lines, lipgloss.NewStyle().Foreground(m.theme.Muted).Italic(true).Render("   "+note))
 		}
 	}
@@ -652,7 +652,7 @@ func (m *Model) renderPlanTasksPanel(width, maxH int) string {
 		bodyLimit = 1
 	}
 	bodyLines = clipLinesTail(bodyLines, bodyLimit)
-	inner := truncateCells(title, width-4) + "\n\n" + strings.Join(bodyLines, "\n")
+	inner := truncateLineCells(title, width-4) + "\n\n" + strings.Join(bodyLines, "\n")
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(m.theme.Accent2).
@@ -726,7 +726,7 @@ func (m *Model) renderSubagentPanel(width, maxH int) string {
 			icon = "✕"
 			color = m.theme.Muted
 		}
-		label := trimTo(st.Title, width-8)
+		label := truncateLineCells(st.Title, width-8)
 		if label == "" {
 			label = "(running)"
 		}
@@ -767,7 +767,7 @@ func (m *Model) renderSubagentPanel(width, maxH int) string {
 		tag := lipgloss.NewStyle().Bold(true).Foreground(color).Render(icon + " " + shortID(id))
 		lines = append(lines, tag, lipgloss.NewStyle().Foreground(m.theme.Muted).Render("   "+label))
 		if status != "" {
-			statusLine := trimTo(status, width-6)
+			statusLine := truncateLineCells(status, width-6)
 			lines = append(lines, lipgloss.NewStyle().Foreground(m.theme.Muted).Italic(true).Render("   "+statusLine))
 		}
 	}
@@ -786,7 +786,7 @@ func (m *Model) renderSubagentPanel(width, maxH int) string {
 		bodyLimit = 1
 	}
 	bodyLines = clipLinesTail(bodyLines, bodyLimit)
-	inner := truncateCells(title, width-4) + "\n\n" + strings.Join(bodyLines, "\n")
+	inner := truncateLineCells(title, width-4) + "\n\n" + strings.Join(bodyLines, "\n")
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(m.theme.Accent2).

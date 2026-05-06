@@ -119,6 +119,29 @@ func truncateCells(s string, width int) string {
 	return ansi.Truncate(s, width-1, "") + "…"
 }
 
+func truncateLineCells(s string, width int) string {
+	s = strings.ReplaceAll(s, "\r", " ")
+	s = strings.ReplaceAll(s, "\n", " ")
+	return truncateCells(s, width)
+}
+
+func fitRenderedBlock(s string, width, height int) string {
+	if height <= 0 {
+		return ""
+	}
+	lines := strings.Split(s, "\n")
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	for i, line := range lines {
+		lines[i] = truncateCells(line, width)
+	}
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines, "\n")
+}
+
 func clipRenderedLines(s string, maxLines int) string {
 	if maxLines <= 0 {
 		return ""
@@ -283,13 +306,14 @@ func (m *Model) View() string {
 	} else {
 		body = chatView
 	}
+	body = fitRenderedBlock(body, m.width, bodyH)
 
 	parts := []string{header, body}
 	if suggest != "" {
 		parts = append(parts, suggest)
 	}
 	parts = append(parts, input, footer)
-	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+	return fitRenderedBlock(lipgloss.JoinVertical(lipgloss.Left, parts...), m.width, m.height)
 }
 
 // renderSidePanels — kept for the layout pre-pass that needs to know whether

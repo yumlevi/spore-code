@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/yumlevi/spore-code/internal/config"
@@ -159,6 +160,44 @@ func TestOutputLogScrollSurvivesRender(t *testing.T) {
 	if got := m.outputLogVP.YOffset; got != before {
 		t.Fatalf("render reset output log scroll offset: before=%d after=%d", before, got)
 	}
+}
+
+func TestSidePanelsStayBoundedWithMultilineActivityRows(t *testing.T) {
+	m := renderTestModel(120, 20)
+	m.appendActivity(codeViewEntry{
+		Tool:    "exec",
+		ExecCmd: "printf 'one\\ntwo\\nthree'",
+		Preview: strings.Join([]string{
+			"tool output line 1",
+			"tool output line 2",
+			"tool output line 3",
+			"tool output line 4",
+			"tool output line 5",
+			"tool output line 6",
+		}, "\n"),
+		Text: "tool\nwith accidental newline",
+		When: time.Now(),
+	})
+	m.planTasks = newPlanTaskPanel()
+	m.handleTaskFrame("create", map[string]any{
+		"id":      "task_multiline",
+		"subject": "first line\nsecond line\nthird line",
+		"status":  "in_progress",
+	})
+	m.handleTaskFrame("update", map[string]any{
+		"id":   "task_multiline",
+		"note": "note line 1\nnote line 2\nnote line 3\nnote line 4",
+	})
+
+	const bodyH = 9
+	side := m.renderSidePanelsBounded(bodyH)
+	if side == "" {
+		t.Fatalf("expected side panel to render")
+	}
+	if got := lipgloss.Height(side); got > bodyH {
+		t.Fatalf("side panel exceeded body height: got %d want <= %d\n%s", got, bodyH, side)
+	}
+	assertViewFits(t, m)
 }
 
 func renderTestModel(w, h int) *Model {
