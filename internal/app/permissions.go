@@ -84,10 +84,7 @@ func Summarize(name string, input map[string]any) string {
 	switch name {
 	case "exec":
 		c, _ := input["command"].(string)
-		if len(c) > 120 {
-			c = c[:120] + "…"
-		}
-		return c
+		return truncateCells(c, 120)
 	case "write_file", "edit_file", "read_file", "list_dir", "git_status", "git_diff", "patch_file", "run_tests":
 		p, _ := input["path"].(string)
 		if p == "" {
@@ -100,10 +97,7 @@ func Summarize(name string, input map[string]any) string {
 		return fmt.Sprintf("#%v", input["id"])
 	case "web_fetch":
 		u, _ := input["url"].(string)
-		if len(u) > 100 {
-			u = u[:100]
-		}
-		return u
+		return truncateCells(u, 100)
 	}
 	return fmt.Sprintf("%v", input)
 }

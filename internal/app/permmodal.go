@@ -27,6 +27,28 @@ func (pm *permissionModal) options() []string {
 }
 
 func (pm *permissionModal) view(w, h int, t Theme) string {
+	if h < 3 {
+		h = 3
+	}
+	boxW := w - 2
+	if boxW < 8 {
+		boxW = w
+	}
+	if boxW < 1 {
+		boxW = 1
+	}
+	innerW := boxW - 4
+	if innerW < 8 {
+		innerW = boxW
+	}
+	if innerW < 1 {
+		innerW = 1
+	}
+	innerLimit := h - 2
+	if innerLimit < 1 {
+		innerLimit = 1
+	}
+
 	title := t.accent(true).Render("Tool approval")
 	border := t.Accent
 	if pm.dangerous {
@@ -36,32 +58,36 @@ func (pm *permissionModal) view(w, h int, t Theme) string {
 	// Truncate summary to a single line so the inline strip stays
 	// compact — long shell commands shouldn't blow out the input slot.
 	summary := pm.summary
-	maxSum := w - len(pm.name) - 16
-	if maxSum > 24 && len(summary) > maxSum {
-		summary = summary[:maxSum-1] + "…"
+	maxSum := innerW - lipgloss.Width(pm.name) - 4
+	if maxSum < 12 {
+		maxSum = 12
 	}
+	summary = truncateCells(summary, maxSum)
 	info := lipgloss.NewStyle().Foreground(t.Fg).Render(pm.name + ": " + summary)
 	opts := pm.options()
 	var b strings.Builder
-	b.WriteString(title + "  " + info + "\n")
+	b.WriteString(truncateCells(title+"  "+info, innerW) + "\n")
 	for i, o := range opts {
+		row := o
 		if i == pm.selected {
-			b.WriteString(t.accent(true).Render(" ▸ " + o))
+			row = t.accent(true).Render(" ▸ " + o)
 		} else {
-			b.WriteString("   " + o)
+			row = "   " + o
 		}
+		b.WriteString(truncateCells(row, innerW))
 		b.WriteString("\n")
 	}
-	b.WriteString(t.muted().Render(" ↑↓ select · enter confirm · esc deny"))
+	b.WriteString(truncateCells(t.muted().Render(" ↑↓ select · enter confirm · esc deny"), innerW))
 	// Inline render: full chat width, bordered, slots into the input
 	// position. Matches questions/plan-approval (v0.1.22) so all modals
 	// behave the same — chat history stays visible above.
-	boxW := w - 2
+	lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
+	lines = clipLinesHead(lines, innerLimit)
 	return borderStyle.Copy().
 		BorderForeground(border).
 		Width(boxW).
 		Padding(0, 1).
-		Render(b.String())
+		Render(strings.Join(lines, "\n"))
 }
 
 func (m *Model) updatePermModal(km tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -76,6 +102,7 @@ func (m *Model) updatePermModal(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.perms.resolvePerm(false, false)
 		m.modal = modalNone
 		m.permission = nil
+		m.setWorkflowPhase(workflowIdle, "")
 		m.pushChat("system", "Tool denied: "+pm.name)
 		return m, nil
 	case "up":
@@ -108,6 +135,7 @@ func (m *Model) updatePermModal(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.modal = modalNone
 		m.permission = nil
+		m.setWorkflowPhase(workflowIdle, "")
 		return m, nil
 	}
 	return m, nil

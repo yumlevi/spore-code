@@ -20,20 +20,23 @@ type ConnectionSection struct {
 }
 
 type DisplaySection struct {
-	Theme         string `toml:"theme"`
-	ShowThinking  *bool  `toml:"show_thinking"`
-	ShowTools     *bool  `toml:"show_tools"`
-	ShowUsage     *bool  `toml:"show_usage"`
+	Theme        string `toml:"theme"`
+	ShowThinking *bool  `toml:"show_thinking"`
+	ShowTools    *bool  `toml:"show_tools"`
+	ShowUsage    *bool  `toml:"show_usage"`
 }
 
 // SessionSection controls launch-time session behavior.
 //
 // AutoResume = true  → no-arg `acorn` resumes the deterministic
-//                       (user, cwd)-keyed session, same as before. Useful
-//                       for users who want to pick up where they left off
-//                       on every launch.
+//
+//	(user, cwd)-keyed session, same as before. Useful
+//	for users who want to pick up where they left off
+//	on every launch.
+//
 // AutoResume = false → no-arg `acorn` opens a fresh, timestamped session.
-//                       Use `acorn -c` to explicitly resume.
+//
+//	Use `acorn -c` to explicitly resume.
 type SessionSection struct {
 	AutoResume bool `toml:"auto_resume"`
 }
@@ -50,8 +53,8 @@ type Config struct {
 
 // Defaults.
 const (
-	DefaultHost = "localhost"
-	DefaultPort = 18810
+	DefaultHost  = "localhost"
+	DefaultPort  = 18810
 	DefaultTheme = "dark"
 )
 
@@ -85,6 +88,35 @@ func Load(cwd string) (*Config, error) {
 	local := filepath.Join(cfg.LocalDir, "config.toml")
 	if err := mergeFile(local, cfg); err != nil && !os.IsNotExist(err) {
 		return cfg, fmt.Errorf("parse %s: %w", local, err)
+	}
+	return cfg, nil
+}
+
+// LoadGlobal reads only ~/.spore-code/config.toml. It is used by non-TUI
+// commands such as `spore logout`, where applying per-project overrides
+// before saving would accidentally rewrite global config with local values.
+func LoadGlobal() (*Config, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("home dir: %w", err)
+	}
+	globalDir := filepath.Join(home, ".spore-code")
+	globalPath := filepath.Join(globalDir, "config.toml")
+
+	cfg := &Config{
+		Connection: ConnectionSection{Host: DefaultHost, Port: DefaultPort},
+		Display:    DisplaySection{Theme: DefaultTheme},
+		GlobalDir:  globalDir,
+	}
+
+	if _, err := os.Stat(globalPath); err != nil {
+		if os.IsNotExist(err) {
+			return cfg, ErrNoGlobalConfig
+		}
+		return cfg, err
+	}
+	if err := mergeFile(globalPath, cfg); err != nil {
+		return cfg, fmt.Errorf("parse %s: %w", globalPath, err)
 	}
 	return cfg, nil
 }

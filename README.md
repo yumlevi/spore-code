@@ -43,6 +43,7 @@ spore -c                    # resume the most recent session in this cwd
 spore --session cli:…-…-…   # resume a specific session
 spore --plan                # start in plan mode
 spore --host spore.tld --port 443 --user foo
+spore logout                # clear saved credentials without launching the TUI
 ```
 
 Inside the TUI, type `/help` for the full slash-command list. Highlights:

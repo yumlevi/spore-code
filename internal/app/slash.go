@@ -236,14 +236,11 @@ func (m *Model) renderSuggest(width int) string {
 	var lines []string
 	for i := start; i < start+max && i < len(m.suggest.matches); i++ {
 		e := m.suggest.matches[i]
-		cmd := e.cmd
+		cmd := truncateCells(e.cmd, 24)
 		desc := e.desc
-		if len(cmd) > 24 {
-			cmd = cmd[:23] + "…"
-		}
 		row := cmd
 		if desc != "" {
-			padW := 24 - len(cmd)
+			padW := 24 - lipgloss.Width(cmd)
 			if padW < 1 {
 				padW = 1
 			}

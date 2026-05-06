@@ -19,9 +19,11 @@ import (
 )
 
 // version is overrideable at link time:
-//   go build -ldflags "-X main.version=v0.1.1" ./cmd/acorn
+//
+//	go build -ldflags "-X main.version=v0.1.1" ./cmd/acorn
+//
 // Falls back to the in-source default for plain `go build`.
-var version = "v0.11.0"
+var version = "v1.0.12"
 
 func main() {
 	var (
@@ -39,6 +41,20 @@ func main() {
 	if *showVer {
 		fmt.Printf("spore %s\n", version)
 		return
+	}
+	if args := flag.Args(); len(args) > 0 {
+		switch args[0] {
+		case "logout":
+			if len(args) > 1 {
+				fail("usage: spore logout", nil)
+			}
+			if err := runLogoutCommand(); err != nil {
+				fail("logout failed:", err)
+			}
+			return
+		default:
+			fail("unknown command: "+args[0]+" (try `spore logout`)", nil)
+		}
 	}
 	app.SetVersion(version)
 
@@ -176,4 +192,22 @@ func truncate(s string, n int) string {
 		return s[:n] + "…"
 	}
 	return s
+}
+
+func runLogoutCommand() error {
+	terminalSane()
+	cfg, err := config.LoadGlobal()
+	if err == config.ErrNoGlobalConfig {
+		fmt.Fprintln(os.Stdout, "No Spore Code config found at ~/.spore-code/config.toml.")
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	cfg.Connection.Key = ""
+	if err := config.Save(cfg); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stdout, "Logged out — cleared saved credentials from %s\n", filepath.Join(cfg.GlobalDir, "config.toml"))
+	return nil
 }

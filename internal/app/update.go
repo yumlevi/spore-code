@@ -57,6 +57,7 @@ const PlanExecuteMsg = `[The user has approved the plan above. Switch to execute
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Off-thread messages: permissions layer asking to open a modal.
 	if om, ok := msg.(openPermModalMsg); ok {
+		m.setWorkflowPhase(workflowBlockedPermission, om.name)
 		m.modal = modalPermission
 		m.permission = &permissionModal{
 			name:      om.name,
@@ -284,10 +285,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case hookExecLineMsg:
-		preview := msg.line
-		if len(preview) > 120 {
-			preview = preview[:120] + "…"
-		}
+		preview := truncateCells(msg.line, 120)
 		m.status = "⚙ " + preview
 		m.outputLog = append(m.outputLog, msg.line)
 		if len(m.outputLog) > 500 {
@@ -413,21 +411,27 @@ func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.handleCtrlC()
 		case "up":
 			m.outputLogVP.LineUp(1)
+			m.outputLogFollow = false
 			return m, nil
 		case "down":
 			m.outputLogVP.LineDown(1)
+			m.updateOutputLogFollowBottom()
 			return m, nil
 		case "pgup":
 			m.outputLogVP.LineUp(m.outputLogVP.Height - 2)
+			m.outputLogFollow = false
 			return m, nil
 		case "pgdown", " ":
 			m.outputLogVP.LineDown(m.outputLogVP.Height - 2)
+			m.updateOutputLogFollowBottom()
 			return m, nil
 		case "home", "g":
 			m.outputLogVP.GotoTop()
+			m.outputLogFollow = false
 			return m, nil
 		case "end", "G":
 			m.outputLogVP.GotoBottom()
+			m.outputLogFollow = true
 			return m, nil
 		}
 		return m, nil
@@ -496,6 +500,9 @@ func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		label := "execute"
 		if m.planMode {
 			label = "plan"
+			m.setWorkflowPhase(workflowInterview, "")
+		} else {
+			m.setWorkflowPhase(workflowIdle, "")
 		}
 		m.pushChat("system", "Mode → "+label)
 		return m, nil
@@ -549,6 +556,11 @@ func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.generating = true
 		m.status = "waiting…"
 		m.thinkingTokens = 0
+		if m.planMode {
+			m.setWorkflowPhase(workflowInterview, "")
+		} else {
+			m.setWorkflowPhase(workflowIdle, "")
+		}
 		return m, tea.Batch(m.sendChat(content, text, projectCtx), spinnerTickCmd())
 
 	case "pgup":
@@ -582,6 +594,9 @@ func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "ctrl+o":
 		m.outputLogOpen = !m.outputLogOpen
+		if m.outputLogOpen {
+			m.outputLogFollow = true
+		}
 		return m, nil
 	}
 
@@ -679,6 +694,7 @@ func (m *Model) stopActiveTurn(message string) (tea.Model, tea.Cmd) {
 	m.thinking = false
 	m.thinkingTokens = 0
 	m.status = ""
+	m.setWorkflowPhase(workflowIdle, "")
 	if strings.TrimSpace(message) != "" {
 		m.pushChat("system", message)
 	}
@@ -714,8 +730,10 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		switch msg.Type {
 		case tea.MouseWheelUp:
 			m.outputLogVP.LineUp(wheelStep)
+			m.outputLogFollow = false
 		case tea.MouseWheelDown:
 			m.outputLogVP.LineDown(wheelStep)
+			m.updateOutputLogFollowBottom()
 		}
 		return m, nil
 	case m.panelExpand:
@@ -747,6 +765,14 @@ func (m *Model) updateFollowBottom() {
 		max = 0
 	}
 	m.followBottom = m.viewport.YOffset >= max
+}
+
+func (m *Model) updateOutputLogFollowBottom() {
+	max := m.outputLogVP.TotalLineCount() - m.outputLogVP.Height
+	if max < 0 {
+		max = 0
+	}
+	m.outputLogFollow = m.outputLogVP.YOffset >= max
 }
 
 // handleResize is the single source of truth for terminal-size changes.
@@ -817,6 +843,9 @@ func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 		// straight to a tool without any text, no empty bordered
 		// box appears in the transcript.
 		m.thinkingBuf = ""
+		if m.planMode && m.workflowPhase == "" {
+			m.setWorkflowPhase(workflowInterview, "")
+		}
 		// Reap completed subagent rows from prior turns so the panel
 		// shows only the current turn's activity. Tasks finished
 		// >5s ago get dropped; if the panel becomes empty, it
@@ -835,6 +864,9 @@ func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 		m.endStream()
 		m.generating = false
 		m.status = ""
+		if !m.planMode && m.modal == modalNone {
+			m.setWorkflowPhase(workflowIdle, "")
+		}
 		// postStreamChecks may return an auto-retry cmd (when the agent
 		// emitted a malformed QUESTIONS: block). Forward it through
 		// handleFrame's return so the next chat:submit goes out.
@@ -945,6 +977,7 @@ func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 			m.modal = modalNone
 			m.question = nil
 			m.input.Reset()
+			m.setWorkflowPhase(workflowIdle, "")
 			m.Broadcast("interactive:resolved", map[string]any{"kind": "questions"})
 			m.pushChat("system", "Question cancelled.")
 		}
@@ -955,7 +988,20 @@ func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 		if !v.OK {
 			m.pushChat("system", "Question answer was not accepted; choose one of the listed options.")
 			m.status = "waiting for question answer"
+			m.setWorkflowPhase(workflowBlockedQuestion, "")
 		}
+	case "workflow:state":
+		var v struct {
+			Phase  string `json:"phase"`
+			State  string `json:"state"`
+			Detail string `json:"detail"`
+		}
+		_ = json.Unmarshal(f.Raw, &v)
+		phase := v.Phase
+		if phase == "" {
+			phase = v.State
+		}
+		m.setWorkflowPhase(phase, v.Detail)
 	case "plan_proposal":
 		var v proto.PlanProposal
 		_ = json.Unmarshal(f.Raw, &v)
@@ -979,6 +1025,9 @@ func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 		label := "execute"
 		if m.planMode {
 			label = "plan"
+			m.setWorkflowPhase(workflowInterview, "")
+		} else {
+			m.setWorkflowPhase(workflowIdle, "")
 		}
 		m.pushChat("system", "Mode → "+label+" (remote)")
 	case "plan:decision":
@@ -1006,6 +1055,7 @@ func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 			case "cancel":
 				m.modal = modalNone
 				m.planApproval = nil
+				m.setWorkflowPhase(workflowIdle, "")
 				m.pushChat("system", "→ Cancel (from mobile)")
 			}
 		}
@@ -1016,9 +1066,7 @@ func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 		m.Broadcast("plan:set-mode", map[string]any{"enabled": m.planMode})
 		if m.modal == modalPlan && m.planApproval != nil {
 			preview := m.planApproval.text
-			if len(preview) > 2000 {
-				preview = preview[:2000]
-			}
+			preview = truncateCells(preview, 2000)
 			m.Broadcast("plan:show-approval", map[string]any{"text": preview})
 		}
 		if m.modal == modalQuestion && m.question != nil && m.question.source == "prose" {
@@ -1056,6 +1104,9 @@ func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 			label := "execute"
 			if m.planMode {
 				label = "plan"
+				m.setWorkflowPhase(workflowInterview, "")
+			} else {
+				m.setWorkflowPhase(workflowIdle, "")
 			}
 			m.pushChat("system", "Mode → "+label+" (from companion)")
 			// Re-broadcast so any second observer connected to the
@@ -1087,6 +1138,7 @@ func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 		if m.modal == modalQuestion {
 			m.modal = modalNone
 			m.question = nil
+			m.setWorkflowPhase(workflowIdle, "")
 			m.pushChat("system", "Questions resolved (from companion).")
 		}
 	case "plan:decided":
@@ -1102,6 +1154,7 @@ func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 			m.modal = modalNone
 			m.planApproval = nil
 			m.stashedPlan = ""
+			m.setWorkflowPhase(workflowIdle, "")
 			label := v.Action
 			if label == "" {
 				label = "decided"
@@ -1123,6 +1176,7 @@ func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 			}
 			m.modal = modalNone
 			m.permission = nil
+			m.setWorkflowPhase(workflowIdle, "")
 			label := "denied"
 			if v.Allowed {
 				label = "allowed"
@@ -1276,10 +1330,7 @@ func (m *Model) handleStatus(v proto.ChatStatus) {
 // ellipsis. Used for the '⚙ tool · detail' inline indicator so a
 // long shell command doesn't blow out the panel width.
 func truncateForLog(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n-1] + "…"
+	return truncateCells(s, n)
 }
 
 // hasResearchDoneInHistory scans m.messages for an assistant turn
@@ -1393,6 +1444,7 @@ func (m *Model) postStreamChecks() tea.Cmd {
 		m.pushChat("system", "No interview needed — starting research…")
 		m.generating = true
 		m.status = "researching…"
+		m.setWorkflowPhase(workflowResearch, "")
 		return tea.Batch(m.sendChatWithMode("[RESEARCH] Proceed to research+code phase.", "plan"), spinnerTickCmd())
 	}
 	if hasResearch {
@@ -1402,6 +1454,7 @@ func (m *Model) postStreamChecks() tea.Cmd {
 		m.pushChat("system", "Research complete — reviewing for any follow-up questions…")
 		m.generating = true
 		m.status = "reviewing research…"
+		m.setWorkflowPhase(workflowReview, "")
 		return tea.Batch(m.sendChatWithMode("[REVIEW] Review the RESEARCH_DONE block from your previous turn and decide if any follow-up questions are needed.", "plan"), spinnerTickCmd())
 	}
 	if hasNoFollowup {
@@ -1409,6 +1462,7 @@ func (m *Model) postStreamChecks() tea.Cmd {
 		m.pushChat("system", "No follow-up questions — building the plan…")
 		m.generating = true
 		m.status = "building plan…"
+		m.setWorkflowPhase(workflowBuildPlan, "")
 		return tea.Batch(m.sendChatWithMode("[BUILD_PLAN] Build the plan from the RESEARCH_DONE block in the conversation history.", "plan"), spinnerTickCmd())
 	}
 	return nil
@@ -1416,10 +1470,7 @@ func (m *Model) postStreamChecks() tea.Cmd {
 
 // truncateFor is a mini helper for log-line output (view.go has its own).
 func truncateFor(s string, n int) string {
-	if len(s) > n {
-		return s[:n] + "…"
-	}
-	return s
+	return truncateCells(s, n)
 }
 
 // SlashHelp returns the command help block.

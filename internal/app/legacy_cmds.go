@@ -184,6 +184,9 @@ func cmdPlan(m *Model, _ []string) (tea.Model, tea.Cmd) {
 	label := "execute"
 	if m.planMode {
 		label = "plan"
+		m.setWorkflowPhase(workflowInterview, "")
+	} else {
+		m.setWorkflowPhase(workflowIdle, "")
 	}
 	m.pushChat("system", "Mode → "+label)
 	return m, nil
@@ -196,8 +199,12 @@ func cmdStatus(m *Model, _ []string) (tea.Model, tea.Cmd) {
 	if !strings.Contains(host, "://") {
 		target = fmt.Sprintf("%s:%d", host, m.cfg.Connection.Port)
 	}
-	m.pushChat("system", fmt.Sprintf("server=%s user=%s session=%s planMode=%t mode=%s",
-		target, m.cfg.Connection.User, m.sess, m.planMode, m.perms.Mode()))
+	workflow := m.workflowLabel()
+	if workflow == "" {
+		workflow = "idle"
+	}
+	m.pushChat("system", fmt.Sprintf("server=%s user=%s session=%s planMode=%t mode=%s workflow=%s",
+		target, m.cfg.Connection.User, m.sess, m.planMode, m.perms.Mode(), workflow))
 	return m, nil
 }
 

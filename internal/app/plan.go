@@ -20,13 +20,11 @@ type planModal struct {
 }
 
 func (m *Model) openPlanModal(text string) {
+	m.setWorkflowPhase(workflowPlanApproval, "")
 	m.modal = modalPlan
 	m.planApproval = &planModal{text: text}
 	// Relay plan text to companion observers (mobile shows same modal).
-	preview := text
-	if len(preview) > 2000 {
-		preview = preview[:2000]
-	}
+	preview := truncateCells(text, 2000)
 	m.Broadcast("plan:show-approval", map[string]any{"text": preview})
 }
 
@@ -37,12 +35,44 @@ func (pm *planModal) view(w, h int, t Theme) string {
 	// action UI in the input slot. Matches the Python acorn UX —
 	// the user reads the plan in the chat scrollback, picks an
 	// action below.
+	if h < 3 {
+		h = 3
+	}
+	boxW := w - 2
+	if boxW < 8 {
+		boxW = w
+	}
+	if boxW < 1 {
+		boxW = 1
+	}
+	innerW := boxW - 4
+	if innerW < 8 {
+		innerW = boxW
+	}
+	if innerW < 1 {
+		innerW = 1
+	}
+	innerLimit := h - 2
+	if innerLimit < 1 {
+		innerLimit = 1
+	}
+
 	var lines []string
-	lines = append(lines, t.accent(true).Render("Plan Ready")+t.muted().Render("  — review the plan above and choose:"))
+	lines = append(lines, truncateCells(t.accent(true).Render("Plan Ready")+t.muted().Render("  — review the plan above and choose:"), innerW))
 	if pm.noting {
+		maxFeedbackLines := innerLimit - 4
+		if maxFeedbackLines < 1 {
+			maxFeedbackLines = 1
+		}
+		feedbackLines := strings.Split(wrapForPanel(pm.feedback+"▌", innerW-2), "\n")
+		feedbackLines = clipLinesTail(feedbackLines, maxFeedbackLines)
 		lines = append(lines,
 			"Feedback for the agent (enter submits, esc cancels):",
-			borderStyle.Copy().BorderForeground(t.Accent2).Render(pm.feedback+"▌"),
+			borderStyle.Copy().
+				BorderForeground(t.Accent2).
+				Width(innerW).
+				Padding(0, 1).
+				Render(strings.Join(feedbackLines, "\n")),
 		)
 	} else {
 		choices := []struct{ label, desc string }{
@@ -57,12 +87,12 @@ func (pm *planModal) view(w, h int, t Theme) string {
 				cursor = "▸ "
 				label = t.accent(true).Render(c.label)
 			}
-			lines = append(lines, cursor+label+t.muted().Render("  "+c.desc))
+			lines = append(lines, truncateCells(cursor+label+t.muted().Render("  "+c.desc), innerW))
 		}
 		lines = append(lines, t.muted().Render(" ↑↓ select · enter confirm · esc cancel"))
 	}
 
-	boxW := w - 2
+	lines = clipLinesHead(lines, innerLimit)
 	return borderStyle.Copy().
 		BorderForeground(t.Accent).
 		Width(boxW).
@@ -101,6 +131,7 @@ func (m *Model) updatePlanModal(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.modal = modalNone
 		m.planApproval = nil
+		m.setWorkflowPhase(workflowIdle, "")
 		m.Broadcast("plan:decided", map[string]any{"action": "cancel"})
 		m.pushChat("system", "Plan dismissed.")
 		return m, nil
@@ -120,6 +151,7 @@ func (m *Model) updatePlanModal(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case 2:
 			m.modal = modalNone
 			m.planApproval = nil
+			m.setWorkflowPhase(workflowIdle, "")
 			m.Broadcast("plan:decided", map[string]any{"action": "cancel"})
 			m.pushChat("system", "Plan discarded.")
 			return m, nil
@@ -138,6 +170,7 @@ func (m *Model) planExecute(text string) (tea.Model, tea.Cmd) {
 	m.planMode = false
 	m.modal = modalNone
 	m.planApproval = nil
+	m.setWorkflowPhase(workflowExecuting, "")
 	m.Broadcast("plan:decided", map[string]any{"action": "execute"})
 	m.Broadcast("plan:set-mode", map[string]any{"enabled": false})
 	m.pushChat("system", "Mode → execute")
@@ -168,6 +201,7 @@ func (m *Model) planReviseWithFeedback(fb string) (tea.Model, tea.Cmd) {
 	m.pushChat("user", "(feedback) "+fb)
 	m.generating = true
 	m.status = "waiting…"
+	m.setWorkflowPhase(workflowInterview, "revision")
 	m.Broadcast("plan:decided", map[string]any{"action": "revise", "feedback": fb})
 	// Stay in plan mode — projectContext.mode='plan' so the system
 	// prompt keeps emitting the plan-mode block on the revise turn.

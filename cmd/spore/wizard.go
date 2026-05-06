@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -25,6 +27,9 @@ import (
 // Writes ~/.spore-code/config.toml. Tests auth with the entered host/port/key
 // before saving, offering the user a chance to continue anyway on failure.
 func runSetupWizard() (*config.Config, error) {
+	restoreTerminal := guardSetupTerminal()
+	defer restoreTerminal()
+
 	rd := bufio.NewReader(os.Stdin)
 	home, _ := os.UserHomeDir()
 	globalDir := filepath.Join(home, ".spore-code")
@@ -161,6 +166,48 @@ func runSetupWizard() (*config.Config, error) {
 	}
 	fmt.Printf("   ✓ Saved to %s\n\n", filepath.Join(globalDir, "config.toml"))
 	return cfg, nil
+}
+
+// guardSetupTerminal recovers terminals left in no-echo/raw mode by an
+// interrupted prior wizard run, then catches Ctrl+C during this run so the
+// password prompt cannot leave the terminal unusable again.
+func guardSetupTerminal() func() {
+	fd := int(os.Stdin.Fd())
+	if term.IsTerminal(fd) {
+		terminalSane()
+	}
+	state, _ := term.GetState(fd)
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt)
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-sigCh:
+			if state != nil {
+				_ = term.Restore(fd, state)
+			}
+			terminalSane()
+			fmt.Fprintln(os.Stderr, "\nsetup cancelled")
+			os.Exit(130)
+		case <-done:
+		}
+	}()
+	return func() {
+		close(done)
+		signal.Stop(sigCh)
+		if state != nil {
+			_ = term.Restore(fd, state)
+		}
+	}
+}
+
+func terminalSane() {
+	if _, err := exec.LookPath("stty"); err != nil {
+		return
+	}
+	cmd := exec.Command("stty", "sane")
+	cmd.Stdin = os.Stdin
+	_ = cmd.Run()
 }
 
 func prompt(rd *bufio.Reader, label, def string) string {

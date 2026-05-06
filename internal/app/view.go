@@ -106,6 +106,50 @@ func renderMarkdown(text string, width int, t Theme) string {
 	return out
 }
 
+func truncateCells(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if ansi.StringWidth(s) <= width {
+		return s
+	}
+	if width <= 1 {
+		return ansi.Truncate(s, width, "")
+	}
+	return ansi.Truncate(s, width-1, "") + "…"
+}
+
+func clipRenderedLines(s string, maxLines int) string {
+	if maxLines <= 0 {
+		return ""
+	}
+	lines := strings.Split(s, "\n")
+	if len(lines) <= maxLines {
+		return s
+	}
+	return strings.Join(lines[:maxLines], "\n")
+}
+
+func clipLinesHead(lines []string, maxLines int) []string {
+	if maxLines <= 0 {
+		return nil
+	}
+	if len(lines) <= maxLines {
+		return lines
+	}
+	return lines[:maxLines]
+}
+
+func clipLinesTail(lines []string, maxLines int) []string {
+	if maxLines <= 0 {
+		return nil
+	}
+	if len(lines) <= maxLines {
+		return lines
+	}
+	return lines[len(lines)-maxLines:]
+}
+
 // Module-level styles referenced by modal files (theme-agnostic defaults;
 // modals draw full-screen overlays so only their accents vary by theme).
 var (
@@ -153,6 +197,11 @@ func (m *Model) View() string {
 	footer := m.renderFooter()
 	footerH := lipgloss.Height(footer)
 
+	maxInputH := m.height - headerH - footerH - 3
+	if maxInputH < 3 {
+		maxInputH = 3
+	}
+
 	// Input region — when no modal is up, the standard textarea bar.
 	// When any modal (question / plan-approval / permission) is active,
 	// the modal view takes the input row's place (full chat width,
@@ -161,17 +210,21 @@ func (m *Model) View() string {
 	var input string
 	switch m.modal {
 	case modalQuestion:
-		input = m.question.view(m.width, m.height, m.input.Value(), m.theme)
+		input = m.question.view(m.width, maxInputH, m.input.Value(), m.theme)
 	case modalPlan:
-		input = m.planApproval.view(m.width, m.height, m.theme)
+		input = m.planApproval.view(m.width, maxInputH, m.theme)
 	case modalPermission:
-		input = m.permission.view(m.width, m.height, m.theme)
+		input = m.permission.view(m.width, maxInputH, m.theme)
 	default:
 		m.input.SetWidth(m.width - 2)
 		inputBorder := borderStyle.Copy().BorderForeground(m.theme.Separator).Width(m.width - 2)
 		input = inputBorder.Render(m.input.View())
 	}
 	inputH := lipgloss.Height(input)
+	if inputH > maxInputH {
+		input = clipRenderedLines(input, maxInputH)
+		inputH = lipgloss.Height(input)
+	}
 
 	// Provisional leftW for suggest (actual chat width may differ when
 	// side panels show, but the dropdown floats over the chat column).
@@ -182,7 +235,10 @@ func (m *Model) View() string {
 			provLeftW = m.width
 		}
 	}
-	suggest := m.renderSuggest(provLeftW)
+	suggest := ""
+	if m.modal == modalNone {
+		suggest = m.renderSuggest(provLeftW)
+	}
 	suggestH := 0
 	if suggest != "" {
 		suggestH = lipgloss.Height(suggest)
@@ -271,20 +327,28 @@ func (m *Model) renderSidePanelsBounded(totalH int) string {
 	if !showCode && !showSub && !showPlan {
 		return ""
 	}
-	// Split available height evenly across the visible panels. Plan
-	// tasks, when visible, goes on top (priority: the user is actively
-	// tracking progress through it), subagent below, code view at the
-	// bottom. When odd remainder, earlier panels absorb the extra.
-	n := 0
+	type panelSpec struct {
+		render func(int) string
+	}
+	var active []panelSpec
 	if showPlan {
-		n++
+		active = append(active, panelSpec{render: func(h int) string { return m.renderPlanTasksPanel(cw, h) }})
 	}
 	if showSub {
-		n++
+		active = append(active, panelSpec{render: func(h int) string { return m.renderSubagentPanel(cw, h) }})
 	}
 	if showCode {
-		n++
+		active = append(active, panelSpec{render: func(h int) string { return m.renderCodePanel(cw, h) }})
 	}
+	const minPanelH = 5
+	maxPanels := totalH / minPanelH
+	if maxPanels <= 0 {
+		return ""
+	}
+	if maxPanels < len(active) {
+		active = active[:maxPanels]
+	}
+	n := len(active)
 	each := totalH / n
 	extra := totalH - each*n
 	heightFor := func() int {
@@ -296,18 +360,8 @@ func (m *Model) renderSidePanelsBounded(totalH int) string {
 		return h
 	}
 	var panels []string
-	if showPlan {
-		if p := m.renderPlanTasksPanel(cw, heightFor()); p != "" {
-			panels = append(panels, p)
-		}
-	}
-	if showSub {
-		if p := m.renderSubagentPanel(cw, heightFor()); p != "" {
-			panels = append(panels, p)
-		}
-	}
-	if showCode {
-		if p := m.renderCodePanel(cw, heightFor()); p != "" {
+	for _, spec := range active {
+		if p := spec.render(heightFor()); p != "" {
 			panels = append(panels, p)
 		}
 	}
@@ -361,7 +415,7 @@ func (m *Model) renderHeader() string {
 		Padding(0, 1).
 		Render(dirTag(m.cwd))
 	branch := ""
-	if br := gitBranch(m.cwd); br != "" {
+	if br := m.gitBranch; br != "" {
 		branch = lipgloss.NewStyle().
 			Foreground(m.theme.PromptBranch).Background(hdrBg).
 			Padding(0, 1).
@@ -438,6 +492,9 @@ func (m *Model) renderFooter() string {
 	status := m.status
 	if status == "" {
 		status = "enter send · alt+enter newline · shift+tab mode · pgup/pgdn or ctrl+↑/↓ scroll · ctrl+p panels · ctrl+o output · ctrl+c quit"
+	}
+	if wf := m.workflowLabel(); wf != "" {
+		status = wf + " · " + status
 	}
 	// Truncate first so lipgloss.Width(...) below doesn't overflow when
 	// the status string is wider than the terminal. Width() pads but
@@ -553,9 +610,25 @@ func renderMessage(c chatMsg, width int, t Theme) string {
 		return ""
 	}
 	if c.Role == "system" {
+		innerW := width - 2
+		if innerW < 4 {
+			innerW = width
+		}
+		if innerW < 1 {
+			innerW = 1
+		}
+		wrapW := innerW - 2
+		if wrapW < 1 {
+			wrapW = innerW
+		}
+		wrapped := wrapForPanel(c.Text, wrapW)
+		lines := strings.Split(wrapped, "\n")
+		for i, line := range lines {
+			lines[i] = truncateCells("  "+line, innerW)
+		}
 		return lipgloss.NewStyle().
 			Foreground(t.System).Italic(true).
-			Render("  " + c.Text)
+			Render(strings.Join(lines, "\n"))
 	}
 
 	innerW := width - 4
@@ -654,13 +727,14 @@ func wrapLine(s string, w int) []string {
 		// last space position to prefer a word break.
 		cellW := 0
 		lastSpace := -1
+		lastSpaceCells := -1
 		cut := 0 // byte index to cut at
 		for i, r := range rem {
 			rw := runeWidth(r)
 			if cellW+rw > w {
 				// We've hit the width budget. Prefer a word break if
 				// we saw a space in the second half of this slice.
-				if lastSpace > w/2 {
+				if lastSpaceCells > w/2 {
 					cut = lastSpace
 				} else {
 					cut = i
@@ -669,6 +743,7 @@ func wrapLine(s string, w int) []string {
 			}
 			if r == ' ' {
 				lastSpace = i
+				lastSpaceCells = cellW
 			}
 			cellW += rw
 			cut = i + utf8Len(r) // end-of-string fallback
@@ -712,15 +787,20 @@ func utf8Len(r rune) int {
 }
 
 func short(s string) string {
-	if len(s) <= 40 {
+	if ansi.StringWidth(s) <= 40 {
 		return s
 	}
-	return "…" + s[len(s)-38:]
+	r := []rune(s)
+	for len(r) > 0 && ansi.StringWidth(string(r)) > 38 {
+		r = r[1:]
+	}
+	return "…" + string(r)
 }
 
 // renderOutputLog draws a full-screen overlay of the captured tool
 // stdout/stderr lines for this session. Toggled with Ctrl+O.
 func (m *Model) renderOutputLog() string {
+	firstRender := !m.outputLogInit
 	if !m.outputLogInit {
 		m.outputLogVP = viewport.New(m.width-2, m.height-3)
 		m.outputLogInit = true
@@ -734,7 +814,10 @@ func (m *Model) renderOutputLog() string {
 			Render("(no captured output yet — tool stdout/stderr will appear here)")
 	}
 	m.outputLogVP.SetContent(body)
-	m.outputLogVP.GotoBottom()
+	if firstRender || m.outputLogFollow {
+		m.outputLogVP.GotoBottom()
+		m.outputLogFollow = true
+	}
 
 	header := lipgloss.NewStyle().
 		Foreground(m.theme.Banner).Bold(true).

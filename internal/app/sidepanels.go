@@ -131,9 +131,7 @@ func previewLines(s string, maxLines, maxW int) string {
 		if len(out) == 0 && strings.TrimSpace(ln) == "" {
 			continue
 		}
-		if len(ln) > maxW {
-			ln = ln[:maxW-1] + "…"
-		}
+		ln = truncateCells(ln, maxW)
 		out = append(out, ln)
 		if len(out) >= maxLines {
 			break
@@ -235,10 +233,10 @@ func (m *Model) renderCodePanel(width, maxH int) string {
 		rendered = append(rendered, blocks[i].lines...)
 	}
 	hidden := len(m.codeViews) - len(blocks)
-	titleRow := title
+	titleRow := truncateCells(title, innerW)
 	if hidden > 0 {
-		titleRow += "  " + lipgloss.NewStyle().Foreground(m.theme.Muted).
-			Render(fmt.Sprintf("(%d older — Ctrl+P)", hidden))
+		titleRow = truncateCells(titleRow+"  "+lipgloss.NewStyle().Foreground(m.theme.Muted).
+			Render(fmt.Sprintf("(%d older — Ctrl+P)", hidden)), innerW)
 	}
 	bodyText := strings.Join(rendered, "\n")
 	bodyLines := strings.Split(bodyText, "\n")
@@ -294,13 +292,11 @@ func renderActivityHeader(e codeViewEntry, t Theme, innerW int) string {
 	if maxLabel < 6 {
 		maxLabel = 6
 	}
-	if len(label) > maxLabel {
-		label = "…" + label[len(label)-maxLabel+1:]
-	}
+	label = truncateCells(label, maxLabel)
 	head := lipgloss.NewStyle().Bold(true).Foreground(color).Render(icon + " " + label)
 	meta := lipgloss.NewStyle().Foreground(t.Muted).Faint(true).
 		Render(" · " + e.When.Format("15:04:05") + "  " + e.Text)
-	return head + meta
+	return truncateCells(head+meta, innerW)
 }
 
 // renderActivityPreview returns 0..N indented preview lines for an
@@ -335,10 +331,7 @@ func renderActivityPreview(e *codeViewEntry, t Theme, innerW int) []string {
 			return nil
 		}
 		for _, ln := range strings.Split(e.Preview, "\n") {
-			if len(ln) > maxW {
-				ln = ln[:maxW-1] + "…"
-			}
-			rawLines = append(rawLines, ln)
+			rawLines = append(rawLines, truncateCells(ln, maxW))
 		}
 		maxLines = len(rawLines)
 	}
@@ -360,44 +353,7 @@ func wordWrap(s string, maxW int) []string {
 	if maxW <= 0 {
 		return []string{s}
 	}
-	var out []string
-	for _, para := range strings.Split(s, "\n") {
-		if para == "" {
-			out = append(out, "")
-			continue
-		}
-		words := strings.Fields(para)
-		if len(words) == 0 {
-			out = append(out, "")
-			continue
-		}
-		cur := ""
-		for _, w := range words {
-			// Word longer than the full row — break it hard.
-			for len(w) > maxW {
-				if cur != "" {
-					out = append(out, cur)
-					cur = ""
-				}
-				out = append(out, w[:maxW])
-				w = w[maxW:]
-			}
-			if cur == "" {
-				cur = w
-				continue
-			}
-			if len(cur)+1+len(w) <= maxW {
-				cur += " " + w
-				continue
-			}
-			out = append(out, cur)
-			cur = w
-		}
-		if cur != "" {
-			out = append(out, cur)
-		}
-	}
-	return out
+	return strings.Split(wrapForPanel(s, maxW), "\n")
 }
 
 // subagent panel — tracks subagent:* ws frames.
@@ -687,19 +643,22 @@ func (m *Model) renderPlanTasksPanel(width, maxH int) string {
 		more = "\n" + lipgloss.NewStyle().Foreground(m.theme.Muted).Render(
 			"  "+itoa(start)+" earlier hidden")
 	}
-	inner := title + "\n\n" + strings.Join(lines, "\n") + more
-	innerLines := strings.Split(inner, "\n")
-	if len(innerLines) > maxH-2 {
-		innerLines = innerLines[len(innerLines)-(maxH-2):]
-		inner = strings.Join(innerLines, "\n")
+	bodyLines := append([]string{}, lines...)
+	if more != "" {
+		bodyLines = append(bodyLines, strings.TrimPrefix(more, "\n"))
 	}
+	bodyLimit := maxH - 4 // border + title + blank
+	if bodyLimit < 1 {
+		bodyLimit = 1
+	}
+	bodyLines = clipLinesTail(bodyLines, bodyLimit)
+	inner := truncateCells(title, width-4) + "\n\n" + strings.Join(bodyLines, "\n")
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(m.theme.Accent2).
 		Padding(0, 1).
 		Width(width - 2).
 		Height(maxH - 2).
-		MaxHeight(maxH).
 		Render(inner)
 }
 
@@ -817,21 +776,23 @@ func (m *Model) renderSubagentPanel(width, maxH int) string {
 		more = "\n" + lipgloss.NewStyle().Foreground(m.theme.Muted).Render(
 			"  "+itoa(start)+" older hidden — Ctrl+P to expand")
 	}
-	inner := title + "\n\n" + strings.Join(lines, "\n") + more
-	// Hard-clip to bodyH so a too-tall inner can never push the panel
-	// past maxH and force the chat column to flicker up/down.
-	innerLines := strings.Split(inner, "\n")
-	if len(innerLines) > maxH-2 {
-		innerLines = innerLines[len(innerLines)-(maxH-2):]
-		inner = strings.Join(innerLines, "\n")
+	bodyLines := append([]string{}, lines...)
+	if more != "" {
+		bodyLines = append(bodyLines, strings.TrimPrefix(more, "\n"))
 	}
+	// Hard-clip the body only so the panel title never disappears.
+	bodyLimit := maxH - 4 // border + title + blank
+	if bodyLimit < 1 {
+		bodyLimit = 1
+	}
+	bodyLines = clipLinesTail(bodyLines, bodyLimit)
+	inner := truncateCells(title, width-4) + "\n\n" + strings.Join(bodyLines, "\n")
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(m.theme.Accent2).
 		Padding(0, 1).
 		Width(width - 2).
 		Height(maxH - 2).
-		MaxHeight(maxH).
 		Render(inner)
 }
 
@@ -883,6 +844,48 @@ func (m *Model) renderExpandedPanel() string {
 // stripe, and for tool execs the detail line.
 func (m *Model) buildExpandedPanelBody() string {
 	var sections []string
+	taskCount := 0
+	if m.planTasks != nil {
+		taskCount = len(m.planTasks.Order)
+	}
+	taskTitle := lipgloss.NewStyle().Bold(true).Foreground(m.theme.Accent2).Render(
+		fmt.Sprintf("Plan tasks (%d tasks)", taskCount))
+	sections = append(sections, taskTitle)
+	if taskCount == 0 {
+		sections = append(sections, lipgloss.NewStyle().Faint(true).Render("  (none yet)"))
+	} else {
+		for _, id := range m.planTasks.Order {
+			st := m.planTasks.Tasks[id]
+			if st == nil {
+				continue
+			}
+			icon := "○"
+			switch st.Status {
+			case "in_progress":
+				icon = "◐"
+			case "done":
+				icon = "✓"
+			case "error":
+				icon = "✗"
+			case "cancelled":
+				icon = "✕"
+			case "blocked":
+				icon = "⏸"
+			}
+			subject := st.Subject
+			if subject == "" {
+				subject = "(" + shortID(id) + ")"
+			}
+			sections = append(sections, fmt.Sprintf("  %s %s — %s", icon, st.Status, subject))
+			if st.Note != "" {
+				for _, ln := range wordWrap(st.Note, m.width-8) {
+					sections = append(sections, lipgloss.NewStyle().Faint(true).Render("    "+ln))
+				}
+			}
+		}
+	}
+	sections = append(sections, "")
+
 	codeTitle := lipgloss.NewStyle().Bold(true).Foreground(m.theme.Accent).Render(
 		fmt.Sprintf("Code activity (%d events)", len(m.codeViews)))
 	sections = append(sections, codeTitle)
@@ -924,20 +927,14 @@ func (m *Model) buildExpandedPanelBody() string {
 				}
 			} else if e.Preview != "" {
 				for _, ln := range strings.Split(e.Preview, "\n") {
-					if len(ln) > bodyW {
-						ln = ln[:bodyW-1] + "…"
-					}
-					sections = append(sections, muted.Render("    "+ln))
+					sections = append(sections, muted.Render("    "+truncateCells(ln, bodyW)))
 				}
 			} else if e.ExecCmd != "" {
 				for _, ln := range wordWrap(e.ExecCmd, bodyW) {
 					sections = append(sections, muted.Render("    "+ln))
 				}
 				for _, ln := range e.ExecOut {
-					if len(ln) > bodyW {
-						ln = ln[:bodyW-1] + "…"
-					}
-					sections = append(sections, muted.Render("    "+ln))
+					sections = append(sections, muted.Render("    "+truncateCells(ln, bodyW)))
 				}
 			}
 			sections = append(sections, "") // blank line between entries
@@ -985,20 +982,18 @@ func shortID(id string) string {
 }
 
 func trimTo(s string, n int) string {
-	if n <= 0 {
-		return s
-	}
-	if len(s) > n {
-		return s[:n-1] + "…"
-	}
-	return s
+	return truncateCells(s, n)
 }
 
 func truncateStr(s string, n int) string {
-	if len(s) > n {
-		return s[:n] + "…"
+	if n <= 0 {
+		return ""
 	}
-	return s
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
 
 func asString(v any, def string) string {

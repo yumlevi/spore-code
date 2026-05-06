@@ -1150,10 +1150,7 @@ func oneLineSlice(v any) string {
 		return formatAnySlice(out, 5)
 	}
 	str := fmt.Sprintf("%+v", v)
-	if len(str) > 200 {
-		str = str[:200] + "…"
-	}
-	return str
+	return truncateCells(str, 200)
 }
 
 func formatAnySlice(s []any, max int) string {

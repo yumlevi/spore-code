@@ -89,6 +89,13 @@ type Model struct {
 	serverCaps proto.ServerCapabilities
 	status     string
 	theme      Theme
+	gitBranch  string
+
+	// workflowPhase is the typed UI state for the planning/execution flow.
+	// Legacy prose markers still feed it, but render code reads this field
+	// instead of rediscovering the phase from chat text.
+	workflowPhase  string
+	workflowDetail string
 
 	// Modals
 	modal        modalKind
@@ -182,10 +189,11 @@ type Model struct {
 
 	// Output log — captured tool stdout/stderr lines for the current
 	// session. Toggled with Ctrl+O. Bounded to ~500 entries.
-	outputLog     []string
-	outputLogOpen bool
-	outputLogVP   viewport.Model
-	outputLogInit bool
+	outputLog       []string
+	outputLogOpen   bool
+	outputLogVP     viewport.Model
+	outputLogInit   bool
+	outputLogFollow bool
 }
 
 // SetProgram stores the reference so off-thread code can deliver messages.
@@ -229,20 +237,22 @@ func New(cfg *config.Config, cwd, sess string, planMode, isContinue bool) *Model
 	vp.SetContent("")
 
 	m := &Model{
-		cfg:      cfg,
-		cwd:      cwd,
-		sess:     sess,
-		input:    ta,
-		viewport: vp,
-		planMode: planMode,
-		status:   "connecting…",
-		theme:    themeForName(cfg.Display.Theme),
+		cfg:       cfg,
+		cwd:       cwd,
+		sess:      sess,
+		input:     ta,
+		viewport:  vp,
+		planMode:  planMode,
+		status:    "connecting…",
+		theme:     themeForName(cfg.Display.Theme),
+		gitBranch: gitBranch(cwd),
 	}
 	m.perms = newTUIPerms(m)
 	m.exec = tools.New(m.perms, cwd, filepath.Join(cwd, ".spore-code", "logs"))
 	m.cmdHistory = loadHistory(cfg.GlobalDir)
 	m.histIdx = -1
 	m.followBottom = true
+	m.outputLogFollow = true
 	m.currentStreamIdx = -1
 	if w, err := sessionlog.Open(cfg.GlobalDir, sess); err == nil {
 		m.writer = w

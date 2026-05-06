@@ -37,6 +37,7 @@ type questionModal struct {
 }
 
 func (m *Model) openQuestionModal(qs []question) {
+	m.setWorkflowPhase(workflowBlockedQuestion, "")
 	m.modal = modalQuestion
 	m.question = &questionModal{
 		source:    "prose",
@@ -68,6 +69,7 @@ func (m *Model) openStructuredQuestion(f proto.AskUser) {
 	if len(labels) > 0 {
 		opts = labels
 	}
+	m.setWorkflowPhase(workflowBlockedQuestion, "")
 	m.modal = modalQuestion
 	m.question = &questionModal{
 		source: "ask_user",
@@ -497,13 +499,47 @@ func (qm *questionModal) view(w, h int, input string, t Theme) string {
 		return ""
 	}
 	q := qm.questions[qm.idx]
-	lines := []string{
-		t.accent(true).Render(
-			"Question "+itoa(qm.idx+1)+"/"+itoa(len(qm.questions))+": ") + q.Text,
-		"",
+	if h < 3 {
+		h = 3
+	}
+	boxW := w - 2
+	if boxW < 8 {
+		boxW = w
+	}
+	if boxW < 1 {
+		boxW = 1
+	}
+	innerW := boxW - 4
+	if innerW < 8 {
+		innerW = boxW
+	}
+	if innerW < 1 {
+		innerW = 1
+	}
+	innerLimit := h - 2
+	if innerLimit < 1 {
+		innerLimit = 1
+	}
+
+	title := t.accent(true).Render("Question "+itoa(qm.idx+1)+"/"+itoa(len(qm.questions))+": ") + q.Text
+	titleLines := strings.Split(wrapForPanel(title, innerW), "\n")
+	titleLines = clipLinesHead(titleLines, 3)
+	lines := append([]string{}, titleLines...)
+	if len(lines) < innerLimit {
+		lines = append(lines, "")
 	}
 	if q.Options != nil {
-		for i, opt := range q.Options {
+		hint := t.muted().Render(" ↑↓ select · enter confirm · esc cancel")
+		if q.Multi {
+			hint = t.muted().Render(" ↑↓ move · space toggle · enter submit · esc cancel")
+		}
+		optLimit := innerLimit - len(lines) - 1
+		if optLimit < 1 {
+			optLimit = 1
+		}
+		start, end := optionWindow(qm.selected, len(q.Options), optLimit)
+		for i := start; i < end; i++ {
+			opt := q.Options[i]
 			cursor := " "
 			if i == qm.selected {
 				cursor = "▸"
@@ -516,36 +552,34 @@ func (qm *questionModal) view(w, h int, input string, t Theme) string {
 					marker = "○"
 				}
 			}
-			line := " " + cursor + " " + marker + " " + opt
+			line := truncateCells(" "+cursor+" "+marker+" "+opt, innerW)
 			if i == qm.selected {
 				line = t.accent(true).Render(line)
 			}
 			lines = append(lines, line)
 		}
-		if q.Multi {
-			lines = append(lines, "", t.muted().Render(" ↑↓ move · space toggle · enter submit · esc cancel"))
-		} else {
-			lines = append(lines, "", t.muted().Render(" ↑↓ select · enter confirm · esc cancel"))
+		if len(lines) < innerLimit {
+			lines = append(lines, hint)
 		}
 	} else {
 		// Open-ended — show the textarea contents inline so the user
 		// sees what they're typing (the global input bar is hidden by
 		// the full-screen modal). Cursor indicated by trailing ▌.
 		caption := "Your answer:"
-		display := input + "▌"
-		boxW := w - 14
-		if boxW < 30 {
-			boxW = w - 8
+		maxInputLines := innerLimit - len(lines) - 4
+		if maxInputLines < 1 {
+			maxInputLines = 1
 		}
+		displayLines := strings.Split(wrapForPanel(input+"▌", innerW-2), "\n")
+		displayLines = clipLinesTail(displayLines, maxInputLines)
 		inputBox := borderStyle.Copy().
 			BorderForeground(t.Accent2).
-			Width(boxW).
+			Width(innerW).
 			Padding(0, 1).
-			Render(display)
+			Render(strings.Join(displayLines, "\n"))
 		lines = append(lines,
 			t.muted().Render(" "+caption),
 			inputBox,
-			"",
 			t.muted().Render(" type your answer · enter submit · esc cancel"),
 		)
 	}
@@ -553,13 +587,39 @@ func (qm *questionModal) view(w, h int, input string, t Theme) string {
 	// Inline render: full chat width, bordered, sized to the content
 	// so the chat history above stays as much as possible. No
 	// lipgloss.Place — the caller (View) puts us in the input slot.
+	lines = clipLinesHead(lines, innerLimit)
 	inner := strings.Join(lines, "\n")
-	boxW := w - 2
 	return borderStyle.Copy().
 		BorderForeground(t.Accent).
 		Width(boxW).
 		Padding(0, 1).
 		Render(inner)
+}
+
+func optionWindow(selected, total, limit int) (int, int) {
+	if total <= 0 {
+		return 0, 0
+	}
+	if limit <= 0 {
+		limit = 1
+	}
+	if limit >= total {
+		return 0, total
+	}
+	if selected < 0 {
+		selected = 0
+	}
+	if selected >= total {
+		selected = total - 1
+	}
+	start := selected - limit/2
+	if start < 0 {
+		start = 0
+	}
+	if start+limit > total {
+		start = total - limit
+	}
+	return start, start + limit
 }
 
 // updateModal handles keystrokes while a modal is open.
@@ -638,6 +698,7 @@ func (m *Model) updateModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.planApproval = nil
 		m.permission = nil
 		m.input.Reset()
+		m.setWorkflowPhase(workflowIdle, "")
 		if forceStop {
 			return m.stopActiveTurn("⏹ Stopped")
 		}
@@ -681,6 +742,7 @@ func (m *Model) updateQuestionModal(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.modal = modalNone
 		m.question = nil
 		m.input.Reset()
+		m.setWorkflowPhase(workflowIdle, "")
 		m.Broadcast("interactive:resolved", map[string]any{"kind": "questions"})
 		if qm.source == "ask_user" {
 			return m.stopActiveTurn("Question cancelled; stopped current turn.")
@@ -761,6 +823,7 @@ func (m *Model) finishQuestions() (tea.Model, tea.Cmd) {
 			})
 			m.pushChat("system", "Answered: "+qm.answers[0])
 		}
+		m.setWorkflowPhase(workflowIdle, "")
 		return m, nil
 	}
 
@@ -774,11 +837,14 @@ func (m *Model) finishQuestions() (tea.Model, tea.Cmd) {
 	// Disambiguate by scanning history for an earlier RESEARCH_DONE block.
 	if m.planMode {
 		if m.hasResearchDoneInHistory() {
+			m.setWorkflowPhase(workflowBuildPlan, "")
 			lines = append(lines, "[BUILD_PLAN] Follow-up answers — proceed to build the plan:")
 		} else {
+			m.setWorkflowPhase(workflowResearch, "")
 			lines = append(lines, "[RESEARCH] Interview answers — proceed to research+code phase:")
 		}
 	} else {
+		m.setWorkflowPhase(workflowIdle, "")
 		lines = append(lines, "Here are my answers to your questions:")
 	}
 	for i, q := range qm.questions {
