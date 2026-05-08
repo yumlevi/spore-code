@@ -494,6 +494,14 @@ func GatherContext(cwd string) string {
 			"3. Check the result, report success/failure, then continue.\n"+
 			"This keeps the user informed instead of going silent for 2 minutes.]")
 	parts = append(parts,
+		"[EVIDENCE DISCIPLINE: Treat this context, memory, prior sessions, and old failures as hints, not proof. "+
+			"Before claiming file state, command availability, test status, project structure, or what changed, "+
+			"check the current repo or command output with the relevant local tool. Before declaring something "+
+			"blocked or asking the user to run it manually, try the direct local check once when safe. "+
+			"Do not infer host/container boundaries, missing toolchains, or missing files from stale context. "+
+			"After edits or failed edits, inspect the changed range or git diff before choosing the next step; "+
+			"use exact error output to guide the next check, and do not repeat the same failing call unchanged.]")
+	parts = append(parts,
 		"[TOOL GUIDANCE: Prefer search_symbols → get_snippet before full-file reads. "+
 			"get_snippet accepts qname, name+file/kind, or file+start_line/end_line. "+
 			"read_file accepts start_line/end_line, line_range, offset/limit, and compact/code_only. "+
