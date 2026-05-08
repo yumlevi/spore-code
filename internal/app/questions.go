@@ -69,6 +69,15 @@ func (m *Model) openStructuredQuestion(f proto.AskUser) {
 	if len(labels) > 0 {
 		opts = labels
 	}
+	mode := strings.ToLower(strings.TrimSpace(f.Mode))
+	multi := f.Multi
+	switch mode {
+	case "multi", "multiple", "multi-select", "multiple-choice":
+		multi = true
+	case "open", "open-ended", "text", "free-text", "freeform", "free-form":
+		opts = nil
+		multi = false
+	}
 	m.setWorkflowPhase(workflowBlockedQuestion, "")
 	m.modal = modalQuestion
 	m.question = &questionModal{
@@ -77,6 +86,7 @@ func (m *Model) openStructuredQuestion(f proto.AskUser) {
 		questions: []question{{
 			Text:    f.Question,
 			Options: opts,
+			Multi:   multi,
 		}},
 		answers: make([]string, 1),
 		checked: map[int]bool{},

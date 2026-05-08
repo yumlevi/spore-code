@@ -1036,7 +1036,7 @@ func (m *Model) handleFrame(f conn.Frame) tea.Cmd {
 		var v proto.AskUserAnswerAck
 		_ = json.Unmarshal(f.Raw, &v)
 		if !v.OK {
-			m.pushChat("system", "Question answer was not accepted; choose one of the listed options.")
+			m.pushChat("system", "Question answer was not accepted; answer the prompt again.")
 			m.status = "waiting for question answer"
 			m.setWorkflowPhase(workflowBlockedQuestion, "")
 		}

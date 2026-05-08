@@ -110,20 +110,27 @@ func (m *Model) updatePlanModal(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if pm.noting {
 		switch km.Type {
 		case tea.KeyEsc:
+			m.inputBurst = nil
+			m.inputBurstScheduled = false
+			m.inputBurstNormalize = false
 			pm.noting = false
 			pm.feedback = ""
 			return m, nil
 		case tea.KeyEnter:
+			m.flushPendingInputText()
 			return m.planReviseWithFeedback(strings.TrimSpace(pm.feedback))
 		case tea.KeyBackspace:
+			m.flushPendingInputText()
 			if len(pm.feedback) > 0 {
-				pm.feedback = pm.feedback[:len(pm.feedback)-1]
+				runes := []rune(pm.feedback)
+				pm.feedback = string(runes[:len(runes)-1])
 			}
 			return m, nil
-		case tea.KeyRunes, tea.KeySpace:
-			pm.feedback += km.String()
-			return m, nil
 		}
+		if cmd, consumed := m.handleTextInputKey(km); consumed {
+			return m, cmd
+		}
+		m.flushPendingInputText()
 		return m, nil
 	}
 
@@ -146,7 +153,9 @@ func (m *Model) updatePlanModal(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case 0:
 			return m.planExecute(pm.text)
 		case 1:
+			m.flushPendingInputText()
 			pm.noting = true
+			pm.feedback = ""
 			return m, nil
 		case 2:
 			m.modal = modalNone

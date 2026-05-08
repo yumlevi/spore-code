@@ -112,6 +112,10 @@ func (m *Model) insertInputText(text string) {
 	if text == "" {
 		return
 	}
+	if m.modal == modalPlan && m.planApproval != nil && m.planApproval.noting {
+		m.planApproval.feedback += text
+		return
+	}
 	m.input.InsertString(text)
 	if m.modal == modalNone {
 		m.refreshSuggest()

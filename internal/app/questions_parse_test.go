@@ -169,6 +169,30 @@ func TestOpenStructuredQuestionWithoutOptionsIsOpenEnded(t *testing.T) {
 	}
 }
 
+func TestOpenStructuredQuestionMultiUsesCheckboxMode(t *testing.T) {
+	m := &Model{currentStreamIdx: -1, input: textarea.New()}
+	m.openStructuredQuestion(proto.AskUser{
+		QID:      "q1",
+		Question: "Which features?",
+		Mode:     "multi",
+		Options: []proto.Option{
+			{Label: "Auth"},
+			{Label: "API"},
+		},
+	})
+
+	if m.question == nil {
+		t.Fatal("expected question state")
+	}
+	q := m.question.questions[0]
+	if !q.Multi {
+		t.Fatalf("expected multi-select structured ask_user")
+	}
+	if got := strings.Join(q.Options, ", "); got != "Auth, API" {
+		t.Fatalf("unexpected options: %q", got)
+	}
+}
+
 func TestAskUserEscStopsTurnAndClosesModal(t *testing.T) {
 	m := &Model{
 		modal:            modalQuestion,

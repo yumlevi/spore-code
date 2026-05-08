@@ -284,6 +284,46 @@ func TestOpenQuestionPasteUsesFastPath(t *testing.T) {
 	}
 }
 
+func TestPlanFeedbackPasteUsesFastPath(t *testing.T) {
+	m := inputTestModel(t)
+	m.modal = modalPlan
+	m.planApproval = &planModal{noting: true}
+	feedback := "to be clear, the cli tier uses the routing we have now"
+
+	next, _ := m.updatePlanModal(tea.KeyMsg{
+		Type:  tea.KeyRunes,
+		Runes: []rune(feedback),
+		Paste: true,
+	})
+	got := next.(*Model)
+
+	if got.planApproval.feedback != feedback {
+		t.Fatalf("plan feedback paste mismatch: %q", got.planApproval.feedback)
+	}
+	if strings.Contains(got.planApproval.feedback, "[") || strings.Contains(got.planApproval.feedback, "]") {
+		t.Fatalf("plan feedback paste should not use KeyMsg bracket rendering: %q", got.planApproval.feedback)
+	}
+}
+
+func TestPlanFeedbackFlushesBeforeSubmit(t *testing.T) {
+	m := inputTestModel(t)
+	m.modal = modalPlan
+	m.planApproval = &planModal{noting: true}
+	feedback := "to be clear, the cli tier uses the routing we have now"
+
+	next, _ := m.updatePlanModal(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(feedback)})
+	m = next.(*Model)
+	if m.planApproval.feedback != "" {
+		t.Fatalf("feedback should be pending in input burst before flush, got %q", m.planApproval.feedback)
+	}
+
+	next, _ = m.updatePlanModal(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(*Model)
+	if len(m.messages) == 0 || !strings.Contains(m.messages[len(m.messages)-1].Text, feedback) {
+		t.Fatalf("submit did not flush full feedback into chat: %#v", m.messages)
+	}
+}
+
 func inputTestModel(t *testing.T) *Model {
 	t.Helper()
 	ta := textarea.New()

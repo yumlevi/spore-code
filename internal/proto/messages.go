@@ -269,7 +269,9 @@ type AskUser struct {
 	Type     string   `json:"type"`
 	QID      string   `json:"qid"`
 	Question string   `json:"question"`
+	Mode     string   `json:"mode,omitempty"`
 	Options  []Option `json:"options"`
+	Multi    bool     `json:"multi,omitempty"`
 }
 
 type Option struct {
