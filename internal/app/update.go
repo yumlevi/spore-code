@@ -97,14 +97,19 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// ── Model routing preset messages ──
 	case presetsFetchedMsg:
 		if msg.err != nil {
-			m.pushChat("system", "Preset fetch failed: "+msg.err.Error())
+			if !msg.silent {
+				m.pushChat("system", "Preset fetch failed: "+msg.err.Error())
+			}
 			break
 		}
 		m.presetNames = append([]string(nil), msg.names...)
-		if len(m.presetNames) == 0 {
-			m.pushChat("system", "No model routing presets found.")
-		} else {
-			m.pushChat("system", "Available presets: "+strings.Join(m.presetNames, ", ")+"\nUsage: /models_preset <name>")
+		m.refreshSuggest()
+		if !msg.silent {
+			if len(m.presetNames) == 0 {
+				m.pushChat("system", "No model routing presets found.")
+			} else {
+				m.pushChat("system", "Available presets: "+strings.Join(m.presetNames, ", ")+"\nUsage: /models_preset <name>")
+			}
 		}
 	case presetsAppliedMsg:
 		if msg.err != nil {
@@ -154,6 +159,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			"localTools":     pc.LocalTools,
 			"projectContext": pc,
 		})
+		presetsCmd := func() tea.Msg { return fetchPresetsSilently(m) }
 		// codeindex auto-bootstrap — when the cwd has no index yet,
 		// kick a background index pass so the agent has structural
 		// tools available without the user needing to remember
@@ -167,7 +173,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pushChat("system", "Auto-indexing this project so the agent can use structural search (search_symbols, trace_calls, architecture, impact). One-time, takes a few seconds; progress every 2s.")
 				send := m.sendProgramMsg
 				cwd := m.cwd
-				return m, func() tea.Msg {
+				return m, tea.Batch(presetsCmd, func() tea.Msg {
 					var onProgress tools.IndexProgressFn
 					if send != nil {
 						onProgress = func(p tools.IndexProgress) {
@@ -180,7 +186,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					r := tools.IndexCodebaseWithProgress(map[string]any{}, cwd, onProgress)
 					return CodeindexResultMsg{Label: "/index (auto-bootstrap)", Result: r}
-				}
+				})
 			}
 			// Index already present from a prior session. Surface the
 			// stats inline so the user can see at a glance that
@@ -197,7 +203,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pushChat("system", "Code index ready (head "+head+") — search_symbols / trace_calls / architecture / impact / get_snippet are available. Refreshing dirty/changed files in the background…")
 			send := m.sendProgramMsg
 			cwd := m.cwd
-			return m, func() tea.Msg {
+			return m, tea.Batch(presetsCmd, func() tea.Msg {
 				var onProgress tools.IndexProgressFn
 				if send != nil {
 					onProgress = func(p tools.IndexProgress) {
@@ -213,9 +219,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// an up-to-date project this completes in milliseconds.
 				r := tools.IndexCodebaseWithProgress(map[string]any{}, cwd, onProgress)
 				return CodeindexResultMsg{Label: "/index (auto-refresh)", Result: r}
-			}
+			})
 		}
-		return m, nil
+		return m, presetsCmd
 
 	case connErrorMsg:
 		m.connected = false

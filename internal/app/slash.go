@@ -36,6 +36,7 @@ var slashCatalog = []slashEntry{
 	{"/stop", "stop the current generation"},
 	{"/plan", "toggle plan/execute mode (same as Shift+Tab)"},
 	{"/status", "connection + session info"},
+	{"/models_preset", "list or apply a model routing preset"},
 
 	// Theme — mirrors spore-core's current theme system.
 	{"/theme", "switch theme (dark/oled/light)"},

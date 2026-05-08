@@ -16,35 +16,44 @@ import (
 
 // presetsFetchedMsg carries the list of preset names from the backend.
 type presetsFetchedMsg struct {
-	names []string
-	err   error
+	names  []string
+	err    error
+	silent bool
 }
 
 func fetchPresets(m *Model) tea.Msg {
+	return fetchPresetsWithMode(m, false)
+}
+
+func fetchPresetsSilently(m *Model) tea.Msg {
+	return fetchPresetsWithMode(m, true)
+}
+
+func fetchPresetsWithMode(m *Model, silent bool) tea.Msg {
 	base := m.baseURL()
 	if !authTransportAllowed(base) {
-		return presetsFetchedMsg{err: fmt.Errorf("refusing to fetch presets over insecure HTTP to %s", base)}
+		return presetsFetchedMsg{err: fmt.Errorf("refusing to fetch presets over insecure HTTP to %s", base), silent: silent}
 	}
 
 	token := m.authToken()
 	if token == "" {
-		return presetsFetchedMsg{err: fmt.Errorf("no auth token available for preset fetch")}
+		return presetsFetchedMsg{err: fmt.Errorf("no auth token available for preset fetch"), silent: silent}
 	}
 
 	req, err := http.NewRequest("GET", base+"/api/models/routing-presets", nil)
 	if err != nil {
-		return presetsFetchedMsg{err: err}
+		return presetsFetchedMsg{err: err, silent: silent}
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return presetsFetchedMsg{err: err}
+		return presetsFetchedMsg{err: err, silent: silent}
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return presetsFetchedMsg{err: fmt.Errorf("fetch presets: HTTP %d", resp.StatusCode)}
+		return presetsFetchedMsg{err: fmt.Errorf("fetch presets: HTTP %d", resp.StatusCode), silent: silent}
 	}
 
 	var result struct {
@@ -54,7 +63,7 @@ func fetchPresets(m *Model) tea.Msg {
 		} `json:"presets"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return presetsFetchedMsg{err: err}
+		return presetsFetchedMsg{err: err, silent: silent}
 	}
 
 	names := make([]string, 0, len(result.Presets))
@@ -63,7 +72,7 @@ func fetchPresets(m *Model) tea.Msg {
 			names = append(names, p.Name)
 		}
 	}
-	return presetsFetchedMsg{names: names}
+	return presetsFetchedMsg{names: names, silent: silent}
 }
 
 // presetsAppliedMsg is sent after applying a preset via the backend.
