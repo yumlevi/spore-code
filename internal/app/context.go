@@ -499,6 +499,9 @@ func GatherContext(cwd string) string {
 			"check the current repo or command output with the relevant local tool. Before declaring something "+
 			"blocked or asking the user to run it manually, try the direct local check once when safe. "+
 			"Do not infer host/container boundaries, missing toolchains, or missing files from stale context. "+
+			"Ask the user when uncertainty is about intent, desired behavior, acceptable risk, credentials/access, "+
+			"destructive changes, or a product decision that repo/tool evidence cannot answer. "+
+			"Do not silently choose a risky interpretation just to keep moving. "+
 			"After edits or failed edits, inspect the changed range or git diff before choosing the next step; "+
 			"use exact error output to guide the next check, and do not repeat the same failing call unchanged.]")
 	parts = append(parts,
