@@ -284,6 +284,63 @@ func TestViewPaintsBaseBackgroundWithoutResetHoles(t *testing.T) {
 	assertViewFits(t, m)
 }
 
+func TestOutputLogOverlayUsesActiveThemeSurface(t *testing.T) {
+	m := renderTestModel(80, 18)
+	m.applyTheme(themeLight)
+	m.outputLogOpen = true
+	m.outputLog = []string{"plain output", "\x1b[31mred then reset\x1b[0m after reset"}
+
+	out := m.View()
+	for _, color := range []lipgloss.Color{themeLight.Bg, themeLight.BgPanel} {
+		needle := backgroundOpen(color)
+		if needle != "" && !strings.Contains(out, needle) {
+			t.Fatalf("output log overlay missing theme background %s:\n%q", color, out)
+		}
+	}
+	for _, color := range []lipgloss.Color{themeLight.Fg, themeLight.Muted} {
+		needle := foregroundOpen(color)
+		if needle != "" && !strings.Contains(out, needle) {
+			t.Fatalf("output log overlay missing theme foreground %s:\n%q", color, out)
+		}
+	}
+	panelBg := backgroundOpen(themeLight.BgPanel)
+	if panelBg != "" && strings.Contains(out, "\x1b[0m after reset") {
+		t.Fatalf("output log reset was not repainted with panel background:\n%q", out)
+	}
+	assertViewFits(t, m)
+}
+
+func TestExpandedPanelUsesActiveThemeSurface(t *testing.T) {
+	m := renderTestModel(90, 22)
+	m.applyTheme(themeLight)
+	m.panelExpand = true
+	m.planTasks = newPlanTaskPanel()
+	m.appendActivity(codeViewEntry{
+		Tool:    "exec",
+		ExecCmd: "go test ./...",
+		ExecOut: []string{"ok github.com/yumlevi/spore-code/internal/app"},
+		Text:    "done",
+		When:    time.Now(),
+	})
+
+	out := m.View()
+	for _, needle := range []string{
+		backgroundOpen(themeLight.Bg),
+		backgroundOpen(themeLight.BgPanel),
+		foregroundOpen(themeLight.Fg),
+		foregroundOpen(themeLight.Muted),
+		foregroundOpen(themeLight.Accent),
+	} {
+		if needle != "" && !strings.Contains(out, needle) {
+			t.Fatalf("expanded panel missing theme escape %q:\n%q", needle, out)
+		}
+	}
+	if !strings.Contains(ansi.Strip(out), "Activity browser") {
+		t.Fatalf("expanded panel title missing:\n%q", out)
+	}
+	assertViewFits(t, m)
+}
+
 func TestLogoMessageUsesThemeAccent(t *testing.T) {
 	rendered := renderMessage(chatMsg{Role: "system", Text: LogoFull}, 100, themeDark)
 	if !strings.HasPrefix(rendered, "\n") {

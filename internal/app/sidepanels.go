@@ -799,37 +799,93 @@ func (m *Model) renderSubagentPanel(width, maxH int) string {
 func (m *Model) renderExpandedPanel() string {
 	body := m.buildExpandedPanelBody()
 
-	// Inner box dimensions after border + padding.
-	innerW := m.width - 6 // 2 border + 4 horizontal padding
-	if innerW < 10 {
-		innerW = 10
+	frameW := m.width
+	frameH := m.height
+	if frameW < 8 || frameH < 5 {
+		return fitRenderedBlockWithBackground("Activity browser", m.width, m.height, m.theme.Bg)
 	}
-	innerH := m.height - 6 // 2 border + 2 vertical padding + 2 hint
-	if innerH < 5 {
-		innerH = 5
+	innerW := frameW - 4 // border + one-cell horizontal padding
+	bodyW := innerW - 1  // leave one column for the scrollbar
+	if bodyW < 1 {
+		bodyW = 1
 	}
-
+	bodyH := frameH - 4 // title + hint + border
+	if bodyH < 1 {
+		bodyH = 1
+	}
 	// Re-init viewport on first open or resize.
-	if !m.panelViewInit || m.panelView.Width != innerW || m.panelView.Height != innerH {
-		m.panelView = viewport.New(innerW, innerH)
+	if !m.panelViewInit || m.panelView.Width != bodyW || m.panelView.Height != bodyH {
+		m.panelView = viewport.New(bodyW, bodyH)
 		m.panelViewInit = true
 	}
 	m.panelView.SetContent(body)
 
-	bar := scrollbar(&m.panelView, innerH, m.theme)
-	content := lipgloss.JoinHorizontal(lipgloss.Top, m.panelView.View(), bar)
+	bodyView := fitRenderedBlockWithTheme(m.panelView.View(), bodyW, bodyH, m.theme.Fg, m.theme.BgPanel)
+	bodyLines := strings.Split(bodyView, "\n")
+	scrollView := fitRenderedBlockWithBackground(scrollbar(&m.panelView, bodyH, m.theme), 1, bodyH, m.theme.BgPanel)
+	scrollLines := strings.Split(scrollView, "\n")
+	title := paintLineTheme("Activity browser", innerW, m.theme.Banner, m.theme.BgPanel)
+	hint := paintLineTheme("↑↓/PgUp/PgDn scroll · Ctrl+P or Esc to close", innerW, m.theme.Muted, m.theme.BgPanel)
 
-	hint := lipgloss.NewStyle().Foreground(m.theme.Muted).
-		Render("↑↓/PgUp/PgDn scroll · Ctrl+P or Esc to close")
+	lines := make([]string, 0, frameH-2)
+	lines = append(lines, title)
+	for i := 0; i < bodyH; i++ {
+		scroll := ""
+		if i < len(scrollLines) {
+			scroll = scrollLines[i]
+		}
+		line := ""
+		if i < len(bodyLines) {
+			line = bodyLines[i]
+		}
+		lines = append(lines, line+scroll)
+	}
+	lines = append(lines, hint)
+	panel := renderThemedOverlayFrame(frameW, frameH, m.theme, lines)
+	return fitRenderedBlockWithBackground(panel, m.width, m.height, m.theme.Bg)
+}
 
-	return lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(m.theme.Accent).
-		Foreground(m.theme.Fg).
-		Padding(1, 2).
-		Width(m.width - 2).
-		Height(m.height - 2).
-		Render(content + "\n" + hint)
+func renderThemedOverlayFrame(width, height int, t Theme, lines []string) string {
+	if width < 4 || height < 2 {
+		return ""
+	}
+	innerW := width - 4
+	top := paintLineTheme("╭"+strings.Repeat("─", width-2)+"╮", width, t.Accent, t.BgPanel)
+	bottom := paintLineTheme("╰"+strings.Repeat("─", width-2)+"╯", width, t.Accent, t.BgPanel)
+	left := paintToken("│", t.Accent, t.BgPanel)
+	right := paintToken("│", t.Accent, t.BgPanel)
+	gap := paintSpaces(1, t.BgPanel)
+	out := make([]string, 0, height)
+	out = append(out, top)
+	for i := 0; i < height-2; i++ {
+		line := ""
+		if i < len(lines) {
+			line = lines[i]
+		}
+		line = fitRenderedBlockWithTheme(line, innerW, 1, t.Fg, t.BgPanel)
+		out = append(out, left+gap+line+gap+right)
+	}
+	out = append(out, bottom)
+	return strings.Join(out, "\n")
+}
+
+func paintToken(text string, fg, bg lipgloss.Color) string {
+	open := backgroundOpen(bg) + foregroundOpen(fg)
+	if open == "" {
+		return text
+	}
+	return open + text + "\x1b[0m"
+}
+
+func paintSpaces(width int, bg lipgloss.Color) string {
+	if width <= 0 {
+		return ""
+	}
+	open := backgroundOpen(bg)
+	if open == "" {
+		return strings.Repeat(" ", width)
+	}
+	return open + strings.Repeat(" ", width) + "\x1b[0m"
 }
 
 // buildExpandedPanelBody composes the content string — separate function
@@ -843,6 +899,7 @@ func (m *Model) renderExpandedPanel() string {
 // stripe, and for tool execs the detail line.
 func (m *Model) buildExpandedPanelBody() string {
 	var sections []string
+	mutedFaint := lipgloss.NewStyle().Foreground(m.theme.Muted).Faint(true)
 	taskCount := 0
 	if m.planTasks != nil {
 		taskCount = len(m.planTasks.Order)
@@ -851,7 +908,7 @@ func (m *Model) buildExpandedPanelBody() string {
 		fmt.Sprintf("Plan tasks (%d tasks)", taskCount))
 	sections = append(sections, taskTitle)
 	if taskCount == 0 {
-		sections = append(sections, lipgloss.NewStyle().Faint(true).Render("  (none yet)"))
+		sections = append(sections, mutedFaint.Render("  (none yet)"))
 	} else {
 		for _, id := range m.planTasks.Order {
 			st := m.planTasks.Tasks[id]
@@ -878,7 +935,7 @@ func (m *Model) buildExpandedPanelBody() string {
 			sections = append(sections, fmt.Sprintf("  %s %s — %s", icon, st.Status, subject))
 			if st.Note != "" {
 				for _, ln := range wordWrap(st.Note, m.width-8) {
-					sections = append(sections, lipgloss.NewStyle().Faint(true).Render("    "+ln))
+					sections = append(sections, mutedFaint.Render("    "+ln))
 				}
 			}
 		}
@@ -889,7 +946,7 @@ func (m *Model) buildExpandedPanelBody() string {
 		fmt.Sprintf("Code activity (%d events)", len(m.codeViews)))
 	sections = append(sections, codeTitle)
 	if len(m.codeViews) == 0 {
-		sections = append(sections, lipgloss.NewStyle().Faint(true).Render("  (none yet)"))
+		sections = append(sections, mutedFaint.Render("  (none yet)"))
 	} else {
 		mutedItalic := lipgloss.NewStyle().Foreground(m.theme.Muted).Italic(true)
 		muted := lipgloss.NewStyle().Foreground(m.theme.Muted)
@@ -948,7 +1005,7 @@ func (m *Model) buildExpandedPanelBody() string {
 		fmt.Sprintf("Subagents (%d tasks)", saCount))
 	sections = append(sections, saTitle)
 	if saCount == 0 {
-		sections = append(sections, lipgloss.NewStyle().Faint(true).Render("  (none yet)"))
+		sections = append(sections, mutedFaint.Render("  (none yet)"))
 	} else {
 		for _, id := range m.subagents.Order {
 			st := m.subagents.Tasks[id]
@@ -963,7 +1020,7 @@ func (m *Model) buildExpandedPanelBody() string {
 			}
 			sections = append(sections, fmt.Sprintf("  %s %s — %s", icon, shortID(id), st.Title))
 			for _, line := range st.Lines {
-				sections = append(sections, lipgloss.NewStyle().Faint(true).Render("    "+trimTo(line, m.width-8)))
+				sections = append(sections, mutedFaint.Render("    "+trimTo(line, m.width-8)))
 			}
 		}
 	}

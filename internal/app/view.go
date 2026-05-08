@@ -262,6 +262,40 @@ func paintLineBackground(line string, width int, bg lipgloss.Color) string {
 	return open + line + strings.Repeat(" ", padW) + "\x1b[0m"
 }
 
+func paintLineTheme(line string, width int, fg, bg lipgloss.Color) string {
+	if width <= 0 {
+		return line
+	}
+	open := backgroundOpen(bg) + foregroundOpen(fg)
+	if open == "" {
+		return line
+	}
+	line = strings.ReplaceAll(line, "\x1b[0m", "\x1b[0m"+open)
+	line = strings.ReplaceAll(line, "\x1b[m", "\x1b[m"+open)
+	padW := width - ansi.StringWidth(line)
+	if padW < 0 {
+		padW = 0
+	}
+	return open + line + strings.Repeat(" ", padW) + "\x1b[0m"
+}
+
+func fitRenderedBlockWithTheme(s string, width, height int, fg, bg lipgloss.Color) string {
+	if height <= 0 {
+		return ""
+	}
+	lines := strings.Split(s, "\n")
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	for i, line := range lines {
+		lines[i] = paintLineTheme(truncateCells(line, width), width, fg, bg)
+	}
+	for len(lines) < height {
+		lines = append(lines, paintLineTheme("", width, fg, bg))
+	}
+	return strings.Join(lines, "\n")
+}
+
 func backgroundOpen(bg lipgloss.Color) string {
 	raw := string(bg)
 	if strings.HasPrefix(raw, "#") && len(raw) == 7 {
@@ -1187,17 +1221,25 @@ func short(s string) string {
 // stdout/stderr lines for this session. Toggled with Ctrl+O.
 func (m *Model) renderOutputLog() string {
 	firstRender := !m.outputLogInit
+	bodyW := m.width - 3
+	if bodyW < 1 {
+		bodyW = 1
+	}
+	bodyH := m.height - 2
+	if bodyH < 1 {
+		bodyH = 1
+	}
 	if !m.outputLogInit {
-		m.outputLogVP = viewport.New(m.width-2, m.height-3)
+		m.outputLogVP = viewport.New(bodyW, bodyH)
 		m.outputLogInit = true
 	}
-	m.outputLogVP.Width = m.width - 2
-	m.outputLogVP.Height = m.height - 3
+	m.outputLogVP.Width = bodyW
+	m.outputLogVP.Height = bodyH
 
 	body := strings.Join(m.outputLog, "\n")
 	if body == "" {
 		body = lipgloss.NewStyle().Foreground(m.theme.Muted).Italic(true).
-			Render("(no captured output yet — tool stdout/stderr will appear here)")
+			Render("(no captured output yet - tool stdout/stderr will appear here)")
 	}
 	m.outputLogVP.SetContent(body)
 	if firstRender || m.outputLogFollow {
@@ -1205,19 +1247,15 @@ func (m *Model) renderOutputLog() string {
 		m.outputLogFollow = true
 	}
 
-	header := lipgloss.NewStyle().
-		Foreground(m.theme.Banner).Bold(true).
-		Background(m.theme.BgHeader).
-		Padding(0, 1).Width(m.width).
-		Render("📜 Output log — " + fmt.Sprintf("%d lines", len(m.outputLog)))
-	footer := lipgloss.NewStyle().
-		Foreground(m.theme.Muted).
-		Background(m.theme.BgPanel).
-		Padding(0, 1).Width(m.width).
-		Render("ctrl+o close · ↑/↓ scroll · g/G top/bottom")
+	header := paintLineTheme(" Output log - "+fmt.Sprintf("%d lines", len(m.outputLog)), m.width, m.theme.Banner, m.theme.BgHeader)
+	footer := paintLineTheme(" ctrl+o close · ↑/↓ scroll · g/G top/bottom", m.width, m.theme.Muted, m.theme.BgPanel)
 
-	scroll := scrollbar(&m.outputLogVP, m.outputLogVP.Height, m.theme)
-	body2 := lipgloss.JoinHorizontal(lipgloss.Top, m.outputLogVP.View(), scroll)
+	scroll := lipgloss.NewStyle().
+		Background(m.theme.BgPanel).
+		Height(bodyH).
+		Render(scrollbar(&m.outputLogVP, bodyH, m.theme))
+	bodyView := fitRenderedBlockWithTheme(m.outputLogVP.View(), bodyW, bodyH, m.theme.Fg, m.theme.BgPanel)
+	body2 := lipgloss.JoinHorizontal(lipgloss.Top, bodyView, scroll)
 	return fitRenderedBlockWithBackground(lipgloss.JoinVertical(lipgloss.Left, header, body2, footer), m.width, m.height, m.theme.Bg)
 }
 
