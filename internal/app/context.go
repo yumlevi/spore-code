@@ -497,7 +497,10 @@ func GatherContext(cwd string) string {
 		"[TOOL GUIDANCE: Prefer search_symbols → get_snippet before full-file reads. "+
 			"get_snippet accepts qname, name+file/kind, or file+start_line/end_line. "+
 			"read_file accepts start_line/end_line, line_range, offset/limit, and compact/code_only. "+
-			"Only read whole files when symbol or range lookup cannot answer the question.]")
+			"Only read whole files when symbol or range lookup cannot answer the question. "+
+			"For code changes, use edit_file or patch_file directly. Do not create and run ad-hoc "+
+			"JS/Python patch scripts just to edit files unless the structured edit tools cannot "+
+			"represent the change; if you do, verify the script itself like production code.]")
 
 	if gitRoot != "" {
 		if branch := gitBranch(cwd); branch != "" {

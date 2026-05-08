@@ -318,16 +318,31 @@ func EditFile(input map[string]any, cwd, scope string) any {
 	}
 	old := asString(input["old_string"], asString(input["old_text"], ""))
 	replacement := asString(input["new_string"], asString(input["new_text"], ""))
-	replaceAll := asBool(input["replace_all"], false)
+	replaceAll := asBool(input["replace_all"], asBool(input["all"], false))
+	if old == "" {
+		return map[string]string{"error": "old_string is required"}
+	}
 
 	text := string(data)
 	count := strings.Count(text, old)
 	if count == 0 {
-		return map[string]string{"error": "old_string not found in " + p}
+		updated, reps, ok, matchErr := replaceNormalizedNewlines(text, old, replacement, replaceAll)
+		if matchErr != "" {
+			return map[string]string{"error": matchErr}
+		}
+		if !ok {
+			return map[string]string{"error": "old_string not found in " + p + " (exact and newline-normalized matching both failed; read_file output normalizes CRLF to LF, so re-read a narrow range or use patch_file for structural edits)"}
+		}
+		if err := os.WriteFile(p, []byte(updated), 0o644); err != nil {
+			return map[string]string{"error": err.Error()}
+		}
+		markCodeIndexDirty(cwd, p)
+		return map[string]any{"ok": true, "path": p, "replacements": reps, "normalizedNewlines": true}
 	}
 	if count > 1 && !replaceAll {
 		return map[string]string{"error": fmt.Sprintf("old_string found %d times — not unique. Provide more context or use replace_all.", count)}
 	}
+	replacement = replacementForSpan(replacement, old)
 	var updated string
 	var reps int
 	if replaceAll {
@@ -342,6 +357,93 @@ func EditFile(input map[string]any, cwd, scope string) any {
 	}
 	markCodeIndexDirty(cwd, p)
 	return map[string]any{"ok": true, "path": p, "replacements": reps}
+}
+
+func normalizeNewlineString(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	return strings.ReplaceAll(s, "\r", "\n")
+}
+
+func normalizeNewlineIndex(s string) (string, []int) {
+	var b strings.Builder
+	b.Grow(len(s))
+	originalAt := make([]int, 0, len(s)+1)
+	for i := 0; i < len(s); {
+		originalAt = append(originalAt, i)
+		if s[i] == '\r' {
+			b.WriteByte('\n')
+			if i+1 < len(s) && s[i+1] == '\n' {
+				i += 2
+			} else {
+				i++
+			}
+			continue
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	originalAt = append(originalAt, len(s))
+	return b.String(), originalAt
+}
+
+func newlineStyleForSpan(span string) string {
+	if strings.Contains(span, "\r\n") {
+		return "\r\n"
+	}
+	if strings.Contains(span, "\r") {
+		return "\r"
+	}
+	return "\n"
+}
+
+func replacementForSpan(replacement, matchedSpan string) string {
+	eol := newlineStyleForSpan(matchedSpan)
+	normalized := normalizeNewlineString(replacement)
+	if eol == "\n" {
+		return normalized
+	}
+	return strings.ReplaceAll(normalized, "\n", eol)
+}
+
+func replaceNormalizedNewlines(text, old, replacement string, replaceAll bool) (string, int, bool, string) {
+	normalizedText, originalAt := normalizeNewlineIndex(text)
+	normalizedOld := normalizeNewlineString(old)
+	count := strings.Count(normalizedText, normalizedOld)
+	if count == 0 {
+		return "", 0, false, ""
+	}
+	if count > 1 && !replaceAll {
+		return "", 0, false, fmt.Sprintf("old_string found %d times after newline normalization — not unique. Provide more context or use replace_all.", count)
+	}
+
+	var out strings.Builder
+	out.Grow(len(text) + len(replacement))
+	origCursor := 0
+	searchFrom := 0
+	reps := 0
+	for {
+		idx := strings.Index(normalizedText[searchFrom:], normalizedOld)
+		if idx < 0 {
+			break
+		}
+		normStart := searchFrom + idx
+		normEnd := normStart + len(normalizedOld)
+		origStart := originalAt[normStart]
+		origEnd := originalAt[normEnd]
+		matchedSpan := text[origStart:origEnd]
+
+		out.WriteString(text[origCursor:origStart])
+		out.WriteString(replacementForSpan(replacement, matchedSpan))
+		origCursor = origEnd
+		reps++
+
+		if !replaceAll {
+			break
+		}
+		searchFrom = normEnd
+	}
+	out.WriteString(text[origCursor:])
+	return out.String(), reps, true, ""
 }
 
 // helpers

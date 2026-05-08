@@ -143,3 +143,80 @@ func TestReadFile_DefaultLimit(t *testing.T) {
 		t.Errorf("expected all 50 lines, got first/last incomplete")
 	}
 }
+
+func TestEditFileMatchesReadFileStyleSnippetInCRLFFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "crlf.txt")
+	if err := os.WriteFile(path, []byte("alpha\r\nbeta\r\ngamma\r\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	result := EditFile(map[string]any{
+		"path":       path,
+		"old_string": "beta\ngamma\n",
+		"new_string": "BETA\nGAMMA\n",
+	}, dir, "expanded")
+	m, ok := result.(map[string]any)
+	if !ok || m["ok"] != true {
+		t.Fatalf("expected ok result, got %T: %+v", result, result)
+	}
+	if m["normalizedNewlines"] != true {
+		t.Fatalf("expected normalized newline fallback, got: %+v", m)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	want := "alpha\r\nBETA\r\nGAMMA\r\n"
+	if string(got) != want {
+		t.Fatalf("file mismatch\nwant: %q\ngot:  %q", want, string(got))
+	}
+}
+
+func TestEditFileReportsNormalizedDuplicateMatches(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "dupes.txt")
+	if err := os.WriteFile(path, []byte("one\r\ntwo\r\none\r\ntwo\r\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	result := EditFile(map[string]any{
+		"path":       path,
+		"old_string": "one\ntwo\n",
+		"new_string": "x\ny\n",
+	}, dir, "expanded")
+	m, ok := result.(map[string]string)
+	if !ok {
+		t.Fatalf("expected error map, got %T: %+v", result, result)
+	}
+	if !strings.Contains(m["error"], "after newline normalization") {
+		t.Fatalf("expected normalized duplicate error, got: %q", m["error"])
+	}
+}
+
+func TestEditFileReplaceAllNormalizedCRLF(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "all.txt")
+	if err := os.WriteFile(path, []byte("one\r\ntwo\r\none\r\ntwo\r\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	result := EditFile(map[string]any{
+		"path":        path,
+		"old_string":  "one\ntwo\n",
+		"new_string":  "x\ny\n",
+		"replace_all": true,
+	}, dir, "expanded")
+	m, ok := result.(map[string]any)
+	if !ok || m["ok"] != true || m["replacements"] != 2 {
+		t.Fatalf("expected two replacements, got %T: %+v", result, result)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	want := "x\r\ny\r\nx\r\ny\r\n"
+	if string(got) != want {
+		t.Fatalf("file mismatch\nwant: %q\ngot:  %q", want, string(got))
+	}
+}
