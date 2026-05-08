@@ -36,8 +36,8 @@ func TestWeakTerminalUsesCompatTheme(t *testing.T) {
 	if got.Name != "dark-compat" {
 		t.Fatalf("compat theme name mismatch: got %q", got.Name)
 	}
-	if got.Bg != "0" || got.Fg != "15" || got.Accent != "14" {
-		t.Fatalf("compat palette should use stable ANSI colors, got bg=%q fg=%q accent=%q", got.Bg, got.Fg, got.Accent)
+	if got.Bg != "0" || got.Fg != "15" || got.Accent != "15" || got.PlanBarBg == "4" || got.Info == "14" {
+		t.Fatalf("compat palette should avoid blue/cyan-heavy ANSI colors, got bg=%q fg=%q accent=%q planBarBg=%q info=%q", got.Bg, got.Fg, got.Accent, got.PlanBarBg, got.Info)
 	}
 	if saved := savedThemeName(got); saved != "dark" {
 		t.Fatalf("compat theme should persist base name, got %q", saved)
